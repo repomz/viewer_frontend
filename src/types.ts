@@ -1,0 +1,110 @@
+export type Study = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  study_id: string;
+  patient: string;
+  age: number;
+  department: string;
+  name_operation: string;
+  study_type: string;
+  descr_operation: string;
+  time_beginning: string;
+  time_duration: number;
+  surgeon: string;
+  dicom_link: string;
+};
+
+export type RequestStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "error"
+  | string;
+
+export type UserRequest = {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  available_at: string;
+  lease_expires_at?: string;
+  completed_at?: string;
+  status: RequestStatus;
+  user_id: string;
+  agent_id: number;
+  request_type: string;
+  command: AgentCommand;
+  payload: Record<string, unknown> | string | null;
+  result: Record<string, unknown> | string | null;
+  errors?: string;
+  attempt_count: number;
+  max_attempts: number;
+};
+
+export type AgentCommand =
+  | "get_report"
+  | "find_study"
+  | "find_xa"
+  | "find_ct"
+  | "get_xa"
+  | "get_ct"
+  | "xa_polling_on"
+  | "xa_polling_off"
+  | "ct_polling_on"
+  | "ct_polling_off";
+
+export type ReportDocument = {
+  filename?: string;
+  agent_id?: number;
+  generated_at?: string;
+  report?: unknown;
+  [key: string]: unknown;
+};
+
+export type ReportOperation = {
+  patient?: string;
+  age?: string | number;
+  department?: string;
+  operation?: string;
+  time_beginning?: string;
+  time_duration?: string | number;
+  surgeon?: string;
+  previous_operations?: {
+    date?: string;
+    operation?: string;
+    description?: string;
+    recommendation?: string;
+    surgeon?: string;
+  }[];
+};
+
+export type OperationsReport = {
+  date?: string;
+  period_days?: number;
+  period_start?: string;
+  period_end?: string;
+  planned_count?: number;
+  emergency_total?: number;
+  today_planned_count?: number;
+  planned_operations?: ReportOperation[];
+  emergency_operations?: ReportOperation[];
+  today_planned_operations?: ReportOperation[];
+};
+
+export type AgentHealth = {
+  online: boolean;
+  status: "well" | "with_errors" | "offline" | "unknown";
+  lastSeen?: Date;
+  ageMs?: number;
+};
+
+export type ApiHealth = {
+  ok: boolean;
+  checkedAt: Date;
+  message: string;
+};
+
+export type AppSettings = {
+  agentId: number;
+  userId: string;
+};

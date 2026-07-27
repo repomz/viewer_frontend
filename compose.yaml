@@ -1,0 +1,25 @@
+name: viewer-frontend
+
+services:
+  frontend:
+    image: ${FRONTEND_IMAGE:-idrisovmarat/viewer_frontend:0.1.0}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        EXPO_PUBLIC_OHIF_URL: ${EXPO_PUBLIC_OHIF_URL:-http://135.106.130.37:3000}
+        VERSION: ${IMAGE_VERSION:-0.1.0}
+        VCS_REF: ${VCS_REF:-unknown}
+    environment:
+      BACKEND_URL: ${BACKEND_URL:-http://135.106.130.37:8080}
+    ports:
+      - "${FRONTEND_PORT:-5173}:8080"
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777

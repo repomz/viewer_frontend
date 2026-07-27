@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "name": "Viewer Clinical",
+    "slug": "viewer-clinical",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B1117",
+    "primaryColor": "#35C2FF",
+    "web": {
+      "bundler": "metro",
+      "name": "Viewer Clinical",
+      "shortName": "Viewer",
+      "themeColor": "#0B1117",
+      "backgroundColor": "#0B1117",
+      "display": "standalone"
+    },
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

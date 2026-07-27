@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.7
+
+FROM --platform=$BUILDPLATFORM node:22-alpine AS dependencies
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN corepack enable
+WORKDIR /app
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile=false
+
+FROM dependencies AS build
+ARG EXPO_PUBLIC_OHIF_URL=http://135.106.130.37:3000
+ENV EXPO_PUBLIC_OHIF_URL=$EXPO_PUBLIC_OHIF_URL
+ENV NODE_ENV=production
+COPY . .
+RUN pnpm run typecheck && pnpm run build
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
+ARG VERSION=0.1.0
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.title="viewer-frontend" \
+      org.opencontainers.image.description="Responsive clinical frontend for Viewer Backend and Hospital Agent" \
+      org.opencontainers.image.source="https://github.com/repomz/viewer_frontend" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}"
+USER root
+RUN rm -f /etc/nginx/conf.d/default.conf
+COPY deploy/nginx.conf.template /etc/nginx/frontend.conf.template
+COPY --from=build /app/dist /usr/share/nginx/html
+RUN chown -R 101:101 /usr/share/nginx/html /etc/nginx/frontend.conf.template
+USER 101
+EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
+CMD ["/bin/sh", "-c", "envsubst '$BACKEND_URL' < /etc/nginx/frontend.conf.template > /tmp/default.conf && exec nginx -c /tmp/default.conf -g 'daemon off;'"]
