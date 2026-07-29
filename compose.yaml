@@ -12,6 +12,7 @@ services:
         VCS_REF: ${VCS_REF:-unknown}
     environment:
       BACKEND_URL: ${BACKEND_URL:-http://135.106.130.37:8080}
+      OHIF_URL: ${OHIF_URL:-http://135.106.130.37:3000}
     ports:
       - "${FRONTEND_PORT:-5173}:8080"
     restart: unless-stopped

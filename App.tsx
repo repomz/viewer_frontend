@@ -35,6 +35,7 @@ import {
   searchStudies
 } from "./src/api";
 import { AngiographyViewer } from "./src/AngiographyViewer";
+import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import {
   defaultSettings,
   loadRequests,
@@ -845,8 +846,8 @@ export default function App() {
         edges={compact ? ["top"] : []}
       >
         <StatusBar style={isAngiography ? "light" : "dark"} />
-        <View style={styles.app}>
-          <View style={styles.main}>
+        <View style={[styles.app, isAngiography && styles.appDark]}>
+          <View style={[styles.main, isAngiography && styles.mainDark]}>
             <TopBar
               compact={compact}
               activeTab={activeTab}
@@ -879,7 +880,6 @@ export default function App() {
                   onSelect={setSelectedStudy}
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
-                  onCommand={() => setCommandOpen(true)}
                   onRequestStudy={(study, command) =>
                     void submitCommand(command, { study_uid: study.study_id })
                   }
@@ -894,14 +894,6 @@ export default function App() {
                   loading={xaLoading}
                   error={xaError}
                   onRetry={() => void loadXAStudies()}
-                  onSend={(study) =>
-                    void submitCommand(
-                      study.study_type.toLowerCase() === "ct"
-                        ? "send_ct_to_pacs"
-                        : "send_xa_to_pacs",
-                      { study_uid: study.study_id }
-                    )
-                  }
                 />
               ) : null}
               {activeTab === "requests" ? (
@@ -972,6 +964,7 @@ export default function App() {
               <MobileNavigation
                 activeTab={activeTab}
                 onTabChange={setActiveTab}
+                dark={isAngiography}
               />
             ) : null}
           </View>
@@ -1216,14 +1209,19 @@ function TopBar({
 
 function MobileNavigation({
   activeTab,
-  onTabChange
+  onTabChange,
+  dark = false
 }: {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
+  dark?: boolean;
 }) {
   return (
-    <SafeAreaView edges={["bottom"]} style={styles.mobileNavSafe}>
-      <View style={styles.mobileNav}>
+    <SafeAreaView
+      edges={["bottom"]}
+      style={[styles.mobileNavSafe, dark && styles.mobileNavSafeDark]}
+    >
+      <View style={[styles.mobileNav, dark && styles.mobileNavDark]}>
         {tabs.map((tab) => {
           const active = activeTab === tab.id;
           return (
@@ -1234,7 +1232,9 @@ function MobileNavigation({
               onPress={() => onTabChange(tab.id)}
               style={({ pressed }) => [
                 styles.mobileNavItem,
+                dark && styles.mobileNavItemDark,
                 active && styles.mobileNavItemActive,
+                active && dark && styles.mobileNavItemActiveDark,
                 pressed && styles.mobileNavItemPressed
               ]}
             >
@@ -1245,12 +1245,19 @@ function MobileNavigation({
                     : tab.icon
                 }
                 size={19}
-                color={active ? colors.primary : colors.textDim}
+                color={
+                  active
+                    ? darkColors.primary
+                    : dark
+                      ? darkColors.textDim
+                      : colors.textDim
+                }
               />
               <Text
                 numberOfLines={1}
                 style={[
                   styles.mobileNavText,
+                  dark && styles.mobileNavTextDark,
                   active && styles.mobileNavTextActive
                 ]}
               >
@@ -1281,7 +1288,6 @@ function StudiesScreen({
   onSelect,
   onRetry,
   onRefresh,
-  onCommand,
   onRequestStudy,
   angiographies,
   onDelete
@@ -1302,7 +1308,6 @@ function StudiesScreen({
   onSelect: (study: Study | null) => void;
   onRetry: () => void;
   onRefresh: () => void;
-  onCommand: () => void;
   onRequestStudy: (study: Study, command: "get_ct" | "get_xa") => void;
   angiographies: Study[];
   onDelete: (study: Study) => void;
@@ -1399,14 +1404,7 @@ function StudiesScreen({
             <EmptyState
               icon="search-outline"
               title="Исследований не найдено"
-              description="Измените поиск или запросите протокол у агента."
-              action={
-                <Button
-                  label="Запросить у агента"
-                  icon="add"
-                  onPress={onCommand}
-                />
-              }
+              description="Измените поиск, день недели или фильтр операции."
             />
           )}
         </View>
@@ -1579,18 +1577,19 @@ function AngiographyScreen({
   studies,
   loading,
   error,
-  onRetry,
-  onSend
+  onRetry
 }: {
   compact: boolean;
   studies: Study[];
   loading: boolean;
   error: string;
   onRetry: () => void;
-  onSend: (study: Study) => void;
 }) {
   const [selected, setSelected] = useState<Study | null>(studies[0] ?? null);
   const [mobileViewer, setMobileViewer] = useState(false);
+  const [studyFilter, setStudyFilter] = useState<"all" | "xa" | "ct" | "week">(
+    "all"
+  );
   const ohifRoot =
     process.env.EXPO_PUBLIC_OHIF_URL ?? "http://135.106.130.37:3000";
 
@@ -1606,8 +1605,24 @@ function AngiographyScreen({
 
   const choose = (study: Study) => {
     setSelected(study);
-    if (compact && study.study_type.toLowerCase() === "xa") setMobileViewer(true);
+    if (compact) setMobileViewer(true);
   };
+
+  const now = new Date();
+  const monday = new Date(now);
+  const day = (now.getDay() + 6) % 7;
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(now.getDate() - day);
+  const visibleStudies = studies.filter((study) => {
+    const modality = study.study_type.toLowerCase();
+    if (studyFilter === "xa" || studyFilter === "ct") {
+      return modality === studyFilter;
+    }
+    if (studyFilter === "week") {
+      return new Date(study.time_beginning).getTime() >= monday.getTime();
+    }
+    return true;
+  });
 
   return (
     <View style={styles.angioScreen}>
@@ -1615,52 +1630,114 @@ function AngiographyScreen({
       {loading ? (
         <LoadingState label="Проверяем XA-исследования…" />
       ) : studies.length ? (
-        <View style={styles.angioWorkspace}>
-          <ScrollView
-            style={styles.angioList}
-            contentContainerStyle={styles.angioListContent}
-            showsVerticalScrollIndicator={false}
+        <>
+          <View
+            style={[
+              styles.angioFilters,
+              compact && styles.angioFiltersCompact
+            ]}
           >
-            {studies.map((study) => (
+            {([
+              ["all", "Все"],
+              ["week", "Неделя"],
+              ["xa", "XA"],
+              ["ct", "CT"]
+            ] as const).map(([value, label]) => (
               <Pressable
-                key={study.id}
-                accessibilityRole="button"
-                accessibilityLabel={`Открыть ангиографию ${study.patient}`}
-                onPress={() => choose(study)}
+                key={value}
+                onPress={() => setStudyFilter(value)}
                 style={[
-                  styles.angioRow,
-                  selected?.id === study.id && styles.angioRowSelected
+                  styles.angioFilter,
+                  studyFilter === value && styles.angioFilterActive
                 ]}
               >
-                <View style={styles.angioRowIcon}>
-                  <Icon name="scan" color={darkColors.primary} />
-                </View>
-                <View style={styles.angioRowCopy}>
-                  <Text numberOfLines={1} style={styles.angioPatient}>
-                    {study.patient}
-                  </Text>
-                  <Text numberOfLines={1} style={styles.angioMeta}>
-                    {formatDate(study.time_beginning)} · {study.study_id}
-                  </Text>
-                </View>
-                <Badge label={study.study_type.toUpperCase()} />
-                <IconButton
-                  icon="cloud-upload-outline"
-                  label="Отправить в PACS"
-                  onPress={() => onSend(study)}
-                />
-                {compact && study.study_type.toLowerCase() === "xa" ? (
-                  <Icon name="chevron-forward" size={17} color={darkColors.textDim} />
-                ) : null}
+                <Text
+                  style={[
+                    styles.angioFilterText,
+                    studyFilter === value && styles.angioFilterTextActive
+                  ]}
+                >
+                  {label}
+                </Text>
               </Pressable>
             ))}
-          </ScrollView>
+            <View
+              style={[
+                styles.angioAutoStatus,
+                compact && styles.angioAutoStatusCompact
+              ]}
+            >
+              <Icon name="cloud-done-outline" size={16} color={colors.success} />
+              <Text style={styles.angioAutoStatusText}>
+                {compact
+                  ? "Автодоставка Yandex → PACS"
+                  : "Yandex → PACS автоматически"}
+              </Text>
+            </View>
+          </View>
+          <View
+            style={[
+              styles.angioWorkspace,
+              compact && styles.angioWorkspaceCompact
+            ]}
+          >
+            <ScrollView
+              style={[styles.angioList, compact && styles.angioListCompact]}
+              contentContainerStyle={styles.angioListContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {visibleStudies.map((study, index) => (
+                <Pressable
+                  key={study.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Открыть ангиографию ${study.patient}`}
+                  onPress={() => choose(study)}
+                  style={[
+                    styles.angioRow,
+                    selected?.id === study.id && styles.angioRowSelected
+                  ]}
+                >
+                  <Text style={styles.angioIndex}>
+                    {String(index + 1).padStart(2, "0")}
+                  </Text>
+                  <View style={styles.angioRowCopy}>
+                    <Text numberOfLines={1} style={styles.angioPatient}>
+                      {study.patient}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.angioMeta}>
+                      {formatDate(study.time_beginning)} ·{" "}
+                      {study.study_type.toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.angioStored}>
+                    <Icon
+                      name="cloud-done-outline"
+                      size={15}
+                      color={colors.success}
+                    />
+                  </View>
+                  <Icon
+                    name="chevron-forward"
+                    size={17}
+                    color={darkColors.textDim}
+                  />
+                </Pressable>
+              ))}
+              {!visibleStudies.length ? (
+                <Text style={styles.angioNoFilterResults}>
+                  В этом разделе исследований пока нет.
+                </Text>
+              ) : null}
+            </ScrollView>
           {!compact && selected ? (
             <View style={styles.angioViewer}>
-              <View style={styles.angioViewerBar}>
+              <View style={styles.angioViewerOverlay}>
                 <View>
                   <Text style={styles.angioViewerPatient}>{selected.patient}</Text>
-                  <Text style={styles.angioMeta}>{selected.study_id}</Text>
+                  <Text numberOfLines={1} style={styles.angioMeta}>
+                    {formatDate(selected.time_beginning, true)} ·{" "}
+                    {selected.study_type.toUpperCase()}
+                  </Text>
                 </View>
                 <IconButton
                   icon="open-outline"
@@ -1676,34 +1753,64 @@ function AngiographyScreen({
               </View>
             </View>
           ) : null}
-        </View>
+          </View>
+        </>
       ) : (
         <View style={styles.angioEmpty}>
           <Icon name="scan-outline" size={32} color={darkColors.primary} />
           <Text style={styles.angioEmptyTitle}>XA и CT пока не загружены</Text>
           <Text style={styles.angioEmptyText}>
-            Выполните поиск XA по фамилии, затем загрузите выбранное
-            исследование. После импорта оно появится здесь автоматически.
+            Исследования появятся здесь после автоматической доставки агентом
+            через Yandex в удалённый PACS.
           </Text>
         </View>
       )}
 
       {compact ? (
-        <Sheet
+        <Modal
           visible={mobileViewer && Boolean(selected)}
-          title={selected?.patient || "Ангиография"}
-          onClose={() => setMobileViewer(false)}
-          fullScreen
+          animationType="slide"
+          presentationStyle="fullScreen"
+          onRequestClose={() => setMobileViewer(false)}
         >
-          <View style={styles.mobileAngioViewer}>
+          <SafeAreaView style={styles.mobileAngioViewer}>
             {selected ? (
-              <AngiographyViewer
-                url={viewerURL}
-                title={`Ангиография ${selected.patient}`}
-              />
+              <>
+                <View style={styles.mobileViewerFrame}>
+                  <MobileDicomViewer studyUID={selected.study_id} />
+                </View>
+                <View style={styles.mobileViewerTop}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Закрыть просмотр"
+                    onPress={() => setMobileViewer(false)}
+                    style={styles.mobileViewerRoundButton}
+                  >
+                    <Icon
+                      name="chevron-back"
+                      size={24}
+                      color={darkColors.text}
+                    />
+                  </Pressable>
+                  <View style={styles.mobileViewerIdentity}>
+                    <Text numberOfLines={1} style={styles.mobileViewerPatient}>
+                      {selected.patient}
+                    </Text>
+                    <Text style={styles.mobileViewerMeta}>
+                      {formatDate(selected.time_beginning, true)} ·{" "}
+                      {selected.study_type.toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.mobileViewerModality}>
+                    <Text style={styles.mobileViewerModalityText}>
+                      {selected.study_type.toUpperCase()}
+                    </Text>
+                  </View>
+                </View>
+              </>
             ) : null}
-          </View>
-        </Sheet>
+          </SafeAreaView>
+        </Modal>
       ) : null}
     </View>
   );
@@ -2798,22 +2905,20 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.canvas },
   safeAreaDark: { backgroundColor: darkColors.canvas },
   app: { flex: 1, flexDirection: "row", backgroundColor: colors.canvas },
+  appDark: { backgroundColor: darkColors.canvas },
   main: { flex: 1, minWidth: 0, backgroundColor: colors.canvas },
+  mainDark: { backgroundColor: darkColors.canvas },
   content: { flex: 1, minHeight: 0, backgroundColor: colors.canvas },
   contentDark: { backgroundColor: darkColors.canvas },
   mobileHeaderFloat: {
     minHeight: 58,
-    marginHorizontal: 10,
-    marginTop: 8,
-    paddingHorizontal: 4,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 4,
     flexDirection: "row",
     alignItems: "center",
     gap: 7,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.94)",
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    ...shadow
+    backgroundColor: "transparent"
   },
   mobileTitlePill: {
     flex: 1,
@@ -2834,18 +2939,14 @@ const styles = StyleSheet.create({
   },
   desktopHeaderFloat: {
     minHeight: 68,
-    marginHorizontal: 14,
-    marginTop: 12,
-    paddingHorizontal: 10,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 6,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 12,
-    borderRadius: 22,
-    backgroundColor: "rgba(255,255,255,0.95)",
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    ...shadow
+    backgroundColor: "transparent"
   },
   headerBrandGroup: {
     flexDirection: "row",
@@ -3007,8 +3108,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.canvasRaised
   },
   topBarDark: {
-    backgroundColor: darkColors.canvas,
-    borderBottomColor: darkColors.borderSoft
+    backgroundColor: "transparent"
   },
   topBarCompact: { minHeight: 58, paddingHorizontal: 10 },
   topTitle: { ...typography.title, color: colors.text },
@@ -3197,10 +3297,46 @@ const styles = StyleSheet.create({
   sheetScroll: { padding: 14 },
   angioScreen: {
     flex: 1,
-    paddingHorizontal: 22,
-    paddingTop: 20,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 6,
     backgroundColor: darkColors.canvas
   },
+  angioFilters: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 8
+  },
+  angioFiltersCompact: { flexWrap: "wrap", minHeight: 76 },
+  angioFilter: {
+    minHeight: 32,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: darkColors.borderSoft
+  },
+  angioFilterActive: {
+    borderColor: darkColors.primary,
+    backgroundColor: darkColors.primarySoft
+  },
+  angioFilterText: { ...typography.meta, color: darkColors.textMuted },
+  angioFilterTextActive: { color: darkColors.primary, fontWeight: "700" },
+  angioAutoStatus: {
+    marginLeft: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
+  angioAutoStatusCompact: {
+    width: "100%",
+    marginLeft: 0,
+    paddingHorizontal: 4
+  },
+  angioAutoStatusText: { ...typography.meta, color: darkColors.textMuted },
   angioHeading: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -3224,38 +3360,54 @@ const styles = StyleSheet.create({
     marginTop: 4
   },
   angioWorkspace: { flex: 1, flexDirection: "row", gap: 12, minHeight: 0 },
+  angioWorkspaceCompact: { flexDirection: "column" },
   angioList: {
-    width: 330,
+    width: "34%",
+    minWidth: 260,
+    maxWidth: 390,
     flexGrow: 0,
-    borderRadius: radii.lg,
-    backgroundColor: darkColors.canvasRaised
+    backgroundColor: "transparent"
   },
-  angioListContent: { padding: 8, gap: 6 },
+  angioListCompact: { width: "100%", minWidth: 0, maxWidth: "100%" },
+  angioListContent: { gap: 6, paddingBottom: 8 },
   angioRow: {
-    minHeight: 66,
+    minHeight: 56,
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingHorizontal: 10,
+    paddingHorizontal: 11,
     borderRadius: radii.md,
     borderWidth: 1,
-    borderColor: "transparent"
+    borderColor: "transparent",
+    backgroundColor: darkColors.surface
   },
   angioRowSelected: {
     backgroundColor: darkColors.primarySoft,
     borderColor: "rgba(53,194,255,0.35)"
   },
-  angioRowIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 11,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: darkColors.surface
+  angioIndex: {
+    width: 24,
+    color: darkColors.primary,
+    fontSize: 12,
+    fontWeight: "800"
   },
   angioRowCopy: { flex: 1, minWidth: 0 },
   angioPatient: { ...typography.label, color: darkColors.text },
   angioMeta: { ...typography.meta, color: darkColors.textDim, marginTop: 3 },
+  angioStored: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(11,148,127,0.12)"
+  },
+  angioNoFilterResults: {
+    ...typography.body,
+    color: darkColors.textMuted,
+    paddingVertical: 24,
+    textAlign: "center"
+  },
   angioViewer: {
     flex: 1,
     minWidth: 0,
@@ -3265,15 +3417,21 @@ const styles = StyleSheet.create({
     borderColor: darkColors.border,
     backgroundColor: "#05080B"
   },
-  angioViewerBar: {
-    minHeight: 62,
+  angioViewerOverlay: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    right: 10,
+    zIndex: 4,
+    minHeight: 56,
     paddingHorizontal: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: darkColors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: darkColors.border
+    borderRadius: 18,
+    backgroundColor: "rgba(30,33,39,0.92)",
+    borderWidth: 1,
+    borderColor: darkColors.borderSoft
   },
   angioViewerPatient: { ...typography.label, color: darkColors.text },
   angioFrame: { flex: 1, minHeight: 420 },
@@ -3283,11 +3441,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     padding: 28,
-    borderRadius: radii.lg,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: darkColors.border,
-    backgroundColor: darkColors.canvasRaised
+    backgroundColor: darkColors.canvas
   },
   angioEmptyTitle: {
     ...typography.title,
@@ -3304,8 +3458,60 @@ const styles = StyleSheet.create({
   },
   mobileAngioViewer: {
     flex: 1,
-    minHeight: 600,
+    backgroundColor: darkColors.canvas
+  },
+  mobileViewerFrame: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "#05080B"
+  },
+  mobileViewerTop: {
+    position: "absolute",
+    top: 8,
+    left: 10,
+    right: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 9,
+    zIndex: 5
+  },
+  mobileViewerRoundButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(30,33,39,0.92)",
+    borderWidth: 1,
+    borderColor: darkColors.borderSoft
+  },
+  mobileViewerIdentity: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    paddingHorizontal: 13,
+    justifyContent: "center",
+    borderRadius: 18,
+    backgroundColor: "rgba(30,33,39,0.92)",
+    borderWidth: 1,
+    borderColor: darkColors.borderSoft
+  },
+  mobileViewerPatient: { ...typography.label, color: darkColors.text },
+  mobileViewerMeta: { fontSize: 10, color: darkColors.textDim, marginTop: 1 },
+  mobileViewerModality: {
+    minWidth: 44,
+    height: 44,
+    paddingHorizontal: 9,
+    borderRadius: 17,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(53,194,255,0.16)",
+    borderWidth: 1,
+    borderColor: "rgba(53,194,255,0.4)"
+  },
+  mobileViewerModalityText: {
+    color: darkColors.primary,
+    fontSize: 11,
+    fontWeight: "800"
   },
   infoBanner: {
     flexDirection: "row",
@@ -3820,33 +4026,34 @@ const styles = StyleSheet.create({
   mobileNavSafe: {
     backgroundColor: colors.canvas,
     paddingHorizontal: 10,
-    paddingTop: 4,
-    paddingBottom: 7
+    paddingTop: 2,
+    paddingBottom: 5
   },
+  mobileNavSafeDark: { backgroundColor: darkColors.canvas },
   mobileNav: {
-    height: 64,
+    height: 58,
     flexDirection: "row",
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-    borderRadius: 24,
-    backgroundColor: "rgba(255,255,255,0.95)",
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    ...shadow
+    paddingHorizontal: 2,
+    paddingVertical: 2,
+    backgroundColor: "transparent"
   },
+  mobileNavDark: { backgroundColor: "transparent" },
   mobileNavItem: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
-    minWidth: 0
+    minWidth: 0,
+    borderRadius: 17
   },
+  mobileNavItemDark: { backgroundColor: "transparent" },
   mobileNavItemActive: {
     marginVertical: 1,
     borderRadius: 18,
-    backgroundColor: colors.primarySoft,
+    backgroundColor: "rgba(255,255,255,0.86)",
     transform: [{ scale: 1.02 }]
   },
+  mobileNavItemActiveDark: { backgroundColor: darkColors.primarySoft },
   mobileNavItemPressed: {
     opacity: 0.82,
     transform: [{ scale: 0.92 }]
@@ -3857,5 +4064,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: colors.textDim
   },
-  mobileNavTextActive: { color: colors.primary }
+  mobileNavTextDark: { color: darkColors.textDim },
+  mobileNavTextActive: { color: darkColors.primary }
 });

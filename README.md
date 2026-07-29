@@ -34,11 +34,12 @@ docker compose up --build --wait
 Приложение откроется на [http://localhost:5173](http://localhost:5173).
 
 По умолчанию proxy подключается к действующему backend
-`http://135.106.130.37:8080`, а кнопка OHIF — к
+`http://135.106.130.37:8080`, а DICOMweb и desktop OHIF — к
 `http://135.106.130.37:3000`. Эти значения можно изменить в `.env`:
 
 ```dotenv
 BACKEND_URL=http://SERVER:8080
+OHIF_URL=http://SERVER:3000
 EXPO_PUBLIC_OHIF_URL=http://SERVER:3000
 FRONTEND_PORT=5173
 ```
@@ -50,7 +51,10 @@ FRONTEND_PORT=5173
 docker compose up -d --build
 ```
 
-`BACKEND_URL` применяется при старте контейнера и пересборки не требует.
+`BACKEND_URL` и `OHIF_URL` применяются при старте контейнера и пересборки не
+требуют. Мобильный просмотр XA использует собственный cine-интерфейс и
+покадровый DICOMweb Rendered через same-origin `/dicom-web`; OHIF остаётся
+desktop-просмотрщиком.
 
 ## Docker Hub
 
@@ -68,6 +72,7 @@ docker.io/idrisovmarat/viewer_frontend:latest
 docker pull idrisovmarat/viewer_frontend:0.1.0
 docker run --rm -p 5173:8080 \
   -e BACKEND_URL=http://135.106.130.37:8080 \
+  -e OHIF_URL=http://135.106.130.37:3000 \
   idrisovmarat/viewer_frontend:0.1.0
 ```
 
@@ -123,7 +128,9 @@ Browser GET /api/studies
 - backend пока не предоставляет авторизацию и роли;
 - список endpoint возвращает максимум 100 исследований без общего `total`;
 - локальный кэш заданий остаётся резервным вариантом при недоступном backend;
-- просмотр DICOM в приложении предназначен только для XA на мобильном экране;
+- мобильный просмотр зависит от поддержки WADO-RS Rendered в PACS; текущий
+  Orthanc предоставляет её для загруженных XA и выполняет серверное
+  декодирование transfer syntax;
 - `/reports` может отсутствовать на сервере старой версии — интерфейс корректно
   показывает это как недоступное состояние;
 - серверные HTTP endpoint следует закрыть TLS/VPN до публичной эксплуатации.
