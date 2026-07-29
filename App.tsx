@@ -34,8 +34,8 @@ import {
   getUserRequest,
   searchStudies
 } from "./src/api";
-import { AngiographyViewer } from "./src/AngiographyViewer";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
+import { isPacsImagingStudy } from "./src/studyClassification";
 import {
   defaultSettings,
   loadRequests,
@@ -452,11 +452,12 @@ export default function App() {
     try {
       const response = await getStudies();
       setStudies(response);
+      const protocols = response.filter((study) => !isPacsImagingStudy(study));
       setSelectedStudy((current) => {
-        if (!current) return response[0] ?? null;
+        if (!current) return protocols[0] ?? null;
         return (
-          response.find((study) => study.id === current.id) ??
-          response[0] ??
+          protocols.find((study) => study.id === current.id) ??
+          protocols[0] ??
           null
         );
       });
@@ -475,11 +476,15 @@ export default function App() {
         searchStudies({ studyType: "xa" }),
         searchStudies({ studyType: "ct" })
       ]);
-      setXaStudies([...xa, ...ct].sort(
-        (left, right) =>
-          new Date(right.time_beginning).getTime() -
-          new Date(left.time_beginning).getTime()
-      ));
+      setXaStudies(
+        [...xa, ...ct]
+          .filter(isPacsImagingStudy)
+          .sort(
+            (left, right) =>
+              new Date(right.time_beginning).getTime() -
+              new Date(left.time_beginning).getTime()
+          )
+      );
     } catch (error) {
       setXaError(errorMessage(error));
     } finally {
@@ -695,10 +700,14 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
 
+  const protocolStudies = useMemo(
+    () => studies.filter((study) => !isPacsImagingStudy(study)),
+    [studies]
+  );
+
   const filteredStudies = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("ru");
-    return studies.filter((study) => {
-      if (["xa", "ct"].includes(study.study_type.toLowerCase())) return false;
+    return protocolStudies.filter((study) => {
       const date = new Date(study.time_beginning);
       const weekday = Number.isNaN(date.getTime()) ? 0 : date.getDay();
       if (dayFilter !== "all" && weekday !== Number(dayFilter)) return false;
@@ -712,7 +721,7 @@ export default function App() {
         study.study_id
       ].some((value) => value.toLocaleLowerCase("ru").includes(query));
     });
-  }, [category, dayFilter, search, studies]);
+  }, [category, dayFilter, protocolStudies, search]);
 
   const recordRequest = useCallback((request: UserRequest) => {
     setRequests((current) => {
@@ -867,7 +876,7 @@ export default function App() {
                   compact={compact}
                   inlineDetail={!compact && width >= layout.tabletBreakpoint}
                   studies={filteredStudies}
-                  total={studies.length}
+                  total={protocolStudies.length}
                   loading={studiesLoading}
                   error={studiesError}
                   search={search}
@@ -1590,22 +1599,14 @@ function AngiographyScreen({
   const [studyFilter, setStudyFilter] = useState<"all" | "xa" | "ct" | "week">(
     "all"
   );
-  const ohifRoot =
-    process.env.EXPO_PUBLIC_OHIF_URL ?? "http://135.106.130.37:3000";
-
   useEffect(() => {
     if (!selected && studies[0]) setSelected(studies[0]);
   }, [selected, studies]);
 
-  const viewerURL = selected
-    ? `${ohifRoot.replace(/\/$/, "")}/viewer?StudyInstanceUIDs=${encodeURIComponent(
-        selected.study_id
-      )}`
-    : "";
-
   const choose = (study: Study) => {
+    if (!compact) return;
     setSelected(study);
-    if (compact) setMobileViewer(true);
+    setMobileViewer(true);
   };
 
   const now = new Date();
@@ -1690,11 +1691,17 @@ function AngiographyScreen({
                 <Pressable
                   key={study.id}
                   accessibilityRole="button"
-                  accessibilityLabel={`Открыть ангиографию ${study.patient}`}
+                  accessibilityLabel={
+                    compact
+                      ? `Открыть ангиографию ${study.patient}`
+                      : `Исследование ${study.patient} находится в PACS`
+                  }
                   onPress={() => choose(study)}
                   style={[
                     styles.angioRow,
-                    selected?.id === study.id && styles.angioRowSelected
+                    compact &&
+                      selected?.id === study.id &&
+                      styles.angioRowSelected
                   ]}
                 >
                   <Text style={styles.angioIndex}>
@@ -1717,7 +1724,7 @@ function AngiographyScreen({
                     />
                   </View>
                   <Icon
-                    name="chevron-forward"
+                    name={compact ? "chevron-forward" : "server-outline"}
                     size={17}
                     color={darkColors.textDim}
                   />
@@ -1729,30 +1736,6 @@ function AngiographyScreen({
                 </Text>
               ) : null}
             </ScrollView>
-          {!compact && selected ? (
-            <View style={styles.angioViewer}>
-              <View style={styles.angioViewerOverlay}>
-                <View>
-                  <Text style={styles.angioViewerPatient}>{selected.patient}</Text>
-                  <Text numberOfLines={1} style={styles.angioMeta}>
-                    {formatDate(selected.time_beginning, true)} ·{" "}
-                    {selected.study_type.toUpperCase()}
-                  </Text>
-                </View>
-                <IconButton
-                  icon="open-outline"
-                  label="Открыть отдельно"
-                  onPress={() => void Linking.openURL(viewerURL)}
-                />
-              </View>
-              <View style={styles.angioFrame}>
-                <AngiographyViewer
-                  url={viewerURL}
-                  title={`Ангиография ${selected.patient}`}
-                />
-              </View>
-            </View>
-          ) : null}
           </View>
         </>
       ) : (
@@ -3362,10 +3345,10 @@ const styles = StyleSheet.create({
   angioWorkspace: { flex: 1, flexDirection: "row", gap: 12, minHeight: 0 },
   angioWorkspaceCompact: { flexDirection: "column" },
   angioList: {
-    width: "34%",
-    minWidth: 260,
-    maxWidth: 390,
-    flexGrow: 0,
+    width: "100%",
+    minWidth: 0,
+    maxWidth: 880,
+    flexGrow: 1,
     backgroundColor: "transparent"
   },
   angioListCompact: { width: "100%", minWidth: 0, maxWidth: "100%" },
