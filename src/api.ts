@@ -133,6 +133,48 @@ export async function getUserRequest(id: string): Promise<UserRequest> {
   return request<UserRequest>(`/user_requests/${encodeURIComponent(id)}`);
 }
 
+export async function getUserRequests(
+  userId: string,
+  agentId: number
+): Promise<UserRequest[]> {
+  const params = new URLSearchParams({
+    user_id: userId,
+    agent_id: String(agentId),
+    limit: "100"
+  });
+  const response = await request<UserRequest[]>(
+    `/user_requests/history?${params.toString()}`
+  );
+  return Array.isArray(response) ? response : [];
+}
+
+export async function deleteUserRequest(id: string, userId: string): Promise<void> {
+  await request(`/user_requests/${encodeURIComponent(id)}?user_id=${encodeURIComponent(userId)}`, {
+    method: "DELETE"
+  });
+}
+
+export async function deleteAllUserRequests(
+  userId: string,
+  agentId: number
+): Promise<void> {
+  const params = new URLSearchParams({
+    user_id: userId,
+    agent_id: String(agentId)
+  });
+  await request(`/user_requests/history?${params.toString()}`, {
+    method: "DELETE"
+  });
+}
+
+export async function deleteStudy(id: string): Promise<void> {
+  await request(`/studies/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function deleteAllStudies(): Promise<void> {
+  await request("/studies", { method: "DELETE" });
+}
+
 export async function getReports(): Promise<ReportDocument[]> {
   const response = await request<ReportDocument[]>("/reports?limit=30");
   return Array.isArray(response) ? response : [];
@@ -140,6 +182,12 @@ export async function getReports(): Promise<ReportDocument[]> {
 
 export async function getReport(filename: string): Promise<ReportDocument> {
   return request<ReportDocument>(`/reports/${encodeURIComponent(filename)}`);
+}
+
+export async function deleteReport(filename: string): Promise<void> {
+  await request(`/reports/${encodeURIComponent(filename)}`, {
+    method: "DELETE"
+  });
 }
 
 export async function getAgentHeartbeatTimes(
@@ -155,4 +203,11 @@ export async function getAgentHeartbeatTimes(
     `${endpoint}?${params.toString()}`
   );
   return Array.isArray(response) ? response : [];
+}
+
+export async function getAgents(): Promise<number[]> {
+  const response = await request<number[]>("/agents");
+  return Array.isArray(response)
+    ? response.filter((value) => Number.isInteger(value) && value > 0)
+    : [];
 }

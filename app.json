@@ -3,17 +3,34 @@
     "name": "Viewer Clinical",
     "slug": "viewer-clinical",
     "version": "0.1.0",
-    "orientation": "default",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#0B1117",
-    "primaryColor": "#35C2FF",
+    "orientation": "portrait",
+    "icon": "./assets/viewer-icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F3F6F8",
+    "primaryColor": "#0B84B3",
+    "splash": {
+      "image": "./assets/splash-mark.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#07131F"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "icon": "./assets/viewer-icon.png"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/viewer-icon.png",
+        "backgroundColor": "#07131F"
+      }
+    },
     "web": {
       "bundler": "metro",
       "name": "Viewer Clinical",
       "shortName": "Viewer",
-      "themeColor": "#0B1117",
-      "backgroundColor": "#0B1117",
-      "display": "standalone"
+      "themeColor": "#F3F6F8",
+      "backgroundColor": "#F3F6F8",
+      "display": "standalone",
+      "favicon": "./assets/favicon-v2.png"
     },
     "experiments": {
       "typedRoutes": false

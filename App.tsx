@@ -1,11 +1,16 @@
 import { StatusBar } from "expo-status-bar";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
+  Alert,
   Linking,
+  Modal,
+  PanResponder,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -17,9 +22,15 @@ import {
   ApiError,
   checkHealth,
   createUserRequest,
+  deleteAllUserRequests,
+  deleteReport,
+  deleteStudy,
+  deleteUserRequest,
   getAgentHeartbeatTimes,
+  getAgents,
   getReports,
   getStudies,
+  getUserRequests,
   getUserRequest,
   searchStudies
 } from "./src/api";
@@ -31,13 +42,21 @@ import {
   saveRequests,
   saveSettings
 } from "./src/storage";
-import { colors, darkColors, layout, radii, typography } from "./src/theme";
+import {
+  colors,
+  darkColors,
+  layout,
+  radii,
+  shadow,
+  typography
+} from "./src/theme";
 import type {
   AgentCommand,
   AgentHealth,
   ApiHealth,
   AppSettings,
   OperationsReport,
+  OperationPlan,
   ReportDocument,
   ReportOperation,
   Study,
@@ -54,14 +73,24 @@ import {
   InlineError,
   LoadingState,
   SearchField,
-  SectionHeader,
   Sheet,
   Toast,
   type IconName
 } from "./src/ui";
 
-type Tab = "studies" | "angiography" | "requests" | "reports" | "settings";
+type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "settings";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
+type DayFilter = "all" | "1" | "2" | "3" | "4" | "5";
+type StudyCategory =
+  | "all"
+  | "КАГ"
+  | "ЦАГ"
+  | "СТЕНТ КОР"
+  | "СТЕНТ ВСА"
+  | "СТЕНТ НОГИ"
+  | "БАП НОГИ"
+  | "ЭМА"
+  | "ДРУГИЕ";
 
 const tabs: { id: Tab; label: string; shortLabel: string; icon: IconName }[] = [
   {
@@ -69,6 +98,12 @@ const tabs: { id: Tab; label: string; shortLabel: string; icon: IconName }[] = [
     label: "Исследования",
     shortLabel: "Исслед.",
     icon: "reader-outline"
+  },
+  {
+    id: "plan",
+    label: "План",
+    shortLabel: "План",
+    icon: "calendar-outline"
   },
   {
     id: "angiography",
@@ -87,27 +122,60 @@ const tabs: { id: Tab; label: string; shortLabel: string; icon: IconName }[] = [
     label: "Отчёты",
     shortLabel: "Отчёты",
     icon: "document-text-outline"
-  },
-  {
-    id: "settings",
-    label: "Настройки",
-    shortLabel: "Настр.",
-    icon: "options-outline"
   }
+];
+
+const dayFilters: { id: DayFilter; label: string }[] = [
+  { id: "all", label: "Все" },
+  { id: "1", label: "Пн" },
+  { id: "2", label: "Вт" },
+  { id: "3", label: "Ср" },
+  { id: "4", label: "Чт" },
+  { id: "5", label: "Пт" }
+];
+
+const studyCategories: StudyCategory[] = [
+  "all",
+  "КАГ",
+  "ЦАГ",
+  "СТЕНТ КОР",
+  "СТЕНТ ВСА",
+  "СТЕНТ НОГИ",
+  "БАП НОГИ",
+  "ЭМА",
+  "ДРУГИЕ"
 ];
 
 const commandLabels: Record<AgentCommand, string> = {
   get_report: "Получить отчёт",
+  get_plan: "Получить оперативный план",
   find_study: "Найти протокол",
+  import_study: "Загрузить выбранный протокол",
   find_xa: "Найти XA",
   find_ct: "Найти CT",
   get_xa: "Загрузить XA",
   get_ct: "Загрузить CT",
+  send_xa_to_pacs: "Отправить XA в удалённый PACS",
+  send_ct_to_pacs: "Отправить CT в удалённый PACS",
   xa_polling_on: "Включить XA-мониторинг",
   xa_polling_off: "Выключить XA-мониторинг",
   ct_polling_on: "Включить CT-мониторинг",
   ct_polling_off: "Выключить CT-мониторинг"
 };
+
+export const agentCommandOptions: AgentCommand[] = [
+  "find_study",
+  "find_xa",
+  "find_ct",
+  "get_xa",
+  "get_ct",
+  "get_report",
+  "get_plan",
+  "xa_polling_on",
+  "xa_polling_off",
+  "ct_polling_on",
+  "ct_polling_off"
+];
 
 const terminalStatuses = new Set(["completed", "error"]);
 const AGENT_ONLINE_WINDOW_MS = 150_000;
@@ -193,6 +261,160 @@ function reportData(document: ReportDocument): OperationsReport {
     : {};
 }
 
+function patientKey(value: string): string {
+  return value.toLocaleLowerCase("ru").replace(/ё/g, "е").split(/\s+/)[0] ?? "";
+}
+
+function studyCategory(study: Study): Exclude<StudyCategory, "all"> {
+  const source = `${study.study_type} ${study.name_operation}`
+    .toLocaleUpperCase("ru")
+    .replace(/_/g, " ");
+  if (source.includes("КАГ")) return "КАГ";
+  if (source.includes("ЦАГ")) return "ЦАГ";
+  if (source.includes("ЭМА")) return "ЭМА";
+  if (source.includes("СТЕНТ") && /(ВСА|СОНН)/.test(source)) return "СТЕНТ ВСА";
+  if (source.includes("СТЕНТ") && /(НОГ|ПЕРИФЕР)/.test(source)) return "СТЕНТ НОГИ";
+  if (source.includes("СТЕНТ")) return "СТЕНТ КОР";
+  if (source.includes("БАП") && /(НОГ|ПЕРИФЕР)/.test(source)) return "БАП НОГИ";
+  return "ДРУГИЕ";
+}
+
+function reportShareText(report: ReportDocument): string {
+  const data = reportData(report);
+  const groups: [string, ReportOperation[]][] = [
+    ["Экстренные", data.emergency_operations ?? []],
+    ["Плановые", data.planned_operations ?? []],
+    ["План на сегодня", data.today_planned_operations ?? []]
+  ];
+  const lines = [
+    `Отчёт дежурства · ${data.date ?? formatDate(report.generated_at)}`,
+    `${data.period_start ?? "—"} — ${data.period_end ?? "—"}`
+  ];
+  groups.forEach(([title, operations]) => {
+    if (!operations.length) return;
+    lines.push("", `${title} (${operations.length})`);
+    operations.forEach((operation, index) => {
+      lines.push(
+        `${index + 1}. ${operation.patient || "ФИО не указано"} — ${
+          operation.operation || "Операция не указана"
+        }`
+      );
+    });
+  });
+  return lines.join("\n");
+}
+
+async function shareReport(report: ReportDocument): Promise<void> {
+  const message = reportShareText(report);
+  if (
+    Platform.OS === "web" &&
+    typeof navigator !== "undefined" &&
+    "share" in navigator
+  ) {
+    try {
+      await navigator.share({
+        title: `Отчёт ${reportData(report).date ?? ""}`,
+        text: message
+      });
+      return;
+    } catch {
+      // The user may close the native share sheet; use Telegram only as fallback.
+    }
+  }
+  if (Platform.OS === "web") {
+    const url = `https://t.me/share/url?url=&text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  await Share.share({
+    title: `Отчёт ${reportData(report).date ?? ""}`,
+    message
+  });
+}
+
+function confirmDeleteAll(message: string, action: () => void) {
+  if (Platform.OS === "web") {
+    if (globalThis.confirm(message)) action();
+    return;
+  }
+  Alert.alert("Подтвердите удаление", message, [
+    { text: "Отмена", style: "cancel" },
+    { text: "Удалить", style: "destructive", onPress: action }
+  ]);
+}
+
+function SwipeableCard({
+  children,
+  onDelete,
+  onForward
+}: {
+  children: ReactNode;
+  onDelete: () => void;
+  onForward: () => void;
+}) {
+  const translateX = useRef(new Animated.Value(0)).current;
+  const [cardWidth, setCardWidth] = useState(360);
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          gesture.dx < -12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+        onPanResponderMove: (_event, gesture) => {
+          translateX.setValue(Math.max(-cardWidth, Math.min(0, gesture.dx)));
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx < -cardWidth * 0.72) {
+            Animated.timing(translateX, {
+              toValue: -cardWidth,
+              duration: 180,
+              useNativeDriver: Platform.OS !== "web"
+            }).start(onDelete);
+            return;
+          }
+          Animated.spring(translateX, {
+            toValue: gesture.dx < -cardWidth * 0.18 ? -132 : 0,
+            useNativeDriver: Platform.OS !== "web"
+          }).start();
+        }
+      }),
+    [cardWidth, onDelete, translateX]
+  );
+  const close = () =>
+    Animated.spring(translateX, {
+      toValue: 0,
+      useNativeDriver: Platform.OS !== "web"
+    }).start();
+  return (
+    <View
+      onLayout={(event) => setCardWidth(event.nativeEvent.layout.width)}
+      style={styles.swipeContainer}
+    >
+      <View style={styles.swipeActions}>
+        <Pressable style={styles.swipeForward} onPress={() => {
+          close();
+          onForward();
+        }}>
+          <Icon name="share-outline" color="#fff" />
+          <Text style={styles.swipeActionText}>Переслать</Text>
+        </Pressable>
+        <Pressable style={styles.swipeDelete} onPress={() => {
+          close();
+          onDelete();
+        }}>
+          <Icon name="trash-outline" color="#fff" />
+          <Text style={styles.swipeActionText}>Удалить</Text>
+        </Pressable>
+      </View>
+      <Animated.View
+        {...pan.panHandlers}
+        style={[styles.swipeForeground, { transform: [{ translateX }] }]}
+      >
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
 export default function App() {
   const { width } = useWindowDimensions();
   const compact = width < layout.mobileBreakpoint;
@@ -202,7 +424,9 @@ export default function App() {
   const [studiesLoading, setStudiesLoading] = useState(true);
   const [studiesError, setStudiesError] = useState("");
   const [search, setSearch] = useState("");
-  const [modality, setModality] = useState("Все");
+  const [dayFilter, setDayFilter] = useState<DayFilter>("all");
+  const [category, setCategory] = useState<StudyCategory>("all");
+  const [filterOpen, setFilterOpen] = useState(false);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
   const [xaStudies, setXaStudies] = useState<Study[]>([]);
   const [xaLoading, setXaLoading] = useState(false);
@@ -212,11 +436,13 @@ export default function App() {
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsError, setReportsError] = useState("");
   const [health, setHealth] = useState<ApiHealth | null>(null);
-  const [agentHealth, setAgentHealth] = useState<AgentHealth>({
-    online: false,
-    status: "unknown"
-  });
+  const [agentHealthById, setAgentHealthById] = useState<
+    Record<number, AgentHealth>
+  >({});
   const [commandOpen, setCommandOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [plan, setPlan] = useState<OperationPlan | null>(null);
+  const processedCompletions = useRef(new Set<string>());
   const [toast, setToast] = useState<ToastState>(null);
 
   const loadStudies = useCallback(async () => {
@@ -244,13 +470,31 @@ export default function App() {
     setXaError("");
     setXaLoading(true);
     try {
-      setXaStudies(await searchStudies({ studyType: "xa" }));
+      const [xa, ct] = await Promise.all([
+        searchStudies({ studyType: "xa" }),
+        searchStudies({ studyType: "ct" })
+      ]);
+      setXaStudies([...xa, ...ct].sort(
+        (left, right) =>
+          new Date(right.time_beginning).getTime() -
+          new Date(left.time_beginning).getTime()
+      ));
     } catch (error) {
       setXaError(errorMessage(error));
     } finally {
       setXaLoading(false);
     }
   }, []);
+
+  const loadRequestHistory = useCallback(async () => {
+    try {
+      const response = await getUserRequests(settings.userId, settings.agentId);
+      setRequests(response);
+      saveRequests(response);
+    } catch {
+      // Offline/mobile fallback remains the local request cache.
+    }
+  }, [settings.agentId, settings.userId]);
 
   const loadReports = useCallback(async () => {
     setReportsError("");
@@ -278,34 +522,42 @@ export default function App() {
   }, []);
 
   const updateAgentHealth = useCallback(async () => {
-    try {
-      const [wellTimes, errorTimes] = await Promise.all([
-        getAgentHeartbeatTimes(settings.agentId, "well"),
-        getAgentHeartbeatTimes(settings.agentId, "with_errors")
-      ]);
-      const latestWell = wellTimes[0] ? new Date(wellTimes[0]) : undefined;
-      const latestError = errorTimes[0] ? new Date(errorTimes[0]) : undefined;
-      const candidates = [latestWell, latestError].filter(
-        (value): value is Date =>
-          Boolean(value) && !Number.isNaN(value?.getTime())
-      );
-      const lastSeen = candidates.sort(
-        (left, right) => right.getTime() - left.getTime()
-      )[0];
-      const ageMs = lastSeen ? Date.now() - lastSeen.getTime() : undefined;
-      const online = ageMs !== undefined && ageMs <= AGENT_ONLINE_WINDOW_MS;
-      const status =
-        !online
-          ? "offline"
-          : latestError &&
-              (!latestWell || latestError.getTime() > latestWell.getTime())
-            ? "with_errors"
-            : "well";
-      setAgentHealth({ online, status, lastSeen, ageMs });
-    } catch {
-      setAgentHealth({ online: false, status: "unknown" });
-    }
-  }, [settings.agentId]);
+    const entries = await Promise.all(
+      settings.selectedAgentIds.map(async (agentId) => {
+        try {
+          const [wellTimes, errorTimes] = await Promise.all([
+            getAgentHeartbeatTimes(agentId, "well"),
+            getAgentHeartbeatTimes(agentId, "with_errors")
+          ]);
+          const latestWell = wellTimes[0] ? new Date(wellTimes[0]) : undefined;
+          const latestError = errorTimes[0] ? new Date(errorTimes[0]) : undefined;
+          const candidates = [latestWell, latestError].filter(
+            (value): value is Date =>
+              Boolean(value) && !Number.isNaN(value?.getTime())
+          );
+          const lastSeen = candidates.sort(
+            (left, right) => right.getTime() - left.getTime()
+          )[0];
+          const ageMs = lastSeen ? Date.now() - lastSeen.getTime() : undefined;
+          const online = ageMs !== undefined && ageMs <= AGENT_ONLINE_WINDOW_MS;
+          const status: AgentHealth["status"] =
+            !online
+              ? "offline"
+              : latestError &&
+                  (!latestWell || latestError.getTime() > latestWell.getTime())
+                ? "with_errors"
+                : "well";
+          return [agentId, { online, status, lastSeen, ageMs }] as const;
+        } catch {
+          return [
+            agentId,
+            { online: false, status: "unknown" } satisfies AgentHealth
+          ] as const;
+        }
+      })
+    );
+    setAgentHealthById(Object.fromEntries(entries));
+  }, [settings.selectedAgentIds]);
 
   const refreshConnectivity = useCallback(() => {
     void updateServerHealth();
@@ -314,8 +566,29 @@ export default function App() {
 
   useEffect(() => {
     void loadStudies();
+    void loadXAStudies();
+    void loadRequestHistory();
     refreshConnectivity();
-  }, [loadStudies, refreshConnectivity]);
+  }, [loadRequestHistory, loadStudies, loadXAStudies, refreshConnectivity]);
+
+  useEffect(() => {
+    void getAgents()
+      .then((ids) => {
+        if (!ids.length) return;
+        setSettings((current) => {
+          const agentIds = [...new Set([...current.agentIds, ...ids])].sort(
+            (left, right) => left - right
+          );
+          if (agentIds.length === current.agentIds.length) return current;
+          const next = { ...current, agentIds };
+          saveSettings(next);
+          return next;
+        });
+      })
+      .catch(() => {
+        // Older backend deployments do not expose the agent directory yet.
+      });
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(refreshConnectivity, 30_000);
@@ -333,11 +606,37 @@ export default function App() {
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
-    document.documentElement.style.backgroundColor = colors.canvas;
-    document.body.style.margin = "0";
-    document.body.style.overflow = "hidden";
-    document.body.style.fontFamily =
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    const viewport = document.querySelector<HTMLMetaElement>(
+      'meta[name="viewport"]'
+    );
+    if (viewport) {
+      viewport.content =
+        "width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover";
+    }
+    const root = document.getElementById("root");
+    Object.assign(document.documentElement.style, {
+      width: "100%",
+      height: "100%",
+      backgroundColor: colors.canvas,
+      overflow: "hidden",
+      overscrollBehavior: "none"
+    });
+    Object.assign(document.body.style, {
+      width: "100%",
+      height: "100%",
+      margin: "0",
+      overflow: "hidden",
+      position: "fixed",
+      inset: "0",
+      overscrollBehavior: "none",
+      touchAction: "pan-y",
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    });
+    if (root) {
+      root.style.width = "100%";
+      root.style.height = "100%";
+      root.style.overflow = "hidden";
+    }
   }, []);
 
   useEffect(() => {
@@ -367,29 +666,42 @@ export default function App() {
   }, [requests]);
 
   useEffect(() => {
+    const newlyCompleted = requests.filter(
+      (request) =>
+        request.status === "completed" &&
+        !processedCompletions.current.has(request.id)
+    );
+    newlyCompleted.forEach((request) => processedCompletions.current.add(request.id));
+    if (newlyCompleted.some((request) =>
+      ["import_study", "get_xa", "get_ct", "send_xa_to_pacs", "send_ct_to_pacs"]
+        .includes(request.command)
+    )) {
+      void loadStudies();
+      void loadXAStudies();
+    }
+  }, [loadStudies, loadXAStudies, requests]);
+
+  useEffect(() => {
+    const latest = requests.find(
+      (request) => request.command === "get_plan" && request.status === "completed"
+    );
+    if (latest) setPlan(parseObject(latest.result) as OperationPlan);
+  }, [requests]);
+
+  useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 4_000);
     return () => clearTimeout(timer);
   }, [toast]);
 
-  const modalities = useMemo(() => {
-    const values = new Set(
-      studies.map((study) => study.study_type.toUpperCase()).filter(Boolean)
-    );
-    const preferred = ["CT", "XA", "КАГ", "ЦАГ"];
-    return [
-      "Все",
-      ...preferred.filter((item) => values.has(item)),
-      ...[...values].filter((item) => !preferred.includes(item)).slice(0, 5)
-    ];
-  }, [studies]);
-
   const filteredStudies = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("ru");
     return studies.filter((study) => {
-      const modalityMatches =
-        modality === "Все" || study.study_type.toUpperCase() === modality;
-      if (!modalityMatches) return false;
+      if (["xa", "ct"].includes(study.study_type.toLowerCase())) return false;
+      const date = new Date(study.time_beginning);
+      const weekday = Number.isNaN(date.getTime()) ? 0 : date.getDay();
+      if (dayFilter !== "all" && weekday !== Number(dayFilter)) return false;
+      if (category !== "all" && studyCategory(study) !== category) return false;
       if (!query) return true;
       return [
         study.patient,
@@ -399,7 +711,7 @@ export default function App() {
         study.study_id
       ].some((value) => value.toLocaleLowerCase("ru").includes(query));
     });
-  }, [modality, search, studies]);
+  }, [category, dayFilter, search, studies]);
 
   const recordRequest = useCallback((request: UserRequest) => {
     setRequests((current) => {
@@ -435,11 +747,18 @@ export default function App() {
 
   const saveAppSettings = useCallback(
     (next: AppSettings) => {
+      const agentIds = [...new Set(next.agentIds)]
+        .filter((value) => Number.isInteger(value) && value > 0);
+      const selectedAgentIds = [...new Set(next.selectedAgentIds)]
+        .filter((value) => agentIds.includes(value))
+        .slice(0, 2);
+      const fallbackAgent = agentIds[0] ?? defaultSettings.agentId;
       const normalized = {
-        agentId:
-          Number.isInteger(next.agentId) && next.agentId > 0
-            ? next.agentId
-            : defaultSettings.agentId,
+        agentId: selectedAgentIds[0] ?? fallbackAgent,
+        agentIds: agentIds.length ? agentIds : [fallbackAgent],
+        selectedAgentIds: selectedAgentIds.length
+          ? selectedAgentIds
+          : [fallbackAgent],
         userId: next.userId.trim() || defaultSettings.userId
       };
       setSettings(normalized);
@@ -452,12 +771,70 @@ export default function App() {
     []
   );
 
-  const refreshActiveScreen = () => {
-    if (activeTab === "reports") void loadReports();
-    else if (activeTab === "angiography") void loadXAStudies();
-    else void loadStudies();
-    refreshConnectivity();
-  };
+  const removeStudy = useCallback(async (study: Study) => {
+    try {
+      await deleteStudy(study.id);
+      setStudies((current) => current.filter((item) => item.id !== study.id));
+      setSelectedStudy(null);
+      setToast({ message: "Протокол удалён", tone: "success" });
+    } catch (error) {
+      setToast({ message: errorMessage(error), tone: "danger" });
+    }
+  }, []);
+
+  const removeRequest = useCallback(async (request: UserRequest) => {
+    try {
+      await deleteUserRequest(request.id, settings.userId);
+      setRequests((current) => {
+        const next = current.filter((item) => item.id !== request.id);
+        saveRequests(next);
+        return next;
+      });
+    } catch (error) {
+      setToast({ message: errorMessage(error), tone: "danger" });
+    }
+  }, [settings.userId]);
+
+  const removeReport = useCallback(async (report: ReportDocument) => {
+    if (!report.filename) {
+      setToast({ message: "У отчёта отсутствует имя файла", tone: "danger" });
+      return;
+    }
+    try {
+      await deleteReport(report.filename);
+      setReports((current) =>
+        current.filter((item) => item.filename !== report.filename)
+      );
+      setToast({ message: "Отчёт удалён", tone: "success" });
+    } catch (error) {
+      setToast({ message: errorMessage(error), tone: "danger" });
+    }
+  }, []);
+
+  const primaryAgentHealth =
+    agentHealthById[settings.agentId] ??
+    ({ online: false, status: "unknown" } satisfies AgentHealth);
+
+  const switchTab = useCallback((direction: -1 | 1) => {
+    const current = tabs.findIndex((tab) => tab.id === activeTab);
+    const next = current + direction;
+    if (next >= 0 && next < tabs.length) setActiveTab(tabs[next]!.id);
+  }, [activeTab]);
+
+  const pageSwipe = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          compact &&
+          Math.abs(gesture.dx) > 24 &&
+          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.6,
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dx < -70) switchTab(1);
+          if (gesture.dx > 70) switchTab(-1);
+        }
+      }),
+    [compact, switchTab]
+  );
 
   const isAngiography = activeTab === "angiography";
 
@@ -469,26 +846,21 @@ export default function App() {
       >
         <StatusBar style={isAngiography ? "light" : "dark"} />
         <View style={styles.app}>
-          {!compact ? (
-            <Sidebar
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
-              health={health}
-              agentHealth={agentHealth}
-            />
-          ) : null}
-
           <View style={styles.main}>
             <TopBar
               compact={compact}
               activeTab={activeTab}
               health={health}
-              agentHealth={agentHealth}
-              onRefresh={refreshActiveScreen}
-              onCommand={() => setCommandOpen(true)}
+              selectedAgentIds={settings.selectedAgentIds}
+              agentHealthById={agentHealthById}
+              onMenu={() => setMenuOpen(true)}
+              onTabChange={setActiveTab}
             />
 
-            <View style={[styles.content, isAngiography && styles.contentDark]}>
+            <View
+              {...(compact ? pageSwipe.panHandlers : {})}
+              style={[styles.content, isAngiography && styles.contentDark]}
+            >
               {activeTab === "studies" ? (
                 <StudiesScreen
                   compact={compact}
@@ -498,11 +870,12 @@ export default function App() {
                   loading={studiesLoading}
                   error={studiesError}
                   search={search}
-                  modality={modality}
-                  modalities={modalities}
+                  dayFilter={dayFilter}
+                  category={category}
                   selected={selectedStudy}
                   onSearch={setSearch}
-                  onModality={setModality}
+                  onDayFilter={setDayFilter}
+                  onFilter={() => setFilterOpen(true)}
                   onSelect={setSelectedStudy}
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
@@ -510,6 +883,8 @@ export default function App() {
                   onRequestStudy={(study, command) =>
                     void submitCommand(command, { study_uid: study.study_id })
                   }
+                  angiographies={xaStudies}
+                  onDelete={(study) => void removeStudy(study)}
                 />
               ) : null}
               {activeTab === "angiography" ? (
@@ -519,7 +894,14 @@ export default function App() {
                   loading={xaLoading}
                   error={xaError}
                   onRetry={() => void loadXAStudies()}
-                  onFind={() => setCommandOpen(true)}
+                  onSend={(study) =>
+                    void submitCommand(
+                      study.study_type.toLowerCase() === "ct"
+                        ? "send_ct_to_pacs"
+                        : "send_xa_to_pacs",
+                      { study_uid: study.study_id }
+                    )
+                  }
                 />
               ) : null}
               {activeTab === "requests" ? (
@@ -541,6 +923,16 @@ export default function App() {
                       });
                     }
                   }}
+                  onDelete={(item) => void removeRequest(item)}
+                  onDeleteAll={async () => {
+                    try {
+                      await deleteAllUserRequests(settings.userId, settings.agentId);
+                      setRequests([]);
+                      saveRequests([]);
+                    } catch (error) {
+                      setToast({ message: errorMessage(error), tone: "danger" });
+                    }
+                  }}
                 />
               ) : null}
               {activeTab === "reports" ? (
@@ -553,15 +945,25 @@ export default function App() {
                   onRequest={() =>
                     void submitCommand("get_report", { period: 1 })
                   }
+                  onDelete={(report) => void removeReport(report)}
+                  onForward={(report) => void shareReport(report)}
                 />
               ) : null}
               {activeTab === "settings" ? (
                 <SettingsScreen
                   settings={settings}
                   health={health}
-                  agentHealth={agentHealth}
+                  agentHealthById={agentHealthById}
                   onSave={saveAppSettings}
                   onCheck={refreshConnectivity}
+                />
+              ) : null}
+              {activeTab === "plan" ? (
+                <PlanScreen
+                  plan={plan}
+                  onRequest={(date) =>
+                    void submitCommand("get_plan", date ? { date } : {})
+                  }
                 />
               ) : null}
             </View>
@@ -581,6 +983,26 @@ export default function App() {
           onClose={() => setCommandOpen(false)}
           onSubmit={submitCommand}
         />
+        <MobileMenu
+          visible={menuOpen}
+          settings={settings}
+          health={health}
+          agentHealth={primaryAgentHealth}
+          onClose={() => setMenuOpen(false)}
+          onSettings={() => {
+            setMenuOpen(false);
+            setActiveTab("settings");
+          }}
+        />
+        <StudyFilterSheet
+          visible={filterOpen}
+          selected={category}
+          onClose={() => setFilterOpen(false)}
+          onSelect={(value) => {
+            setCategory(value);
+            setFilterOpen(false);
+          }}
+        />
         {toast ? (
           <Toast
             message={toast.message}
@@ -590,86 +1012,6 @@ export default function App() {
         ) : null}
       </SafeAreaView>
     </SafeAreaProvider>
-  );
-}
-
-function Sidebar({
-  activeTab,
-  onTabChange,
-  health,
-  agentHealth
-}: {
-  activeTab: Tab;
-  onTabChange: (tab: Tab) => void;
-  health: ApiHealth | null;
-  agentHealth: AgentHealth;
-}) {
-  return (
-    <View style={styles.sidebar}>
-      <View style={styles.brand}>
-        <View style={styles.brandMark}>
-          <Icon name="scan" size={23} color={darkColors.primary} />
-        </View>
-        <View>
-          <Text style={styles.brandName}>VIEWER</Text>
-          <Text style={styles.brandSub}>CLINICAL</Text>
-        </View>
-      </View>
-
-      <View style={styles.nav}>
-        <Text style={styles.navLabel}>РАБОЧЕЕ ПРОСТРАНСТВО</Text>
-        {tabs.map((tab) => {
-          const active = activeTab === tab.id;
-          return (
-            <Pressable
-              key={tab.id}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              onPress={() => onTabChange(tab.id)}
-              style={({ pressed }) => [
-                styles.navItem,
-                active && styles.navItemActive,
-                pressed && styles.pressed
-              ]}
-            >
-              <Icon
-                name={
-                  active
-                    ? (tab.icon.replace("-outline", "") as IconName)
-                    : tab.icon
-                }
-                color={active ? darkColors.primary : darkColors.textMuted}
-              />
-              <Text style={[styles.navText, active && styles.navTextActive]}>
-                {tab.label}
-              </Text>
-              {active ? <View style={styles.navIndicator} /> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <View style={styles.sidebarFoot}>
-        <StatusLine
-          dark
-          icon="server-outline"
-          label="Сервер"
-          online={Boolean(health?.ok)}
-          meta={health?.ok ? "Viewer API доступен" : "нет соединения"}
-        />
-        <StatusLine
-          dark
-          icon="hardware-chip-outline"
-          label={`Агент ${agentHealth.status === "with_errors" ? "с ошибками" : ""}`}
-          online={agentHealth.online && agentHealth.status === "well"}
-          warning={agentHealth.status === "with_errors"}
-          meta={relativeTime(agentHealth.lastSeen)}
-        />
-        <Text style={styles.privacyNote}>
-          Клинические данные. Используйте только на доверенном устройстве.
-        </Text>
-      </View>
-    </View>
   );
 }
 
@@ -724,74 +1066,120 @@ function TopBar({
   compact,
   activeTab,
   health,
-  agentHealth,
-  onRefresh,
-  onCommand
+  selectedAgentIds,
+  agentHealthById,
+  onMenu,
+  onTabChange
 }: {
   compact: boolean;
   activeTab: Tab;
   health: ApiHealth | null;
-  agentHealth: AgentHealth;
-  onRefresh: () => void;
-  onCommand: () => void;
+  selectedAgentIds: number[];
+  agentHealthById: Record<number, AgentHealth>;
+  onMenu: () => void;
+  onTabChange: (tab: Tab) => void;
 }) {
   const active = tabs.find((item) => item.id === activeTab) ?? tabs[0]!;
   const dark = activeTab === "angiography";
+  const statusColor = (agentId: number) => {
+    const agent = agentHealthById[agentId];
+    if (agent?.online && agent.status === "well") return colors.success;
+    if (agent?.status === "with_errors") return colors.warning;
+    return colors.danger;
+  };
   if (compact) {
     return (
-      <View
-        style={[
-          styles.topBar,
-          styles.topBarCompact,
-          dark && styles.topBarDark
-        ]}
-      >
+      <View style={[styles.mobileHeaderFloat, dark && styles.topBarDark]}>
+        <IconButton icon="menu" label="Меню" onPress={onMenu} />
+        <View style={[styles.mobileTitlePill, dark && styles.healthPillDark]}>
+          <Text
+            numberOfLines={1}
+            style={[styles.mobileTopTitle, dark && styles.textDark]}
+          >
+            {active.label}
+          </Text>
+        </View>
         <View style={styles.mobileStatusPair}>
           <View
             accessibilityLabel={health?.ok ? "Сервер доступен" : "Сервер недоступен"}
-            style={[
-              styles.mobileStatusDot,
-              { backgroundColor: health?.ok ? colors.success : colors.danger }
-            ]}
-          />
-          <View
-            accessibilityLabel={
-              agentHealth.online ? "Агент доступен" : "Агент недоступен"
-            }
-            style={[
-              styles.mobileStatusDot,
-              {
-                backgroundColor:
-                  agentHealth.online && agentHealth.status === "well"
-                    ? colors.success
-                    : agentHealth.status === "with_errors"
-                      ? colors.warning
-                      : colors.danger
-              }
-            ]}
-          />
+            style={[styles.mobileStatusIcon, dark && styles.healthPillDark]}
+          >
+            <Icon name="server-outline" size={16}
+              color={health?.ok ? colors.success : colors.danger} />
+          </View>
+          {selectedAgentIds.map((agentId) => (
+            <View
+              key={agentId}
+              accessibilityLabel={`Агент ${agentId}`}
+              style={[styles.mobileStatusIcon, dark && styles.healthPillDark]}
+            >
+              <Icon
+                name="hardware-chip-outline"
+                size={15}
+                color={statusColor(agentId)}
+              />
+              <Text style={[styles.agentStatusNumber, dark && styles.textDark]}>
+                {agentId}
+              </Text>
+            </View>
+          ))}
         </View>
-        <Text
-          numberOfLines={1}
-          style={[styles.mobileTopTitle, dark && styles.textDark]}
-        >
-          {active.label}
-        </Text>
-        <IconButton icon="refresh" label="Обновить" onPress={onRefresh} />
       </View>
     );
   }
   return (
-    <View style={[styles.topBar, dark && styles.topBarDark]}>
-      <View>
-        <Text style={[styles.topTitle, dark && styles.textDark]}>
-          {active.label}
+    <View style={[styles.desktopHeaderFloat, dark && styles.topBarDark]}>
+      <View style={styles.headerBrandGroup}>
+        <IconButton icon="menu" label="Меню" onPress={onMenu} />
+        <View style={styles.headerBrandMark}>
+          <Icon name="scan" size={18} color={darkColors.primary} />
+        </View>
+        <Text style={[styles.headerBrandText, dark && styles.textDark]}>
+          VIEWER
         </Text>
-        <Text style={[styles.topSubtitle, dark && styles.textMutedDark]}>
-          {dark
-            ? "Диагностический просмотр XA в OHIF"
-            : "Единое рабочее пространство клинических исследований"}
-        </Text>
+      </View>
+      <View style={styles.desktopTabBar}>
+        {tabs.map((tab) => {
+          const selected = activeTab === tab.id;
+          return (
+            <Pressable
+              key={tab.id}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => onTabChange(tab.id)}
+              style={[
+                styles.desktopTabButton,
+                dark && styles.desktopTabButtonDark,
+                selected && styles.desktopTabButtonActive
+              ]}
+            >
+              <Icon
+                name={
+                  selected
+                    ? (tab.icon.replace("-outline", "") as IconName)
+                    : tab.icon
+                }
+                size={17}
+                color={
+                  selected
+                    ? colors.primary
+                    : dark
+                      ? darkColors.textMuted
+                      : colors.textMuted
+                }
+              />
+              <Text
+                style={[
+                  styles.desktopTabText,
+                  dark && styles.textMutedDark,
+                  selected && styles.desktopTabTextActive
+                ]}
+              >
+                {tab.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
       <View style={styles.topActions}>
         <View style={[styles.healthPill, dark && styles.healthPillDark]}>
@@ -805,26 +1193,22 @@ function TopBar({
             Сервер
           </Text>
         </View>
-        <View style={[styles.healthPill, dark && styles.healthPillDark]}>
+        {selectedAgentIds.map((agentId) => (
           <View
-            style={[
-              styles.healthDot,
-              {
-                backgroundColor:
-                  agentHealth.online && agentHealth.status === "well"
-                    ? colors.success
-                    : agentHealth.status === "with_errors"
-                      ? colors.warning
-                      : colors.danger
-              }
-            ]}
-          />
-          <Text style={[styles.healthText, dark && styles.textMutedDark]}>
-            Агент {agentHealth.online ? "" : "offline"}
-          </Text>
-        </View>
-        <IconButton icon="refresh" label="Обновить" onPress={onRefresh} />
-        <Button label="Новый запрос" icon="add" onPress={onCommand} />
+            key={agentId}
+            style={[styles.healthPill, dark && styles.healthPillDark]}
+          >
+            <View
+              style={[
+                styles.healthDot,
+                { backgroundColor: statusColor(agentId) }
+              ]}
+            />
+            <Text style={[styles.healthText, dark && styles.textMutedDark]}>
+              Агент {agentId}
+            </Text>
+          </View>
+        ))}
       </View>
     </View>
   );
@@ -848,11 +1232,19 @@ function MobileNavigation({
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
               onPress={() => onTabChange(tab.id)}
-              style={styles.mobileNavItem}
+              style={({ pressed }) => [
+                styles.mobileNavItem,
+                active && styles.mobileNavItemActive,
+                pressed && styles.mobileNavItemPressed
+              ]}
             >
               <Icon
-                name={tab.icon}
-                size={20}
+                name={
+                  active
+                    ? (tab.icon.replace("-outline", "") as IconName)
+                    : tab.icon
+                }
+                size={19}
                 color={active ? colors.primary : colors.textDim}
               />
               <Text
@@ -880,16 +1272,19 @@ function StudiesScreen({
   loading,
   error,
   search,
-  modality,
-  modalities,
+  dayFilter,
+  category,
   selected,
   onSearch,
-  onModality,
+  onDayFilter,
+  onFilter,
   onSelect,
   onRetry,
   onRefresh,
   onCommand,
-  onRequestStudy
+  onRequestStudy,
+  angiographies,
+  onDelete
 }: {
   compact: boolean;
   inlineDetail: boolean;
@@ -898,19 +1293,21 @@ function StudiesScreen({
   loading: boolean;
   error: string;
   search: string;
-  modality: string;
-  modalities: string[];
+  dayFilter: DayFilter;
+  category: StudyCategory;
   selected: Study | null;
   onSearch: (value: string) => void;
-  onModality: (value: string) => void;
+  onDayFilter: (value: DayFilter) => void;
+  onFilter: () => void;
   onSelect: (study: Study | null) => void;
   onRetry: () => void;
   onRefresh: () => void;
   onCommand: () => void;
   onRequestStudy: (study: Study, command: "get_ct" | "get_xa") => void;
+  angiographies: Study[];
+  onDelete: (study: Study) => void;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
-  const [filtersVisible, setFiltersVisible] = useState(!compact);
   const choose = (study: Study) => {
     onSelect(study);
     if (!inlineDetail) setDetailOpen(true);
@@ -918,41 +1315,46 @@ function StudiesScreen({
 
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
-      {!compact ? (
-        <SectionHeader
-          eyebrow={`${total} записей на сервере`}
-          title="Клинические исследования"
-          description="Слева — компактный список пациентов, справа — полный протокол операции."
-        />
-      ) : null}
-
       <View style={[styles.studyToolbar, compact && styles.studyToolbarCompact]}>
         <SearchField
           value={search}
           onChangeText={onSearch}
           placeholder={compact ? "Поиск пациента" : "Пациент, хирург, операция или ID"}
-          filterActive={modality !== "Все"}
-          onFilter={
-            compact ? () => setFiltersVisible((value) => !value) : undefined
-          }
+          filterActive={category !== "all"}
+          onFilter={onFilter}
         />
-        {filtersVisible ? (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={compact ? styles.mobileChipsScroll : undefined}
-            contentContainerStyle={styles.chips}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={
+            compact ? styles.mobileChipsScroll : styles.weekdayChipsDesktop
+          }
+          contentContainerStyle={styles.weekdayChips}
+        >
+          {dayFilters.map((item) => (
+            <Chip
+              key={item.id}
+              label={item.label}
+              selected={dayFilter === item.id}
+              onPress={() => onDayFilter(item.id)}
+            />
+          ))}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Фильтр по типу операции"
+            onPress={onFilter}
+            style={[
+              styles.filterChipButton,
+              category !== "all" && styles.filterChipButtonActive
+            ]}
           >
-            {modalities.map((item) => (
-              <Chip
-                key={item}
-                label={item}
-                selected={modality === item}
-                onPress={() => onModality(item)}
-              />
-            ))}
-          </ScrollView>
-        ) : null}
+            <Icon
+              name="options-outline"
+              size={17}
+              color={category !== "all" ? colors.primary : colors.textMuted}
+            />
+          </Pressable>
+        </ScrollView>
       </View>
 
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
@@ -974,14 +1376,23 @@ function StudiesScreen({
               contentContainerStyle={styles.studyList}
             >
               {studies.map((study, index) => (
-                <StudyRow
-                  key={study.id}
-                  study={study}
-                  index={index}
-                  compact={compact}
-                  selected={selected?.id === study.id}
-                  onPress={() => choose(study)}
-                />
+                <SwipeableCard key={study.id} onDelete={() => onDelete(study)}
+                  onForward={() => void Share.share({
+                    title: `Протокол операции — ${study.patient}`,
+                    message: `${study.patient}\n${study.name_operation}\n\n${study.descr_operation}`
+                  })}>
+                  <StudyRow
+                    study={study}
+                    index={index}
+                    compact={compact}
+                    selected={selected?.id === study.id}
+                    hasXA={angiographies.some((item) =>
+                      patientKey(item.patient) === patientKey(study.patient) &&
+                      item.study_type.toLowerCase() === "xa"
+                    )}
+                    onPress={() => choose(study)}
+                  />
+                </SwipeableCard>
               ))}
             </ScrollView>
           ) : (
@@ -1043,15 +1454,16 @@ function StudyRow({
   index,
   compact,
   selected,
-  onPress
+  onPress,
+  hasXA
 }: {
   study: Study;
   index: number;
   compact: boolean;
   selected: boolean;
   onPress: () => void;
+  hasXA: boolean;
 }) {
-  const type = study.study_type.toUpperCase() || "DICOM";
   return (
     <Pressable
       accessibilityRole="button"
@@ -1072,15 +1484,17 @@ function StudyRow({
           <Text numberOfLines={1} style={styles.studyPatient}>
             {study.patient}
           </Text>
-          <Badge label={type} />
         </View>
         <Text numberOfLines={1} style={styles.studyOperation}>
           {study.name_operation}
         </Text>
       </View>
-      <Text style={styles.studyDateCompact}>
-        {formatDate(study.time_beginning)}
-      </Text>
+      <View style={styles.studyTrailing}>
+        <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
+        <View style={[styles.xaState, !hasXA && styles.xaStateInactive]}>
+          <Text style={[styles.xaStateText, !hasXA && styles.xaStateTextInactive]}>XA</Text>
+        </View>
+      </View>
     </Pressable>
   );
 }
@@ -1092,8 +1506,6 @@ function StudyDetails({
   study: Study;
   onRequest: (study: Study, command: "get_ct" | "get_xa") => void;
 }) {
-  const ohifURL =
-    process.env.EXPO_PUBLIC_OHIF_URL ?? "http://135.106.130.37:3000";
   const type = study.study_type.toUpperCase();
   const preferredCommand: "get_ct" | "get_xa" =
     type.includes("CT") ? "get_ct" : "get_xa";
@@ -1140,33 +1552,14 @@ function StudyDetails({
       </View>
 
       <View style={styles.detailsActions}>
-        {study.dicom_link ? (
-          <Button
-            label="Открыть DICOM"
-            icon="open-outline"
-            onPress={() =>
-              void Linking.openURL(
-                study.dicom_link.startsWith("http")
-                  ? study.dicom_link
-                  : ohifURL
-              )
-            }
-            style={styles.flexButton}
-          />
-        ) : (
+        {!study.dicom_link ? (
           <Button
             label={`Запросить ${preferredCommand === "get_ct" ? "CT" : "XA"}`}
             icon="cloud-download-outline"
             onPress={() => onRequest(study, preferredCommand)}
             style={styles.flexButton}
           />
-        )}
-        <Button
-          label="OHIF"
-          icon="desktop-outline"
-          variant="secondary"
-          onPress={() => void Linking.openURL(ohifURL)}
-        />
+        ) : null}
       </View>
     </View>
   );
@@ -1187,14 +1580,14 @@ function AngiographyScreen({
   loading,
   error,
   onRetry,
-  onFind
+  onSend
 }: {
   compact: boolean;
   studies: Study[];
   loading: boolean;
   error: string;
   onRetry: () => void;
-  onFind: () => void;
+  onSend: (study: Study) => void;
 }) {
   const [selected, setSelected] = useState<Study | null>(studies[0] ?? null);
   const [mobileViewer, setMobileViewer] = useState(false);
@@ -1213,25 +1606,11 @@ function AngiographyScreen({
 
   const choose = (study: Study) => {
     setSelected(study);
-    if (compact) setMobileViewer(true);
+    if (compact && study.study_type.toLowerCase() === "xa") setMobileViewer(true);
   };
 
   return (
     <View style={styles.angioScreen}>
-      <View style={styles.angioHeading}>
-        <View>
-          <Text style={styles.angioEyebrow}>XA · ANGIOGRAPHY</Text>
-          <Text style={styles.angioTitle}>Просмотр ангиографий</Text>
-          <Text style={styles.angioSubtitle}>
-            Исследования XA, загруженные агентом и импортированные в PACS.
-          </Text>
-        </View>
-        <Button
-          label="Найти XA"
-          icon="search-outline"
-          onPress={onFind}
-        />
-      </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading ? (
         <LoadingState label="Проверяем XA-исследования…" />
@@ -1264,11 +1643,15 @@ function AngiographyScreen({
                     {formatDate(study.time_beginning)} · {study.study_id}
                   </Text>
                 </View>
-                <Icon
-                  name="chevron-forward"
-                  size={17}
-                  color={darkColors.textDim}
+                <Badge label={study.study_type.toUpperCase()} />
+                <IconButton
+                  icon="cloud-upload-outline"
+                  label="Отправить в PACS"
+                  onPress={() => onSend(study)}
                 />
+                {compact && study.study_type.toLowerCase() === "xa" ? (
+                  <Icon name="chevron-forward" size={17} color={darkColors.textDim} />
+                ) : null}
               </Pressable>
             ))}
           </ScrollView>
@@ -1276,16 +1659,12 @@ function AngiographyScreen({
             <View style={styles.angioViewer}>
               <View style={styles.angioViewerBar}>
                 <View>
-                  <Text style={styles.angioViewerPatient}>
-                    {selected.patient}
-                  </Text>
+                  <Text style={styles.angioViewerPatient}>{selected.patient}</Text>
                   <Text style={styles.angioMeta}>{selected.study_id}</Text>
                 </View>
-                <Button
-                  label="Открыть отдельно"
-                  variant="secondary"
-                  compact
+                <IconButton
                   icon="open-outline"
+                  label="Открыть отдельно"
                   onPress={() => void Linking.openURL(viewerURL)}
                 />
               </View>
@@ -1301,12 +1680,11 @@ function AngiographyScreen({
       ) : (
         <View style={styles.angioEmpty}>
           <Icon name="scan-outline" size={32} color={darkColors.primary} />
-          <Text style={styles.angioEmptyTitle}>XA пока не загружены</Text>
+          <Text style={styles.angioEmptyTitle}>XA и CT пока не загружены</Text>
           <Text style={styles.angioEmptyText}>
             Выполните поиск XA по фамилии, затем загрузите выбранное
             исследование. После импорта оно появится здесь автоматически.
           </Text>
-          <Button label="Найти XA в PACS" onPress={onFind} />
         </View>
       )}
 
@@ -1337,7 +1715,9 @@ function RequestsScreen({
   studies,
   onCommand,
   onSubmit,
-  onRefresh
+  onRefresh,
+  onDelete,
+  onDeleteAll
 }: {
   compact: boolean;
   requests: UserRequest[];
@@ -1348,45 +1728,51 @@ function RequestsScreen({
     payload: Record<string, unknown>
   ) => Promise<boolean>;
   onRefresh: (request: UserRequest) => void;
+  onDelete: (request: UserRequest) => void;
+  onDeleteAll: () => void;
 }) {
   return (
-    <ScrollView
-      style={styles.screen}
-      showsVerticalScrollIndicator={false}
-      contentContainerStyle={styles.scrollScreen}
-    >
-      <SectionHeader
-        eyebrow="Связь с больничным контуром"
-        title="Задания агенту"
-        description="Результаты поиска протоколов и PACS-исследований можно открыть прямо здесь."
-        action={
-          !compact ? (
-            <Button
-              label="Новое задание"
-              icon="add"
-              onPress={onCommand}
-            />
-          ) : undefined
-        }
-      />
-      <View style={styles.infoBanner}>
-        <Icon name="information-circle-outline" color={colors.primary} />
-        <Text style={styles.infoBannerText}>
-          Найденный протокол не всегда автоматически сохранён в Studies.
-          Карточка результата явно показывает, есть ли он уже в базе.
-        </Text>
+    <View style={[styles.screen, compact && styles.screenCompact]}>
+      <View style={styles.compactScreenToolbar}>
+        <View>
+          <Text style={styles.compactScreenTitle}>История заданий</Text>
+          <Text style={styles.compactScreenMeta}>{requests.length} записей</Text>
+        </View>
+        <View style={styles.compactToolbarActions}>
+          <IconButton icon="add" label="Новое задание" onPress={onCommand} />
+        {requests.length ? (
+          <IconButton
+            icon="trash-outline"
+            label="Очистить историю заданий"
+            onPress={() => confirmDeleteAll(
+              "Удалить всю историю заданий этого пользователя?",
+              onDeleteAll
+            )}
+          />
+        ) : null}
+        </View>
       </View>
-      {requests.length ? (
+      <ScrollView
+        style={styles.flexScroll}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.requestScrollContent}
+      >
+        {requests.length ? (
         <View style={styles.requestList}>
           {requests.map((request) => (
-            <RequestCard
-              key={request.id}
-              compact={compact}
-              request={request}
-              studies={studies}
-              onSubmit={onSubmit}
-              onRefresh={() => onRefresh(request)}
-            />
+            <SwipeableCard key={request.id} onDelete={() => onDelete(request)}
+              onForward={() => void Share.share({
+                title: commandLabels[request.command] ?? request.command,
+                message: JSON.stringify(parseObject(request.result), null, 2)
+              })}>
+              <RequestCard
+                compact={compact}
+                request={request}
+                studies={studies}
+                onSubmit={onSubmit}
+                onRefresh={() => onRefresh(request)}
+              />
+            </SwipeableCard>
           ))}
         </View>
       ) : (
@@ -1396,8 +1782,9 @@ function RequestsScreen({
           description="Создайте запрос на поиск протокола, XA/CT или получение отчёта."
           action={<Button label="Создать задание" onPress={onCommand} />}
         />
-      )}
-    </ScrollView>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -1460,7 +1847,6 @@ function RequestCard({
           <Text style={styles.requestMetaText}>
             {formatDate(request.created_at, true)}
           </Text>
-          <Text style={styles.requestId}>#{request.id.slice(0, 8)}</Text>
         </View>
         {request.errors ? (
           <Text style={styles.requestError}>{request.errors}</Text>
@@ -1532,6 +1918,17 @@ function RequestCard({
                     protocol.descr_operation ?? "Описание протокола отсутствует"
                   )}
                 </Text>
+                {!saved && protocol.protocol_ref ? (
+                  <Button
+                    label="Загрузить этот протокол"
+                    icon="cloud-upload-outline"
+                    onPress={() =>
+                      void onSubmit("import_study", {
+                        protocol_ref: String(protocol.protocol_ref)
+                      })
+                    }
+                  />
+                ) : null}
               </View>
             );
           })}
@@ -1587,7 +1984,9 @@ function ReportsScreen({
   loading,
   error,
   onRetry,
-  onRequest
+  onRequest,
+  onDelete,
+  onForward
 }: {
   compact: boolean;
   reports: ReportDocument[];
@@ -1595,6 +1994,8 @@ function ReportsScreen({
   error: string;
   onRetry: () => void;
   onRequest: () => void;
+  onDelete: (report: ReportDocument) => void;
+  onForward: (report: ReportDocument) => void;
 }) {
   const [selected, setSelected] = useState<ReportDocument | null>(
     reports[0] ?? null
@@ -1612,20 +2013,17 @@ function ReportsScreen({
 
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
-      {!compact ? (
-        <SectionHeader
-          eyebrow="Операционная отчётность"
-          title="Отчёты дежурств"
-          description="Выберите дату слева — полный отчёт откроется справа."
-          action={
-            <Button
-              label="Запросить свежий"
-              icon="cloud-download-outline"
-              onPress={onRequest}
-            />
-          }
+      <View style={styles.compactScreenToolbar}>
+        <View>
+          <Text style={styles.compactScreenTitle}>Отчёты дежурств</Text>
+          <Text style={styles.compactScreenMeta}>Смахните влево для действий</Text>
+        </View>
+        <IconButton
+          icon="refresh"
+          label="Обновить отчёты"
+          onPress={onRequest}
         />
-      ) : null}
+      </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading ? (
         <LoadingState label="Загружаем отчёты…" />
@@ -1637,12 +2035,20 @@ function ReportsScreen({
             showsVerticalScrollIndicator={false}
           >
             {reports.map((report, index) => (
-              <ReportRow
+              <SwipeableCard
                 key={report.filename ?? `${report.generated_at}-${index}`}
-                report={report}
-                selected={selected?.filename === report.filename}
-                onPress={() => choose(report)}
-              />
+                onDelete={() => onDelete(report)}
+                onForward={() => onForward(report)}
+              >
+                <ReportRow
+                  report={report}
+                  selected={selected?.filename === report.filename}
+                  compact={compact}
+                  onPress={() => choose(report)}
+                  onDelete={() => onDelete(report)}
+                  onForward={() => onForward(report)}
+                />
+              </SwipeableCard>
             ))}
           </ScrollView>
           {!compact && selected ? (
@@ -1684,11 +2090,17 @@ function ReportsScreen({
 function ReportRow({
   report,
   selected,
-  onPress
+  compact,
+  onPress,
+  onDelete,
+  onForward
 }: {
   report: ReportDocument;
   selected: boolean;
+  compact: boolean;
   onPress: () => void;
+  onDelete: () => void;
+  onForward: () => void;
 }) {
   const data = reportData(report);
   const total =
@@ -1711,13 +2123,23 @@ function ReportRow({
           {data.period_days ?? 1} сут. · {total} операций
         </Text>
       </View>
-      <Icon name="chevron-forward" size={17} color={colors.textDim} />
+      {compact ? (
+        <Icon name="chevron-forward" size={17} color={colors.textDim} />
+      ) : (
+        <View style={styles.reportRowActions}>
+          <IconButton icon="share-outline" label="Переслать отчёт" onPress={onForward} />
+          <IconButton icon="trash-outline" label="Удалить отчёт" onPress={onDelete} />
+        </View>
+      )}
     </Pressable>
   );
 }
 
 function ReportDetail({ report }: { report: ReportDocument }) {
   const data = reportData(report);
+  const [section, setSection] = useState<"emergency" | "planned" | "today">(
+    "emergency"
+  );
   return (
     <View style={styles.reportDocument}>
       <View style={styles.reportDocumentHeader}>
@@ -1730,41 +2152,38 @@ function ReportDetail({ report }: { report: ReportDocument }) {
             {data.period_start ?? "—"} — {data.period_end ?? "—"}
           </Text>
         </View>
-        <Badge
-          label={`Агент ${String(report.agent_id ?? "—")}`}
-          tone="neutral"
-        />
       </View>
       <View style={styles.reportStats}>
-        <ReportStat label="Экстренные" value={data.emergency_total ?? 0} />
-        <ReportStat label="Плановые" value={data.planned_count ?? 0} />
+        <ReportStat label="Экстренные" value={data.emergency_total ?? 0}
+          active={section === "emergency"} onPress={() => setSection("emergency")} />
+        <ReportStat label="Плановые" value={data.planned_count ?? 0}
+          active={section === "planned"} onPress={() => setSection("planned")} />
         <ReportStat
           label="План на сегодня"
           value={data.today_planned_count ?? 0}
+          active={section === "today"}
+          onPress={() => setSection("today")}
         />
       </View>
-      <ReportSection
-        title="Экстренные операции"
-        operations={data.emergency_operations ?? []}
-      />
-      <ReportSection
-        title="Плановые операции"
-        operations={data.planned_operations ?? []}
-      />
-      <ReportSection
-        title="План на сегодня"
-        operations={data.today_planned_operations ?? []}
-      />
+      {section === "emergency" ? <ReportSection title="Экстренные операции"
+        operations={data.emergency_operations ?? []} /> : null}
+      {section === "planned" ? <ReportSection title="Плановые операции"
+        operations={data.planned_operations ?? []} /> : null}
+      {section === "today" ? <ReportSection title="План на сегодня"
+        operations={data.today_planned_operations ?? []} /> : null}
     </View>
   );
 }
 
-function ReportStat({ label, value }: { label: string; value: number }) {
+function ReportStat({
+  label, value, active, onPress
+}: { label: string; value: number; active: boolean; onPress: () => void }) {
   return (
-    <View style={styles.reportStat}>
+    <Pressable onPress={onPress}
+      style={[styles.reportStat, active && styles.reportStatActive]}>
       <Text style={styles.reportStatValue}>{value}</Text>
       <Text style={styles.reportStatLabel}>{label}</Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -1812,42 +2231,372 @@ function ReportSection({
   );
 }
 
-function SettingsScreen({
+function PlanScreen({
+  plan,
+  onRequest
+}: {
+  plan: OperationPlan | null;
+  onRequest: (date?: string) => void;
+}) {
+  const [mode, setMode] = useState<"week" | "day">("week");
+  const [selectedDate, setSelectedDate] = useState(
+    plan?.selected_date ?? new Date().toISOString().slice(0, 10)
+  );
+  const days = plan?.days ?? [];
+  const visibleDays = mode === "week"
+    ? days
+    : days.filter((day) => day.date === selectedDate);
+  return (
+    <ScrollView style={styles.screen}
+      contentContainerStyle={styles.planContent}
+      showsVerticalScrollIndicator={false}>
+      <View style={styles.listActions}>
+        <Chip label="Неделя" selected={mode === "week"} onPress={() => setMode("week")} />
+        <Chip label="День" selected={mode === "day"} onPress={() => setMode("day")} />
+        <IconButton
+          icon="refresh"
+          label="Обновить план"
+          onPress={() => onRequest(mode === "day" ? selectedDate : undefined)}
+        />
+      </View>
+      {mode === "day" ? (
+        <Field label="Дата" value={selectedDate} onChangeText={setSelectedDate}
+          placeholder="YYYY-MM-DD" />
+      ) : null}
+      {!days.length ? (
+        <EmptyState icon="calendar-outline" title="План ещё не загружен"
+          description="Обновите данные из недельного файла «План Отчёты» больничного агента."
+          action={<Button label="Обновить" icon="refresh" onPress={() => onRequest()} />} />
+      ) : (
+        <View style={styles.planDays}>
+          {visibleDays.map((day) => (
+            <View key={day.date} style={styles.planDay}>
+              <View style={styles.planDayHeader}>
+                <Text style={styles.planDayTitle}>{formatDate(day.date)}</Text>
+                <Badge label={`${day.operations.length} пациентов`} tone="neutral" />
+              </View>
+              {day.operations.length ? day.operations.map((operation, index) => (
+                <View key={`${operation.patient}-${index}`} style={styles.operationRow}>
+                  <Text style={styles.operationNumber}>{String(index + 1).padStart(2, "0")}</Text>
+                  <View style={styles.operationCopy}>
+                    <Text style={styles.operationPatient}>{operation.patient || "Пациент не указан"}</Text>
+                    <Text style={styles.operationName}>{operation.operation || "Операция не указана"}</Text>
+                    <Text style={styles.operationMeta}>
+                      {operation.age != null ? `${operation.age} лет · ` : ""}
+                      {operation.department || "отделение не указано"}
+                    </Text>
+                  </View>
+                </View>
+              )) : (
+                <Text style={styles.emptyDayText}>Операций нет</Text>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+function MobileMenu({
+  visible,
   settings,
   health,
   agentHealth,
+  onClose,
+  onSettings
+}: {
+  visible: boolean;
+  settings: AppSettings;
+  health: ApiHealth | null;
+  agentHealth: AgentHealth;
+  onClose: () => void;
+  onSettings: () => void;
+}) {
+  const translateX = useRef(new Animated.Value(-380)).current;
+
+  useEffect(() => {
+    if (!visible) return;
+    translateX.setValue(-380);
+    Animated.spring(translateX, {
+      toValue: 0,
+      damping: 22,
+      stiffness: 240,
+      mass: 0.9,
+      useNativeDriver: Platform.OS !== "web"
+    }).start();
+  }, [translateX, visible]);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.drawerRoot}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Закрыть меню"
+          onPress={onClose}
+          style={StyleSheet.absoluteFill}
+        />
+        <Animated.View
+          style={[styles.drawer, { transform: [{ translateX }] }]}
+        >
+          <View style={styles.drawerHeader}>
+            <View style={styles.drawerBrand}>
+              <View style={styles.headerBrandMark}>
+                <Icon name="scan" color={colors.primary} size={21} />
+              </View>
+              <Text style={styles.headerBrandText}>VIEWER</Text>
+            </View>
+            <IconButton icon="close" label="Закрыть меню" onPress={onClose} />
+          </View>
+          <View style={styles.profileCard}>
+            <View style={styles.profileAvatar}>
+              <Icon name="person" color={colors.primary} size={24} />
+            </View>
+            <View style={styles.drawerProfileCopy}>
+              <Text style={styles.settingsTitle}>Клинический пользователь</Text>
+              <Text style={styles.requestMetaText} numberOfLines={1}>
+                {settings.userId}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.drawerStatuses}>
+            <StatusLine
+              icon="server-outline"
+              label="Viewer Backend"
+              online={Boolean(health?.ok)}
+              meta={health?.ok ? "Сервер доступен" : "Нет соединения"}
+            />
+            <StatusLine
+              icon="hardware-chip-outline"
+              label={`Hospital Agent ${settings.agentId}`}
+              online={agentHealth.online && agentHealth.status === "well"}
+              warning={agentHealth.status === "with_errors"}
+              meta={`Heartbeat ${relativeTime(agentHealth.lastSeen)}`}
+            />
+          </View>
+          <View style={styles.drawerMenu}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.drawerItem,
+                pressed && styles.pressed
+              ]}
+              onPress={() => {
+                onClose();
+                void Linking.openURL(
+                  process.env.EXPO_PUBLIC_OHIF_URL ??
+                    "http://135.106.130.37:3000"
+                );
+              }}
+            >
+              <Icon name="desktop-outline" color={colors.textMuted} />
+              <Text style={styles.drawerItemText}>OHIF Viewer</Text>
+              <Icon name="open-outline" size={17} color={colors.textDim} />
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.drawerItem,
+                pressed && styles.pressed
+              ]}
+              onPress={onSettings}
+            >
+              <Icon name="options-outline" color={colors.textMuted} />
+              <Text style={styles.drawerItemText}>Настройки и агенты</Text>
+              <Icon name="chevron-forward" size={17} color={colors.textDim} />
+            </Pressable>
+          </View>
+          <View style={styles.drawerFooter}>
+            <Icon name="shield-checkmark-outline" color={colors.textDim} />
+            <Text style={styles.privacyNote}>
+              Клинические данные. Используйте только на доверенном устройстве.
+            </Text>
+          </View>
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+function StudyFilterSheet({
+  visible,
+  selected,
+  onClose,
+  onSelect
+}: {
+  visible: boolean;
+  selected: StudyCategory;
+  onClose: () => void;
+  onSelect: (value: StudyCategory) => void;
+}) {
+  return (
+    <Sheet visible={visible} title="Тип операции" onClose={onClose}>
+      <View style={styles.filterSheetContent}>
+        {studyCategories.map((value) => {
+          const active = selected === value;
+          return (
+            <Pressable
+              key={value}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: active }}
+              onPress={() => onSelect(value)}
+              style={({ pressed }) => [
+                styles.filterOption,
+                active && styles.filterOptionSelected,
+                pressed && styles.pressed
+              ]}
+            >
+              <Text
+                style={[
+                  styles.filterOptionText,
+                  active && styles.filterOptionTextSelected
+                ]}
+              >
+                {value === "all" ? "Все типы" : value}
+              </Text>
+              {active ? (
+                <Icon name="checkmark-circle" color={colors.primary} />
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </View>
+    </Sheet>
+  );
+}
+
+function SettingsScreen({
+  settings,
+  health,
+  agentHealthById,
   onSave,
   onCheck
 }: {
   settings: AppSettings;
   health: ApiHealth | null;
-  agentHealth: AgentHealth;
+  agentHealthById: Record<number, AgentHealth>;
   onSave: (settings: AppSettings) => void;
   onCheck: () => void;
 }) {
-  const [agentId, setAgentId] = useState(String(settings.agentId));
+  const [agentIds, setAgentIds] = useState(settings.agentIds);
+  const [selectedAgentIds, setSelectedAgentIds] = useState(
+    settings.selectedAgentIds
+  );
+  const [newAgentId, setNewAgentId] = useState("");
   const [userId, setUserId] = useState(settings.userId);
+
+  const addAgent = () => {
+    const id = Number.parseInt(newAgentId, 10);
+    if (!Number.isInteger(id) || id <= 0 || agentIds.includes(id)) return;
+    setAgentIds((current) => [...current, id]);
+    setSelectedAgentIds((current) =>
+      current.length < 2 ? [...current, id] : current
+    );
+    setNewAgentId("");
+  };
+
+  const toggleAgent = (id: number) => {
+    setSelectedAgentIds((current) => {
+      if (current.includes(id)) {
+        return current.length === 1
+          ? current
+          : current.filter((value) => value !== id);
+      }
+      return current.length < 2 ? [...current, id] : [current[1]!, id];
+    });
+  };
+
   return (
     <ScrollView
       style={styles.screen}
       showsVerticalScrollIndicator={false}
       contentContainerStyle={styles.scrollScreen}
     >
-      <SectionHeader
-        eyebrow="Локальная конфигурация"
-        title="Настройки"
-        description="Параметры сохраняются только в браузере этого устройства."
-      />
       <View style={styles.settingsGrid}>
         <View style={styles.settingsCard}>
-          <Text style={styles.settingsTitle}>Больничный агент</Text>
-          <Field
-            label="Agent ID"
-            value={agentId}
-            onChangeText={setAgentId}
-            keyboardType="number-pad"
-            hint="Идентификатор операционной, куда отправляются команды."
-          />
+          <View>
+            <Text style={styles.settingsTitle}>Больничные агенты</Text>
+            <Text style={styles.settingsDescription}>
+              Выберите до двух агентов — только их статусы появятся в шапке.
+            </Text>
+          </View>
+          <View style={styles.agentManager}>
+            {agentIds.map((id) => {
+              const active = selectedAgentIds.includes(id);
+              const state =
+                agentHealthById[id] ??
+                ({ online: false, status: "unknown" } satisfies AgentHealth);
+              return (
+                <Pressable
+                  key={id}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: active }}
+                  onPress={() => toggleAgent(id)}
+                  style={({ pressed }) => [
+                    styles.agentRow,
+                    active && styles.agentRowSelected,
+                    pressed && styles.pressed
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.selectionCheck,
+                      active && styles.selectionCheckSelected
+                    ]}
+                  >
+                    {active ? (
+                      <Icon name="checkmark" size={16} color="#fff" />
+                    ) : null}
+                  </View>
+                  <View style={styles.agentRowCopy}>
+                    <Text style={styles.agentRowTitle}>Hospital Agent {id}</Text>
+                    <Text style={styles.requestMetaText}>
+                      {state.status === "with_errors"
+                        ? "Есть ошибки"
+                        : state.online
+                          ? "На связи"
+                          : state.status === "unknown"
+                            ? "Статус ещё не проверен"
+                            : `Не в сети · ${relativeTime(state.lastSeen)}`}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.statusDot,
+                      {
+                        backgroundColor:
+                          state.status === "with_errors"
+                            ? colors.warning
+                            : state.online
+                              ? colors.success
+                              : colors.danger
+                      }
+                    ]}
+                  />
+                </Pressable>
+              );
+            })}
+          </View>
+          <View style={styles.addAgentRow}>
+            <Field
+              label="Добавить Agent ID"
+              value={newAgentId}
+              onChangeText={setNewAgentId}
+              keyboardType="number-pad"
+              placeholder="Например, 3"
+              style={styles.agentIdField}
+            />
+            <Button
+              label="Добавить"
+              variant="secondary"
+              compact
+              onPress={addAgent}
+              disabled={!newAgentId.trim()}
+            />
+          </View>
           <Field
             label="Идентификатор пользователя"
             value={userId}
@@ -1858,7 +2607,12 @@ function SettingsScreen({
           <Button
             label="Сохранить"
             onPress={() =>
-              onSave({ agentId: Number.parseInt(agentId, 10), userId })
+              onSave({
+                agentId: selectedAgentIds[0] ?? agentIds[0] ?? 2,
+                agentIds,
+                selectedAgentIds,
+                userId
+              })
             }
           />
         </View>
@@ -1870,13 +2624,21 @@ function SettingsScreen({
             online={Boolean(health?.ok)}
             meta={health?.message ?? "Проверяем…"}
           />
-          <StatusLine
-            icon="hardware-chip-outline"
-            label={`Hospital Agent ${settings.agentId}`}
-            online={agentHealth.online && agentHealth.status === "well"}
-            warning={agentHealth.status === "with_errors"}
-            meta={`Последний heartbeat: ${relativeTime(agentHealth.lastSeen)}`}
-          />
+          {selectedAgentIds.map((id) => {
+            const state =
+              agentHealthById[id] ??
+              ({ online: false, status: "unknown" } satisfies AgentHealth);
+            return (
+              <StatusLine
+                key={id}
+                icon="hardware-chip-outline"
+                label={`Hospital Agent ${id}`}
+                online={state.online && state.status === "well"}
+                warning={state.status === "with_errors"}
+                meta={`Последний heartbeat: ${relativeTime(state.lastSeen)}`}
+              />
+            );
+          })}
           <Button
             label="Проверить соединение"
             variant="secondary"
@@ -1917,6 +2679,7 @@ function CommandSheet({
   const [patient, setPatient] = useState("");
   const [studyUID, setStudyUID] = useState("");
   const [period, setPeriod] = useState("1");
+  const [planDate, setPlanDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const needsPatient = ["find_study", "find_xa", "find_ct"].includes(command);
   const needsUID = ["get_xa", "get_ct"].includes(command);
@@ -1935,6 +2698,8 @@ function CommandSheet({
         ? { study_uid: studyUID.trim() }
         : isReport
           ? { period: Number(period) }
+          : command === "get_plan" && planDate.trim()
+            ? { date: planDate.trim() }
           : {};
     const ok = await onSubmit(command, payload);
     setSubmitting(false);
@@ -1955,16 +2720,7 @@ function CommandSheet({
         </View>
         <Text style={styles.commandGroupLabel}>КОМАНДА</Text>
         <View style={styles.commandOptions}>
-          {(
-            [
-              "find_study",
-              "find_xa",
-              "find_ct",
-              "get_xa",
-              "get_ct",
-              "get_report"
-            ] as AgentCommand[]
-          ).map((item) => (
+          {agentCommandOptions.map((item) => (
             <Pressable
               key={item}
               onPress={() => setCommand(item)}
@@ -2014,6 +2770,15 @@ function CommandSheet({
             hint="Допустимое значение от 1 до 4."
           />
         ) : null}
+        {command === "get_plan" ? (
+          <Field
+            label="Дата (необязательно)"
+            value={planDate}
+            onChangeText={setPlanDate}
+            placeholder="YYYY-MM-DD"
+            hint="Без даты агент вернёт текущую рабочую неделю."
+          />
+        ) : null}
         <View style={styles.commandActions}>
           <Button label="Отмена" variant="ghost" onPress={onClose} />
           <Button
@@ -2036,6 +2801,103 @@ const styles = StyleSheet.create({
   main: { flex: 1, minWidth: 0, backgroundColor: colors.canvas },
   content: { flex: 1, minHeight: 0, backgroundColor: colors.canvas },
   contentDark: { backgroundColor: darkColors.canvas },
+  mobileHeaderFloat: {
+    minHeight: 58,
+    marginHorizontal: 10,
+    marginTop: 8,
+    paddingHorizontal: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.94)",
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    ...shadow
+  },
+  mobileTitlePill: {
+    flex: 1,
+    minWidth: 0,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 17,
+    backgroundColor: colors.surfaceSoft
+  },
+  agentStatusNumber: {
+    position: "absolute",
+    right: 3,
+    bottom: 1,
+    fontSize: 8,
+    fontWeight: "800",
+    color: colors.text
+  },
+  desktopHeaderFloat: {
+    minHeight: 68,
+    marginHorizontal: 14,
+    marginTop: 12,
+    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderRadius: 22,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    ...shadow
+  },
+  headerBrandGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
+  },
+  headerBrandMark: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primarySoft
+  },
+  headerBrandText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 1.6
+  },
+  desktopTabBar: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5
+  },
+  desktopTabButton: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.surfaceSoft
+  },
+  desktopTabButtonDark: {
+    backgroundColor: darkColors.surface,
+    borderColor: darkColors.borderSoft
+  },
+  desktopTabButtonActive: {
+    backgroundColor: colors.primarySoft,
+    borderColor: "rgba(11,132,179,0.28)"
+  },
+  desktopTabText: {
+    ...typography.meta,
+    fontWeight: "700",
+    color: colors.textMuted
+  },
+  desktopTabTextActive: { color: colors.primary },
   sidebar: {
     width: layout.sidebar,
     backgroundColor: darkColors.canvasRaised,
@@ -2179,14 +3041,21 @@ const styles = StyleSheet.create({
   healthDot: { width: 7, height: 7, borderRadius: 7 },
   healthText: { ...typography.meta, color: colors.textMuted },
   mobileStatusPair: {
-    width: 46,
+    width: 66,
     height: 38,
     flexDirection: "row",
     gap: 5,
     alignItems: "center",
     justifyContent: "center"
   },
-  mobileStatusDot: { width: 8, height: 8, borderRadius: 8 },
+  mobileStatusIcon: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 10,
+    backgroundColor: colors.surfaceSoft
+  },
   screen: { flex: 1, paddingHorizontal: 24, paddingTop: 22 },
   screenCompact: { paddingHorizontal: 10, paddingTop: 8 },
   scrollScreen: { paddingBottom: 38, gap: 18 },
@@ -2199,7 +3068,23 @@ const styles = StyleSheet.create({
   },
   studyToolbarCompact: { flexDirection: "column", alignItems: "stretch" },
   mobileChipsScroll: { width: "100%", flexGrow: 0 },
+  weekdayChipsDesktop: { flexGrow: 0, maxWidth: 440 },
   chips: { gap: 7 },
+  weekdayChips: { gap: 6, alignItems: "center", paddingRight: 4 },
+  filterChipButton: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: colors.borderSoft
+  },
+  filterChipButtonActive: {
+    backgroundColor: colors.primarySoft,
+    borderColor: "rgba(11,132,179,0.35)"
+  },
   studyWorkspace: { flex: 1, minHeight: 0, flexDirection: "row", gap: 14 },
   studyListPane: { flex: 1, minWidth: 0 },
   detailPane: { flex: 1, minWidth: 0 },
@@ -2433,21 +3318,34 @@ const styles = StyleSheet.create({
     borderColor: "rgba(11,132,179,0.18)"
   },
   infoBannerText: { ...typography.body, color: colors.textMuted, flex: 1 },
+  compactScreenToolbar: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    paddingBottom: 8
+  },
+  compactScreenTitle: { ...typography.title, fontSize: 17, color: colors.text },
+  compactScreenMeta: { ...typography.meta, color: colors.textDim, marginTop: 2 },
+  compactToolbarActions: { flexDirection: "row", alignItems: "center", gap: 6 },
+  flexScroll: { flex: 1, minHeight: 0 },
+  requestScrollContent: { paddingBottom: 30 },
   requestList: { gap: 8 },
   requestCard: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 12,
-    padding: 14,
+    gap: 9,
+    padding: 10,
     borderRadius: radii.md,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border
   },
   requestIcon: {
-    width: 38,
-    height: 38,
-    borderRadius: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 10,
     backgroundColor: colors.surfaceHover,
     alignItems: "center",
     justifyContent: "center"
@@ -2555,6 +3453,7 @@ const styles = StyleSheet.create({
   reportRowCopy: { flex: 1, minWidth: 0 },
   reportRowDate: { ...typography.label, color: colors.text },
   reportRowMeta: { ...typography.meta, color: colors.textDim, marginTop: 3 },
+  reportRowActions: { flexDirection: "row", alignItems: "center", gap: 5 },
   reportDetailPane: {
     flex: 1,
     minWidth: 0,
@@ -2601,6 +3500,10 @@ const styles = StyleSheet.create({
     color: colors.text
   },
   reportStatLabel: { ...typography.meta, color: colors.textMuted, marginTop: 2 },
+  reportStatActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft
+  },
   reportSection: { gap: 8 },
   reportSectionTitle: { ...typography.title, fontSize: 16, color: colors.text },
   operationTable: {
@@ -2645,6 +3548,35 @@ const styles = StyleSheet.create({
     borderColor: colors.border
   },
   settingsTitle: { ...typography.title, fontSize: 16, color: colors.text },
+  settingsDescription: {
+    ...typography.body,
+    color: colors.textMuted,
+    marginTop: 5
+  },
+  agentManager: { gap: 7 },
+  agentRow: {
+    minHeight: 58,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSoft
+  },
+  agentRowSelected: {
+    backgroundColor: colors.primarySoft,
+    borderColor: "rgba(11,132,179,0.32)"
+  },
+  agentRowCopy: { flex: 1, minWidth: 0 },
+  agentRowTitle: { ...typography.label, color: colors.text },
+  addAgentRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8
+  },
+  agentIdField: { flex: 1, minWidth: 0 },
   securityCard: {
     maxWidth: 874,
     flexDirection: "row",
@@ -2708,18 +3640,216 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 4
   },
-  mobileNavSafe: {
-    backgroundColor: colors.canvasRaised,
-    borderTopWidth: 1,
-    borderTopColor: colors.border
+  bulkActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  listActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 8,
+    paddingBottom: 10
   },
-  mobileNav: { height: 60, flexDirection: "row", paddingHorizontal: 2 },
+  studyTrailing: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8
+  },
+  xaState: {
+    minWidth: 34,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.pill,
+    backgroundColor: colors.primary
+  },
+  xaStateInactive: {
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: colors.border
+  },
+  xaStateText: {
+    fontSize: 10,
+    fontWeight: "800",
+    textAlign: "center",
+    color: "#fff"
+  },
+  xaStateTextInactive: { color: colors.textDim },
+  swipeContainer: {
+    position: "relative",
+    overflow: "hidden",
+    borderRadius: radii.md
+  },
+  swipeActions: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    zIndex: 0
+  },
+  swipeForeground: { zIndex: 1, backgroundColor: colors.canvasRaised },
+  swipeForward: {
+    width: 70,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    backgroundColor: colors.primary
+  },
+  swipeDelete: {
+    width: 62,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    backgroundColor: colors.danger
+  },
+  swipeActionText: { color: "#fff", fontSize: 9, fontWeight: "700" },
+  selectionCheck: {
+    width: 24,
+    height: 24,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  selectionCheckSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary
+  },
+  planContent: { padding: 16, gap: 14, paddingBottom: 40 },
+  planDays: { gap: 12 },
+  planDay: {
+    padding: 14,
+    gap: 8,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  planDayHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  planDayTitle: { ...typography.title, color: colors.text },
+  emptyDayText: { ...typography.body, color: colors.textDim, padding: 10 },
+  profileCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 14,
+    marginBottom: 12,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surfaceSoft
+  },
+  profileAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.primarySoft
+  },
+  drawerRoot: {
+    flex: 1,
+    alignItems: "flex-start",
+    backgroundColor: "rgba(3,7,11,0.54)"
+  },
+  drawer: {
+    width: 350,
+    maxWidth: "88%",
+    height: "100%",
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 22,
+    backgroundColor: colors.canvasRaised,
+    borderTopRightRadius: 28,
+    borderBottomRightRadius: 28,
+    borderRightWidth: 1,
+    borderRightColor: colors.border,
+    ...shadow
+  },
+  drawerHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 18
+  },
+  drawerBrand: { flexDirection: "row", alignItems: "center", gap: 9 },
+  drawerProfileCopy: { flex: 1, minWidth: 0 },
+  drawerStatuses: { gap: 7 },
+  drawerMenu: {
+    gap: 6,
+    marginTop: 18,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft
+  },
+  drawerItem: {
+    minHeight: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11,
+    paddingHorizontal: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSoft
+  },
+  drawerItemText: { ...typography.label, color: colors.text, flex: 1 },
+  drawerFooter: {
+    marginTop: "auto",
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    paddingTop: 18
+  },
+  filterSheetContent: { padding: 14, gap: 6 },
+  filterOption: {
+    minHeight: 48,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.surfaceSoft
+  },
+  filterOptionSelected: {
+    backgroundColor: colors.primarySoft,
+    borderColor: "rgba(11,132,179,0.32)"
+  },
+  filterOptionText: { ...typography.label, color: colors.textMuted },
+  filterOptionTextSelected: { color: colors.primary },
+  mobileNavSafe: {
+    backgroundColor: colors.canvas,
+    paddingHorizontal: 10,
+    paddingTop: 4,
+    paddingBottom: 7
+  },
+  mobileNav: {
+    height: 64,
+    flexDirection: "row",
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    ...shadow
+  },
   mobileNavItem: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
     minWidth: 0
+  },
+  mobileNavItemActive: {
+    marginVertical: 1,
+    borderRadius: 18,
+    backgroundColor: colors.primarySoft,
+    transform: [{ scale: 1.02 }]
+  },
+  mobileNavItemPressed: {
+    opacity: 0.82,
+    transform: [{ scale: 0.92 }]
   },
   mobileNavText: {
     fontSize: 9,

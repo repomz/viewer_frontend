@@ -10,6 +10,7 @@ import {
   Text,
   TextInput,
   TextInputProps,
+  useWindowDimensions,
   View,
   ViewStyle
 } from "react-native";
@@ -364,6 +365,8 @@ export function Sheet({
   wide?: boolean;
   fullScreen?: boolean;
 }>) {
+  const { width } = useWindowDimensions();
+  const compact = width < 760;
   return (
     <Modal
       visible={visible}
@@ -371,7 +374,13 @@ export function Sheet({
       animationType="fade"
       onRequestClose={onClose}
     >
-      <View style={[styles.modalRoot, fullScreen && styles.modalRootFull]}>
+      <View
+        style={[
+          styles.modalRoot,
+          compact && styles.modalRootCompact,
+          fullScreen && styles.modalRootFull
+        ]}
+      >
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Закрыть"
@@ -381,6 +390,7 @@ export function Sheet({
         <View
           style={[
             styles.sheet,
+            compact && styles.sheetCompact,
             wide && styles.sheetWide,
             fullScreen && styles.sheetFull
           ]}
@@ -405,12 +415,17 @@ export function Toast({
   tone: "success" | "danger";
   onDismiss: () => void;
 }) {
+  const { width } = useWindowDimensions();
   return (
     <Pressable
       accessibilityRole="alert"
       onPress={onDismiss}
       style={[
         styles.toast,
+        {
+          left: Math.max(12, (width - Math.min(400, width - 24)) / 2),
+          width: Math.min(400, width - 24)
+        },
         tone === "danger" ? styles.toastDanger : styles.toastSuccess
       ]}
     >
@@ -419,7 +434,7 @@ export function Toast({
         color={tone === "danger" ? colors.danger : colors.success}
       />
       <Text style={styles.toastText}>{message}</Text>
-      <Icon name="close" size={18} color={colors.textMuted} />
+      <Icon name="close" size={18} color="rgba(255,255,255,0.72)" />
     </Pressable>
   );
 }
@@ -683,6 +698,11 @@ const styles = StyleSheet.create({
     padding: 0,
     backgroundColor: colors.canvas
   },
+  modalRootCompact: {
+    justifyContent: "flex-end",
+    padding: 8,
+    paddingBottom: 0
+  },
   sheet: {
     width: "100%",
     maxWidth: 520,
@@ -696,6 +716,12 @@ const styles = StyleSheet.create({
   },
   sheetWide: {
     maxWidth: 760
+  },
+  sheetCompact: {
+    maxWidth: "100%",
+    maxHeight: "92%",
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0
   },
   sheetFull: {
     maxWidth: "100%",
@@ -722,9 +748,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     zIndex: 100,
     top: Platform.OS === "web" ? 22 : 54,
-    right: 22,
-    left: Platform.OS === "web" ? undefined : 22,
-    width: Platform.OS === "web" ? 400 : undefined,
+    alignSelf: "center",
     minHeight: 54,
     paddingHorizontal: 15,
     flexDirection: "row",
@@ -744,7 +768,7 @@ const styles = StyleSheet.create({
   },
   toastText: {
     ...typography.label,
-    color: colors.text,
+    color: "#F6FAFC",
     flex: 1
   }
 });

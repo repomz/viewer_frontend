@@ -5,6 +5,8 @@ const REQUESTS_KEY = "viewer.requests.v1";
 
 export const defaultSettings: AppSettings = {
   agentId: 2,
+  agentIds: [2],
+  selectedAgentIds: [2],
   userId: "doctor-local"
 };
 
@@ -16,11 +18,27 @@ export function loadSettings(): AppSettings {
   if (!hasStorage()) return defaultSettings;
   try {
     const stored = JSON.parse(window.localStorage.getItem(SETTINGS_KEY) ?? "{}");
+    const legacyAgentId =
+      Number.isInteger(Number(stored.agentId)) && Number(stored.agentId) > 0
+        ? Number(stored.agentId)
+        : defaultSettings.agentId;
+    const agentIds: number[] = Array.isArray(stored.agentIds)
+      ? [...new Set<number>(stored.agentIds.map(Number).filter(
+          (value: number) => Number.isInteger(value) && value > 0
+        ))]
+      : [legacyAgentId];
+    const selectedAgentIds: number[] = Array.isArray(stored.selectedAgentIds)
+      ? [...new Set<number>(stored.selectedAgentIds.map(Number).filter(
+          (value: number) => agentIds.includes(value)
+        ))]
+      : [legacyAgentId];
+    const normalizedSelected = selectedAgentIds.length
+      ? selectedAgentIds.slice(0, 2)
+      : [agentIds[0] ?? legacyAgentId];
     return {
-      agentId:
-        Number.isInteger(Number(stored.agentId)) && Number(stored.agentId) > 0
-          ? Number(stored.agentId)
-          : defaultSettings.agentId,
+      agentId: normalizedSelected[0] ?? legacyAgentId,
+      agentIds: agentIds.length ? agentIds : [legacyAgentId],
+      selectedAgentIds: normalizedSelected,
       userId:
         typeof stored.userId === "string" && stored.userId.trim()
           ? stored.userId.trim()

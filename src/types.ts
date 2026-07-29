@@ -43,11 +43,15 @@ export type UserRequest = {
 
 export type AgentCommand =
   | "get_report"
+  | "get_plan"
   | "find_study"
+  | "import_study"
   | "find_xa"
   | "find_ct"
   | "get_xa"
   | "get_ct"
+  | "send_xa_to_pacs"
+  | "send_ct_to_pacs"
   | "xa_polling_on"
   | "xa_polling_off"
   | "ct_polling_on"
@@ -106,5 +110,28 @@ export type ApiHealth = {
 
 export type AppSettings = {
   agentId: number;
+  agentIds: number[];
+  selectedAgentIds: number[];
   userId: string;
+};
+
+export type PlanOperation = {
+  patient: string;
+  birth_date?: string;
+  age?: number | null;
+  department?: string;
+  operation?: string;
+};
+
+export type PlanDay = {
+  date: string;
+  weekday: string;
+  operations: PlanOperation[];
+};
+
+export type OperationPlan = {
+  week_start?: string;
+  week_end?: string;
+  selected_date?: string;
+  days?: PlanDay[];
 };
