@@ -1,8 +1,10 @@
 import { StatusBar } from "expo-status-bar";
+import * as SplashScreen from "expo-splash-screen";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   Alert,
+  Image,
   Linking,
   Modal,
   PanResponder,
@@ -13,10 +15,15 @@ import {
   Share,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View
 } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaInsets
+} from "react-native-safe-area-context";
 
 import {
   ApiError,
@@ -78,6 +85,10 @@ import {
   Toast,
   type IconName
 } from "./src/ui";
+
+if (Platform.OS !== "web") {
+  void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+}
 
 type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "settings";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
@@ -419,6 +430,7 @@ function SwipeableCard({
 export default function App() {
   const { width } = useWindowDimensions();
   const compact = width < layout.mobileBreakpoint;
+  const [authenticated, setAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("studies");
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const [studies, setStudies] = useState<Study[]>([]);
@@ -623,7 +635,6 @@ export default function App() {
     Object.assign(document.documentElement.style, {
       width: "100%",
       height: "100%",
-      backgroundColor: colors.canvas,
       overflow: "hidden",
       overscrollBehavior: "none"
     });
@@ -643,6 +654,34 @@ export default function App() {
       root.style.height = "100%";
       root.style.overflow = "hidden";
     }
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === "web") {
+      const background =
+        !authenticated || activeTab === "angiography"
+          ? darkColors.canvas
+          : colors.canvas;
+      document.documentElement.style.backgroundColor = background;
+      document.body.style.backgroundColor = background;
+      const theme = document.querySelector<HTMLMetaElement>(
+        'meta[name="theme-color"]'
+      );
+      if (theme) theme.content = background;
+      return;
+    }
+    void SplashScreen.hideAsync().catch(() => undefined);
+  }, [activeTab, authenticated]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    const splash = document.getElementById("app-splash");
+    if (!splash) return;
+    const frame = requestAnimationFrame(() => {
+      splash.classList.add("viewer-splash-hidden");
+      window.setTimeout(() => splash.remove(), 220);
+    });
+    return () => cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
@@ -848,13 +887,26 @@ export default function App() {
 
   const isAngiography = activeTab === "angiography";
 
+  if (!authenticated) {
+    return (
+      <SafeAreaProvider>
+        <LoginScreen compact={compact} onEnter={() => setAuthenticated(true)} />
+      </SafeAreaProvider>
+    );
+  }
+
   return (
     <SafeAreaProvider>
       <SafeAreaView
         style={[styles.safeArea, isAngiography && styles.safeAreaDark]}
         edges={compact ? ["top"] : []}
       >
-        <StatusBar style={isAngiography ? "light" : "dark"} />
+        <StatusBar
+          style={isAngiography ? "light" : "dark"}
+          backgroundColor={
+            isAngiography ? darkColors.canvas : colors.canvas
+          }
+        />
         <View style={[styles.app, isAngiography && styles.appDark]}>
           <View style={[styles.main, isAngiography && styles.mainDark]}>
             <TopBar
@@ -952,6 +1004,7 @@ export default function App() {
               ) : null}
               {activeTab === "settings" ? (
                 <SettingsScreen
+                  compact={compact}
                   settings={settings}
                   health={health}
                   agentHealthById={agentHealthById}
@@ -961,6 +1014,7 @@ export default function App() {
               ) : null}
               {activeTab === "plan" ? (
                 <PlanScreen
+                  compact={compact}
                   plan={plan}
                   onRequest={(date) =>
                     void submitCommand("get_plan", date ? { date } : {})
@@ -1014,6 +1068,98 @@ export default function App() {
         ) : null}
       </SafeAreaView>
     </SafeAreaProvider>
+  );
+}
+
+function LoginScreen({
+  compact,
+  onEnter
+}: {
+  compact: boolean;
+  onEnter: () => void;
+}) {
+  const [login, setLogin] = useState("");
+  const [password, setPassword] = useState("");
+
+  return (
+    <SafeAreaView style={styles.loginSafe} edges={["top", "bottom"]}>
+      <StatusBar style="light" backgroundColor="#050C15" />
+      <View style={[styles.loginLayout, compact && styles.loginLayoutCompact]}>
+        <View style={[styles.loginPanel, compact && styles.loginPanelCompact]}>
+          <View style={styles.loginBrand}>
+            <View style={styles.loginBrandIcon}>
+              <Icon name="scan" size={21} color={darkColors.primary} />
+            </View>
+            <View>
+              <Text style={styles.loginBrandName}>VIEWER</Text>
+              <Text style={styles.loginBrandCaption}>CLINICAL WORKSPACE</Text>
+            </View>
+          </View>
+          <View style={styles.loginForm}>
+            <View>
+              <Text style={styles.loginTitle}>Вход в систему</Text>
+              <Text style={styles.loginSubtitle}>
+                Протоколы операций и ангиографии в защищённом контуре.
+              </Text>
+            </View>
+            <View style={styles.loginFields}>
+              <View style={styles.loginField}>
+                <Icon name="person-outline" size={18} color={darkColors.textDim} />
+                <TextInput
+                  value={login}
+                  onChangeText={setLogin}
+                  placeholder="Логин"
+                  placeholderTextColor={darkColors.textDim}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.loginInput}
+                />
+              </View>
+              <View style={styles.loginField}>
+                <Icon name="lock-closed-outline" size={18} color={darkColors.textDim} />
+                <TextInput
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Пароль"
+                  placeholderTextColor={darkColors.textDim}
+                  secureTextEntry
+                  style={styles.loginInput}
+                />
+              </View>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Войти"
+              onPress={onEnter}
+              style={({ pressed }) => [
+                styles.loginButton,
+                pressed && styles.loginButtonPressed
+              ]}
+            >
+              <Text style={styles.loginButtonText}>Войти</Text>
+              <Icon name="arrow-forward" size={19} color="#04111A" />
+            </Pressable>
+            <Text style={styles.loginTemporary}>
+              Авторизация будет подключена позднее. Сейчас вход выполняется без
+              проверки данных.
+            </Text>
+          </View>
+        </View>
+        <View style={[styles.loginVisual, compact && styles.loginVisualCompact]}>
+          <Image
+            source={require("./assets/angiography-splash.png")}
+            resizeMode="contain"
+            style={styles.loginImage}
+          />
+          <View style={styles.loginVisualCopy}>
+            <Text style={styles.loginVisualLabel}>ANGIOGRAPHY VIEWER</Text>
+            <Text style={styles.loginVisualTitle}>
+              Сосудистая визуализация без лишних шагов
+            </Text>
+          </View>
+        </View>
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -1092,8 +1238,20 @@ function TopBar({
   if (compact) {
     return (
       <View style={[styles.mobileHeaderFloat, dark && styles.topBarDark]}>
-        <IconButton icon="menu" label="Меню" onPress={onMenu} />
-        <View style={[styles.mobileTitlePill, dark && styles.healthPillDark]}>
+        <View style={styles.mobileHeaderEdge}>
+          <IconButton
+            icon="menu"
+            label="Меню"
+            onPress={onMenu}
+            dark={dark}
+          />
+        </View>
+        <View
+          style={[
+            styles.mobileTitlePill,
+            dark && styles.mobileTitlePillDark
+          ]}
+        >
           <Text
             numberOfLines={1}
             style={[styles.mobileTopTitle, dark && styles.textDark]}
@@ -1132,7 +1290,12 @@ function TopBar({
   return (
     <View style={[styles.desktopHeaderFloat, dark && styles.topBarDark]}>
       <View style={styles.headerBrandGroup}>
-        <IconButton icon="menu" label="Меню" onPress={onMenu} />
+        <IconButton
+          icon="menu"
+          label="Меню"
+          onPress={onMenu}
+          dark={dark}
+        />
         <View style={styles.headerBrandMark}>
           <Icon name="scan" size={18} color={darkColors.primary} />
         </View>
@@ -1152,7 +1315,8 @@ function TopBar({
               style={[
                 styles.desktopTabButton,
                 dark && styles.desktopTabButtonDark,
-                selected && styles.desktopTabButtonActive
+                selected && styles.desktopTabButtonActive,
+                selected && dark && styles.desktopTabButtonActiveDark
               ]}
             >
               <Icon
@@ -1164,7 +1328,9 @@ function TopBar({
                 size={17}
                 color={
                   selected
-                    ? colors.primary
+                    ? dark
+                      ? darkColors.primary
+                      : colors.primary
                     : dark
                       ? darkColors.textMuted
                       : colors.textMuted
@@ -1174,7 +1340,8 @@ function TopBar({
                 style={[
                   styles.desktopTabText,
                   dark && styles.textMutedDark,
-                  selected && styles.desktopTabTextActive
+                  selected && styles.desktopTabTextActive,
+                  selected && dark && styles.desktopTabTextActiveDark
                 ]}
               >
                 {tab.label}
@@ -1225,10 +1392,14 @@ function MobileNavigation({
   onTabChange: (tab: Tab) => void;
   dark?: boolean;
 }) {
+  const insets = useSafeAreaInsets();
   return (
-    <SafeAreaView
-      edges={["bottom"]}
-      style={[styles.mobileNavSafe, dark && styles.mobileNavSafeDark]}
+    <View
+      style={[
+        styles.mobileNavSafe,
+        dark && styles.mobileNavSafeDark,
+        { paddingBottom: Math.max(0, insets.bottom - 12) }
+      ]}
     >
       <View style={[styles.mobileNav, dark && styles.mobileNavDark]}>
         {tabs.map((tab) => {
@@ -1239,6 +1410,7 @@ function MobileNavigation({
               accessibilityRole="button"
               accessibilityState={{ selected: active }}
               onPress={() => onTabChange(tab.id)}
+              hitSlop={3}
               style={({ pressed }) => [
                 styles.mobileNavItem,
                 dark && styles.mobileNavItemDark,
@@ -1276,7 +1448,7 @@ function MobileNavigation({
           );
         })}
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -1594,6 +1766,7 @@ function AngiographyScreen({
   error: string;
   onRetry: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [selected, setSelected] = useState<Study | null>(studies[0] ?? null);
   const [mobileViewer, setMobileViewer] = useState(false);
   const [studyFilter, setStudyFilter] = useState<"all" | "xa" | "ct" | "week">(
@@ -1762,7 +1935,12 @@ function AngiographyScreen({
                 <View style={styles.mobileViewerFrame}>
                   <MobileDicomViewer studyUID={selected.study_id} />
                 </View>
-                <View style={styles.mobileViewerTop}>
+                <View
+                  style={[
+                    styles.mobileViewerTop,
+                    { top: insets.top + 8 }
+                  ]}
+                >
                   <Pressable
                     accessibilityRole="button"
                     accessibilityLabel="Закрыть просмотр"
@@ -1823,8 +2001,13 @@ function RequestsScreen({
 }) {
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
-      <View style={styles.compactScreenToolbar}>
-        <View>
+      <View
+        style={[
+          styles.compactScreenToolbar,
+          compact && styles.compactScreenToolbarMobile
+        ]}
+      >
+        <View style={styles.compactScreenHeading}>
           <Text style={styles.compactScreenTitle}>История заданий</Text>
           <Text style={styles.compactScreenMeta}>{requests.length} записей</Text>
         </View>
@@ -2103,8 +2286,13 @@ function ReportsScreen({
 
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
-      <View style={styles.compactScreenToolbar}>
-        <View>
+      <View
+        style={[
+          styles.compactScreenToolbar,
+          compact && styles.compactScreenToolbarMobile
+        ]}
+      >
+        <View style={styles.compactScreenHeading}>
           <Text style={styles.compactScreenTitle}>Отчёты дежурств</Text>
           <Text style={styles.compactScreenMeta}>Смахните влево для действий</Text>
         </View>
@@ -2118,9 +2306,14 @@ function ReportsScreen({
       {loading ? (
         <LoadingState label="Загружаем отчёты…" />
       ) : reports.length ? (
-        <View style={styles.reportWorkspace}>
+        <View
+          style={[
+            styles.reportWorkspace,
+            compact && styles.reportWorkspaceCompact
+          ]}
+        >
           <ScrollView
-            style={styles.reportList}
+            style={[styles.reportList, compact && styles.reportListCompact]}
             contentContainerStyle={styles.reportListContent}
             showsVerticalScrollIndicator={false}
           >
@@ -2322,9 +2515,11 @@ function ReportSection({
 }
 
 function PlanScreen({
+  compact,
   plan,
   onRequest
 }: {
+  compact: boolean;
   plan: OperationPlan | null;
   onRequest: (date?: string) => void;
 }) {
@@ -2337,12 +2532,17 @@ function PlanScreen({
     ? days
     : days.filter((day) => day.date === selectedDate);
   return (
-    <ScrollView style={styles.screen}
-      contentContainerStyle={styles.planContent}
+    <ScrollView style={[styles.screen, compact && styles.screenCompact]}
+      contentContainerStyle={[
+        styles.planContent,
+        compact && styles.planContentCompact
+      ]}
       showsVerticalScrollIndicator={false}>
-      <View style={styles.listActions}>
-        <Chip label="Неделя" selected={mode === "week"} onPress={() => setMode("week")} />
-        <Chip label="День" selected={mode === "day"} onPress={() => setMode("day")} />
+      <View style={styles.planToolbar}>
+        <View style={styles.planModeActions}>
+          <Chip label="Неделя" selected={mode === "week"} onPress={() => setMode("week")} />
+          <Chip label="День" selected={mode === "day"} onPress={() => setMode("day")} />
+        </View>
         <IconButton
           icon="refresh"
           label="Обновить план"
@@ -2559,12 +2759,14 @@ function StudyFilterSheet({
 }
 
 function SettingsScreen({
+  compact,
   settings,
   health,
   agentHealthById,
   onSave,
   onCheck
 }: {
+  compact: boolean;
   settings: AppSettings;
   health: ApiHealth | null;
   agentHealthById: Record<number, AgentHealth>;
@@ -2601,7 +2803,7 @@ function SettingsScreen({
 
   return (
     <ScrollView
-      style={styles.screen}
+      style={[styles.screen, compact && styles.screenCompact]}
       showsVerticalScrollIndicator={false}
       contentContainerStyle={styles.scrollScreen}
     >
@@ -2885,6 +3087,166 @@ function CommandSheet({
 }
 
 const styles = StyleSheet.create({
+  loginSafe: { flex: 1, backgroundColor: "#050C15" },
+  loginLayout: {
+    flex: 1,
+    flexDirection: "row",
+    backgroundColor: "#050C15"
+  },
+  loginLayoutCompact: { flexDirection: "column-reverse" },
+  loginPanel: {
+    width: "44%",
+    minWidth: 430,
+    paddingHorizontal: 54,
+    paddingVertical: 42,
+    justifyContent: "space-between",
+    backgroundColor: "#07131F",
+    borderRightWidth: 1,
+    borderRightColor: "rgba(53,194,255,0.12)"
+  },
+  loginPanelCompact: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: "100%",
+    height: "54%",
+    minWidth: 0,
+    flex: 0,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 18,
+    gap: 16,
+    borderRightWidth: 0,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(53,194,255,0.12)"
+  },
+  loginBrand: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 11
+  },
+  loginBrandIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: darkColors.primarySoft,
+    borderWidth: 1,
+    borderColor: "rgba(53,194,255,0.24)"
+  },
+  loginBrandName: {
+    color: darkColors.text,
+    fontSize: 15,
+    lineHeight: 18,
+    fontWeight: "800",
+    letterSpacing: 2
+  },
+  loginBrandCaption: {
+    marginTop: 2,
+    color: darkColors.primary,
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: "700",
+    letterSpacing: 1.8
+  },
+  loginForm: { width: "100%", maxWidth: 430, gap: 18 },
+  loginTitle: {
+    color: darkColors.text,
+    fontSize: 29,
+    lineHeight: 35,
+    fontWeight: "700",
+    letterSpacing: -0.5
+  },
+  loginSubtitle: {
+    ...typography.body,
+    color: darkColors.textMuted,
+    marginTop: 7
+  },
+  loginFields: { gap: 10 },
+  loginField: {
+    minHeight: 50,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: darkColors.borderSoft,
+    backgroundColor: "rgba(30,33,39,0.82)"
+  },
+  loginInput: {
+    flex: 1,
+    minWidth: 0,
+    height: 48,
+    color: darkColors.text,
+    fontSize: 15,
+    outlineStyle: "none"
+  } as never,
+  loginButton: {
+    minHeight: 52,
+    paddingHorizontal: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 9,
+    borderRadius: 17,
+    backgroundColor: darkColors.primary
+  },
+  loginButtonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
+  loginButtonText: {
+    color: "#04111A",
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: "800"
+  },
+  loginTemporary: {
+    color: darkColors.textDim,
+    fontSize: 10,
+    lineHeight: 14,
+    textAlign: "center"
+  },
+  loginVisual: {
+    flex: 1,
+    minWidth: 0,
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    backgroundColor: "#050C15"
+  },
+  loginVisualCompact: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    height: "48%",
+    minHeight: 0,
+    flex: 0
+  },
+  loginImage: { width: "100%", height: "100%" },
+  loginVisualCopy: {
+    position: "absolute",
+    left: 32,
+    right: 32,
+    bottom: 32
+  },
+  loginVisualLabel: {
+    color: darkColors.primary,
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: "800",
+    letterSpacing: 1.5
+  },
+  loginVisualTitle: {
+    maxWidth: 540,
+    marginTop: 6,
+    color: darkColors.text,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: "700"
+  },
   safeArea: { flex: 1, backgroundColor: colors.canvas },
   safeAreaDark: { backgroundColor: darkColors.canvas },
   app: { flex: 1, flexDirection: "row", backgroundColor: colors.canvas },
@@ -2903,6 +3265,11 @@ const styles = StyleSheet.create({
     gap: 7,
     backgroundColor: "transparent"
   },
+  mobileHeaderEdge: {
+    width: 92,
+    alignItems: "flex-start",
+    justifyContent: "center"
+  },
   mobileTitlePill: {
     flex: 1,
     minWidth: 0,
@@ -2912,6 +3279,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: colors.surfaceSoft
   },
+  mobileTitlePillDark: { backgroundColor: "transparent" },
   agentStatusNumber: {
     position: "absolute",
     right: 3,
@@ -2932,6 +3300,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent"
   },
   headerBrandGroup: {
+    width: 190,
     flexDirection: "row",
     alignItems: "center",
     gap: 8
@@ -2961,6 +3330,7 @@ const styles = StyleSheet.create({
     minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 6,
     paddingHorizontal: 12,
     borderRadius: 15,
@@ -2969,19 +3339,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSoft
   },
   desktopTabButtonDark: {
-    backgroundColor: darkColors.surface,
-    borderColor: darkColors.borderSoft
+    backgroundColor: "transparent",
+    borderColor: "transparent"
   },
   desktopTabButtonActive: {
     backgroundColor: colors.primarySoft,
     borderColor: "rgba(11,132,179,0.28)"
   },
+  desktopTabButtonActiveDark: {
+    backgroundColor: darkColors.primarySoft,
+    borderColor: "rgba(53,194,255,0.24)"
+  },
   desktopTabText: {
     ...typography.meta,
     fontWeight: "700",
-    color: colors.textMuted
+    color: colors.textMuted,
+    textAlign: "center"
   },
   desktopTabTextActive: { color: colors.primary },
+  desktopTabTextActiveDark: { color: darkColors.primary },
   sidebar: {
     width: layout.sidebar,
     backgroundColor: darkColors.canvasRaised,
@@ -3105,7 +3481,13 @@ const styles = StyleSheet.create({
   },
   textDark: { color: darkColors.text },
   textMutedDark: { color: darkColors.textMuted },
-  topActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  topActions: {
+    width: 190,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 8
+  },
   healthPill: {
     minHeight: 34,
     flexDirection: "row",
@@ -3124,12 +3506,12 @@ const styles = StyleSheet.create({
   healthDot: { width: 7, height: 7, borderRadius: 7 },
   healthText: { ...typography.meta, color: colors.textMuted },
   mobileStatusPair: {
-    width: 66,
+    width: 92,
     height: 38,
     flexDirection: "row",
     gap: 5,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "flex-end"
   },
   mobileStatusIcon: {
     width: 28,
@@ -3140,7 +3522,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSoft
   },
   screen: { flex: 1, paddingHorizontal: 24, paddingTop: 22 },
-  screenCompact: { paddingHorizontal: 10, paddingTop: 8 },
+  screenCompact: { paddingHorizontal: 10, paddingTop: 4 },
   scrollScreen: { paddingBottom: 38, gap: 18 },
   studyToolbar: {
     marginTop: 18,
@@ -3149,7 +3531,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10
   },
-  studyToolbarCompact: { flexDirection: "column", alignItems: "stretch" },
+  studyToolbarCompact: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    marginTop: 4,
+    marginBottom: 8
+  },
   mobileChipsScroll: { width: "100%", flexGrow: 0 },
   weekdayChipsDesktop: { flexGrow: 0, maxWidth: 440 },
   chips: { gap: 7 },
@@ -3292,10 +3679,10 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 8
   },
-  angioFiltersCompact: { flexWrap: "wrap", minHeight: 76 },
+  angioFiltersCompact: { flexWrap: "wrap", minHeight: 84 },
   angioFilter: {
-    minHeight: 32,
-    paddingHorizontal: 12,
+    minHeight: 40,
+    paddingHorizontal: 14,
     alignItems: "center",
     justifyContent: "center",
     borderRadius: radii.pill,
@@ -3515,6 +3902,8 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingBottom: 8
   },
+  compactScreenToolbarMobile: { minHeight: 48, paddingBottom: 6 },
+  compactScreenHeading: { flex: 1, minWidth: 0 },
   compactScreenTitle: { ...typography.title, fontSize: 17, color: colors.text },
   compactScreenMeta: { ...typography.meta, color: colors.textDim, marginTop: 2 },
   compactToolbarActions: { flexDirection: "row", alignItems: "center", gap: 6 },
@@ -3608,6 +3997,11 @@ const styles = StyleSheet.create({
     gap: 14,
     marginTop: 18
   },
+  reportWorkspaceCompact: {
+    flexDirection: "column",
+    gap: 8,
+    marginTop: 8
+  },
   reportList: {
     width: 340,
     flexGrow: 0,
@@ -3615,6 +4009,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.canvasRaised,
     borderWidth: 1,
     borderColor: colors.border
+  },
+  reportListCompact: {
+    width: "100%",
+    flex: 1,
+    borderRadius: radii.md
   },
   reportListContent: { padding: 8, gap: 5 },
   reportRow: {
@@ -3903,6 +4302,15 @@ const styles = StyleSheet.create({
     borderColor: colors.primary
   },
   planContent: { padding: 16, gap: 14, paddingBottom: 40 },
+  planContentCompact: { padding: 0, paddingTop: 4, paddingBottom: 28, gap: 10 },
+  planToolbar: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10
+  },
+  planModeActions: { flexDirection: "row", alignItems: "center", gap: 7 },
   planDays: { gap: 12 },
   planDay: {
     padding: 14,
@@ -4007,14 +4415,17 @@ const styles = StyleSheet.create({
   filterOptionText: { ...typography.label, color: colors.textMuted },
   filterOptionTextSelected: { color: colors.primary },
   mobileNavSafe: {
+    position: "relative",
+    zIndex: 50,
+    elevation: 20,
     backgroundColor: colors.canvas,
     paddingHorizontal: 10,
-    paddingTop: 2,
-    paddingBottom: 5
+    paddingTop: 0,
+    paddingBottom: 0
   },
   mobileNavSafeDark: { backgroundColor: darkColors.canvas },
   mobileNav: {
-    height: 58,
+    height: 54,
     flexDirection: "row",
     paddingHorizontal: 2,
     paddingVertical: 2,

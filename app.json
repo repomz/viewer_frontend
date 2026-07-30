@@ -4,22 +4,33 @@
     "slug": "viewer-clinical",
     "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/viewer-xa-icon.png",
+    "icon": "./assets/viewer-xa-icon-v3.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#F3F6F8",
     "primaryColor": "#0B84B3",
     "splash": {
-      "image": "./assets/splash-xa-mark.png",
+      "image": "./assets/splash-xa-v3.png",
       "resizeMode": "contain",
       "backgroundColor": "#07131F"
     },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-xa-v3.png",
+          "imageWidth": 280,
+          "resizeMode": "contain",
+          "backgroundColor": "#07131F"
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": false,
-      "icon": "./assets/viewer-xa-icon.png"
+      "icon": "./assets/viewer-xa-icon-v3.png"
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/viewer-xa-icon.png",
+        "foregroundImage": "./assets/splash-xa-v3.png",
         "backgroundColor": "#07131F"
       }
     },
@@ -27,10 +38,10 @@
       "bundler": "metro",
       "name": "Viewer Clinical",
       "shortName": "Viewer",
-      "themeColor": "#F3F6F8",
-      "backgroundColor": "#F3F6F8",
+      "themeColor": "#07131F",
+      "backgroundColor": "#07131F",
       "display": "standalone",
-      "favicon": "./assets/favicon-xa.png"
+      "favicon": "./assets/favicon-xa-v3.png"
     },
     "experiments": {
       "typedRoutes": false

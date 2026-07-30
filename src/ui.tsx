@@ -14,8 +14,9 @@ import {
   View,
   ViewStyle
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { colors, radii, shadow, typography } from "./theme";
+import { colors, darkColors, radii, shadow, typography } from "./theme";
 
 export type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -100,12 +101,14 @@ export function IconButton({
   icon,
   label,
   onPress,
-  active = false
+  active = false,
+  dark = false
 }: {
   icon: IconName;
   label: string;
   onPress: () => void;
   active?: boolean;
+  dark?: boolean;
 }) {
   return (
     <Pressable
@@ -114,6 +117,7 @@ export function IconButton({
       onPress={onPress}
       style={({ pressed }) => [
         styles.iconButton,
+        dark && styles.iconButtonDark,
         active && styles.iconButtonActive,
         pressed && styles.buttonActive
       ]}
@@ -121,7 +125,15 @@ export function IconButton({
       <Icon
         name={icon}
         size={20}
-        color={active ? colors.primary : colors.textMuted}
+        color={
+          active
+            ? dark
+              ? darkColors.primary
+              : colors.primary
+            : dark
+              ? darkColors.text
+              : colors.textMuted
+        }
       />
     </Pressable>
   );
@@ -367,6 +379,7 @@ export function Sheet({
 }>) {
   const { width } = useWindowDimensions();
   const compact = width < 760;
+  const insets = useSafeAreaInsets();
   return (
     <Modal
       visible={visible}
@@ -395,7 +408,15 @@ export function Sheet({
             fullScreen && styles.sheetFull
           ]}
         >
-          <View style={styles.sheetHeader}>
+          <View
+            style={[
+              styles.sheetHeader,
+              fullScreen && {
+                minHeight: 62 + insets.top,
+                paddingTop: insets.top
+              }
+            ]}
+          >
             <Text style={styles.sheetTitle}>{title}</Text>
             <IconButton icon="close" label="Закрыть" onPress={onClose} />
           </View>
@@ -498,6 +519,10 @@ const styles = StyleSheet.create({
   iconButtonActive: {
     backgroundColor: colors.primarySoft,
     borderColor: "rgba(53, 194, 255, 0.32)"
+  },
+  iconButtonDark: {
+    backgroundColor: darkColors.primarySoft,
+    borderColor: darkColors.borderSoft
   },
   fieldLabel: {
     ...typography.label,

@@ -1,5 +1,4 @@
 import {
-  type ChangeEvent,
   createElement,
   useCallback,
   useEffect,
@@ -10,12 +9,14 @@ import {
 import {
   ActivityIndicator,
   Image as RNImage,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Icon } from "./ui";
 import { colors, darkColors, radii, typography } from "./theme";
@@ -24,6 +25,10 @@ import {
   type DicomMetadata,
   type DicomSeries
 } from "./dicomSeries";
+import {
+  frameFromVerticalDrag,
+  zoomFromPinch
+} from "./dicomGestures";
 
 const metadataNumber = (
   metadata: DicomMetadata | undefined,
@@ -48,14 +53,20 @@ export function MobileDicomViewer({
   studyUID: string;
   dicomWebRoot?: string;
 }) {
+  const insets = useSafeAreaInsets();
   const renderedCache = useRef(new Map<string, Promise<string>>());
   const blobURLs = useRef(new Set<string>());
+  const dragStartFrame = useRef(0);
+  const pinchStartDistance = useRef(0);
+  const pinchStartZoom = useRef(1);
   const [series, setSeries] = useState<DicomSeries[]>([]);
   const [seriesIndex, setSeriesIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [fps, setFps] = useState(12);
   const [zoom, setZoom] = useState(1);
+  const [zoomOrigin, setZoomOrigin] = useState({ x: 50, y: 50 });
+  const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [seriesOpen, setSeriesOpen] = useState(false);
   const [metadataLoading, setMetadataLoading] = useState(true);
   const [frameReady, setFrameReady] = useState(false);
@@ -150,13 +161,6 @@ export function MobileDicomViewer({
   }, [dicomWebRoot, studyUID]);
 
   useEffect(() => {
-    if (!selectedSeries) return;
-    selectedSeries.frames.forEach((frame) => {
-      void loadRenderedFrame(renderedFrameURL(frame)).catch(() => undefined);
-    });
-  }, [loadRenderedFrame, selectedSeries]);
-
-  useEffect(() => {
     if (!frameURL) return;
     let cancelled = false;
     setError("");
@@ -181,23 +185,46 @@ export function MobileDicomViewer({
 
   useEffect(() => {
     let cancelled = false;
-    series.forEach((item) => {
-      const previewURL = renderedFrameURL(item.frames[0]);
-      void loadRenderedFrame(previewURL)
-        .then((source) => {
+    void (async () => {
+      for (const item of series) {
+        if (cancelled) break;
+        const previewURL = renderedFrameURL(item.frames[0]);
+        try {
+          const source = await loadRenderedFrame(previewURL);
           if (!cancelled) {
             setSeriesPreviews((current) => ({
               ...current,
               [item.uid]: source
             }));
           }
-        })
-        .catch(() => undefined);
-    });
+        } catch {
+          // A missing preview must not block the selected XA series.
+        }
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [loadRenderedFrame, series]);
+
+  useEffect(() => {
+    if (!selectedSeries || playing || !frameReady) return;
+    const adjacent = [
+      selectedSeries.frames[frameIndex + 1],
+      selectedSeries.frames[frameIndex - 1]
+    ].filter(Boolean);
+    void (async () => {
+      for (const frame of adjacent) {
+        await loadRenderedFrame(renderedFrameURL(frame)).catch(() => undefined);
+      }
+    })();
+  }, [
+    frameIndex,
+    frameReady,
+    loadRenderedFrame,
+    playing,
+    selectedSeries
+  ]);
 
   useEffect(
     () => () => {
@@ -209,12 +236,37 @@ export function MobileDicomViewer({
 
   useEffect(() => {
     if (!playing || frameCount < 2) return;
-    const timer = setInterval(
-      () => setFrameIndex((current) => (current + 1) % frameCount),
-      Math.round(1000 / fps)
-    );
-    return () => clearInterval(timer);
-  }, [fps, frameCount, playing]);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const nextFrame = (frameIndex + 1) % frameCount;
+    const nextURL = renderedFrameURL(selectedSeries?.frames[nextFrame]);
+    const startedAt = Date.now();
+    void loadRenderedFrame(nextURL)
+      .then(() => {
+        if (cancelled) return;
+        const delay = Math.max(0, Math.round(1000 / fps) - (Date.now() - startedAt));
+        timer = setTimeout(() => {
+          if (!cancelled) setFrameIndex(nextFrame);
+        }, delay);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPlaying(false);
+          setError("PACS не смог подготовить следующий XA-кадр");
+        }
+      });
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [
+    fps,
+    frameCount,
+    frameIndex,
+    loadRenderedFrame,
+    playing,
+    selectedSeries
+  ]);
 
   const imageNode = useMemo(
     () =>
@@ -232,28 +284,94 @@ export function MobileDicomViewer({
           height: "100%",
           objectFit: "contain",
           transform: `scale(${zoom})`,
-          transformOrigin: "center",
+          transformOrigin: `${zoomOrigin.x}% ${zoomOrigin.y}%`,
           transition: "transform 120ms ease",
           touchAction: "none",
-          userSelect: "none"
+          userSelect: "none",
+          pointerEvents: "none"
         }
       }),
-    [frameSource, zoom]
+    [frameSource, zoom, zoomOrigin.x, zoomOrigin.y]
   );
 
-  const changeFrame = (event: ChangeEvent<HTMLInputElement>) => {
-    setPlaying(false);
-    setFrameIndex(Number(event.currentTarget.value));
-  };
+  const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) =>
+    touches.length < 2
+      ? 0
+      : Math.hypot(
+          touches[0]!.pageX - touches[1]!.pageX,
+          touches[0]!.pageY - touches[1]!.pageY
+        );
+
+  const gestures = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => !playing,
+        onMoveShouldSetPanResponder: () => !playing,
+        onPanResponderGrant: (event) => {
+          dragStartFrame.current = frameIndex;
+          const touches = event.nativeEvent.touches;
+          if (touches.length >= 2) {
+            pinchStartDistance.current = touchDistance(touches);
+            pinchStartZoom.current = zoom;
+            const centerX = (touches[0]!.locationX + touches[1]!.locationX) / 2;
+            const centerY = (touches[0]!.locationY + touches[1]!.locationY) / 2;
+            setZoomOrigin({
+              x: Math.max(0, Math.min(100, centerX / viewportSize.width * 100)),
+              y: Math.max(0, Math.min(100, centerY / viewportSize.height * 100))
+            });
+          }
+        },
+        onPanResponderMove: (event, gesture) => {
+          if (playing) return;
+          const touches = event.nativeEvent.touches;
+          if (touches.length >= 2) {
+            setZoom(
+              zoomFromPinch(
+                pinchStartZoom.current,
+                pinchStartDistance.current,
+                touchDistance(touches)
+              )
+            );
+            return;
+          }
+          setFrameIndex(
+            frameFromVerticalDrag(
+              dragStartFrame.current,
+              gesture.dy,
+              frameCount
+            )
+          );
+        }
+      }),
+    [frameCount, frameIndex, playing, viewportSize.height, viewportSize.width, zoom]
+  );
 
   const reset = () => {
     setPlaying(false);
     setZoom(1);
+    setZoomOrigin({ x: 50, y: 50 });
   };
 
   return (
-    <View style={styles.root}>
-      <View style={styles.viewport}>
+    <View
+      style={[
+        styles.root,
+        {
+          paddingTop: insets.top + 58,
+          paddingBottom: insets.bottom + 82
+        }
+      ]}
+    >
+      <View
+        {...gestures.panHandlers}
+        onLayout={(event) =>
+          setViewportSize({
+            width: Math.max(1, event.nativeEvent.layout.width),
+            height: Math.max(1, event.nativeEvent.layout.height)
+          })
+        }
+        style={styles.viewport}
+      >
         {frameSource ? imageNode : null}
         {selectedFrame ? (
           <>
@@ -269,6 +387,11 @@ export function MobileDicomViewer({
             <Text style={[styles.imageMeta, styles.frameMeta]}>
               {frameIndex + 1}/{frameCount}
             </Text>
+            {!playing ? (
+              <Text style={styles.gestureHint}>
+                ↑↓ кадры · два пальца — масштаб
+              </Text>
+            ) : null}
           </>
         ) : null}
       </View>
@@ -289,19 +412,12 @@ export function MobileDicomViewer({
 
       {!metadataLoading && !error && selectedSeries && selectedFrame ? (
         <>
-          <View style={styles.controls}>
-            {createElement("input", {
-              "aria-label": "Кадр ангиографии",
-              type: "range",
-              min: 0,
-              max: Math.max(0, frameCount - 1),
-              value: frameIndex,
-              onChange: changeFrame,
-              style: {
-                width: "100%",
-                accentColor: darkColors.primary
-              }
-            })}
+          <View
+            style={[
+              styles.controls,
+              { bottom: Math.max(8, insets.bottom + 8) }
+            ]}
+          >
             <View style={styles.controlRow}>
               <Pressable
                 accessibilityRole="button"
@@ -328,22 +444,6 @@ export function MobileDicomViewer({
                   size={21}
                   color={darkColors.text}
                 />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Уменьшить"
-                onPress={() => setZoom((current) => Math.max(0.5, current * 0.8))}
-                style={styles.controlButton}
-              >
-                <Icon name="remove" size={20} color={darkColors.text} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Увеличить"
-                onPress={() => setZoom((current) => Math.min(4, current * 1.25))}
-                style={styles.controlButton}
-              >
-                <Icon name="add" size={20} color={darkColors.text} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -375,7 +475,12 @@ export function MobileDicomViewer({
                 onPress={() => setSeriesOpen(false)}
                 style={styles.seriesBackdrop}
               />
-              <View style={styles.seriesSheet}>
+              <View
+                style={[
+                  styles.seriesSheet,
+                  { paddingBottom: insets.bottom }
+                ]}
+              >
                 <View style={styles.sheetHandle} />
                 <ScrollView
                   showsVerticalScrollIndicator={false}
@@ -479,15 +584,27 @@ const styles = StyleSheet.create({
   windowMeta: { top: 10, right: 12 },
   seriesMeta: { bottom: 12, left: 12 },
   frameMeta: { bottom: 12, right: 12 },
+  gestureHint: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 36,
+    color: darkColors.textMuted,
+    fontSize: 10,
+    lineHeight: 13,
+    textAlign: "center",
+    textShadowColor: "rgba(0,0,0,0.9)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2
+  },
   controls: {
     position: "absolute",
     left: 10,
     right: 10,
     bottom: 10,
-    minHeight: 88,
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 9,
+    minHeight: 62,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderRadius: 22,
     borderWidth: 1,
     borderColor: darkColors.borderSoft,
@@ -497,13 +614,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 7,
-    marginTop: 5
+    gap: 10
   },
   controlButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 13,
+    width: 44,
+    height: 44,
+    borderRadius: 15,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: darkColors.surface
@@ -514,14 +630,14 @@ const styles = StyleSheet.create({
     backgroundColor: darkColors.primarySoft
   },
   playButton: {
-    width: 43,
+    width: 50,
     backgroundColor: darkColors.primarySoft,
     borderWidth: 1,
     borderColor: darkColors.primary
   },
   speedButton: {
-    minWidth: 54,
-    height: 36,
+    minWidth: 62,
+    height: 44,
     paddingHorizontal: 8,
     borderRadius: 13,
     alignItems: "center",
