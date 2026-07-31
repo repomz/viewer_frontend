@@ -9,17 +9,17 @@
     "backgroundColor": "#F3F6F8",
     "primaryColor": "#0B84B3",
     "splash": {
-      "image": "./assets/splash-xa-v3.png",
-      "resizeMode": "contain",
+      "image": "./assets/angiography-splash.png",
+      "resizeMode": "cover",
       "backgroundColor": "#07131F"
     },
     "plugins": [
       [
         "expo-splash-screen",
         {
-          "image": "./assets/splash-xa-v3.png",
-          "imageWidth": 280,
-          "resizeMode": "contain",
+          "image": "./assets/angiography-splash.png",
+          "imageWidth": 430,
+          "resizeMode": "cover",
           "backgroundColor": "#07131F"
         }
       ]

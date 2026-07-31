@@ -1,5 +1,8 @@
 import type {
   AgentCommand,
+  OperationPlan,
+  PlanDay,
+  PlanEntry,
   ReportDocument,
   Study,
   UserRequest
@@ -178,6 +181,25 @@ export async function deleteAllStudies(): Promise<void> {
 export async function getReports(): Promise<ReportDocument[]> {
   const response = await request<ReportDocument[]>("/reports?limit=30");
   return Array.isArray(response) ? response : [];
+}
+
+export async function getOperationPlan(
+  weekStart?: string
+): Promise<OperationPlan> {
+  const query = weekStart
+    ? `?week_start=${encodeURIComponent(weekStart)}`
+    : "";
+  return request<OperationPlan>(`/operation-plan${query}`);
+}
+
+export async function saveOperationPlanDay(
+  date: string,
+  entries: PlanEntry[]
+): Promise<PlanDay> {
+  return request<PlanDay>(`/operation-plan/${encodeURIComponent(date)}`, {
+    method: "PUT",
+    body: JSON.stringify({ entries })
+  });
 }
 
 export async function getReport(filename: string): Promise<ReportDocument> {

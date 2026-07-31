@@ -29,6 +29,12 @@ import {
   frameFromVerticalDrag,
   zoomFromPinch
 } from "./dicomGestures";
+import { loadRenderedFrameBlob } from "./dicomOfflineCache";
+import {
+  getPreparedXAManifest,
+  manifestFrameMap,
+  preparedFrameKey
+} from "./xaPreparedCache";
 
 const metadataNumber = (
   metadata: DicomMetadata | undefined,
@@ -43,15 +49,18 @@ const renderedFrameURL = (
   frame: DicomSeries["frames"][number] | undefined
 ): string =>
   frame
-    ? `${frame.instanceURL}/frames/${frame.frameIndex + 1}/rendered`
+    ? `${frame.instanceURL}/frames/${frame.frameIndex + 1}/rendered` +
+      "?viewport=768,768&quality=85"
     : "";
 
 export function MobileDicomViewer({
   studyUID,
-  dicomWebRoot = "/dicom-web"
+  dicomWebRoot = "/dicom-web",
+  persistentCacheEnabled = false
 }: {
   studyUID: string;
   dicomWebRoot?: string;
+  persistentCacheEnabled?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const renderedCache = useRef(new Map<string, Promise<string>>());
@@ -59,6 +68,7 @@ export function MobileDicomViewer({
   const dragStartFrame = useRef(0);
   const pinchStartDistance = useRef(0);
   const pinchStartZoom = useRef(1);
+  const panStart = useRef({ x: 0, y: 0 });
   const [series, setSeries] = useState<DicomSeries[]>([]);
   const [seriesIndex, setSeriesIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
@@ -66,6 +76,7 @@ export function MobileDicomViewer({
   const [fps, setFps] = useState(12);
   const [zoom, setZoom] = useState(1);
   const [zoomOrigin, setZoomOrigin] = useState({ x: 50, y: 50 });
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [seriesOpen, setSeriesOpen] = useState(false);
   const [metadataLoading, setMetadataLoading] = useState(true);
@@ -75,11 +86,18 @@ export function MobileDicomViewer({
     {}
   );
   const [error, setError] = useState("");
+  const [preparedFrames, setPreparedFrames] = useState<Map<string, string>>(
+    () => new Map()
+  );
 
   const selectedSeries = series[seriesIndex] ?? null;
   const frameCount = selectedSeries?.frames.length ?? 0;
   const selectedFrame = selectedSeries?.frames[frameIndex];
-  const frameURL = renderedFrameURL(selectedFrame);
+  const frameURL = selectedFrame
+    ? preparedFrames.get(
+        preparedFrameKey(selectedFrame.instanceUID, selectedFrame.frameIndex + 1)
+      ) ?? renderedFrameURL(selectedFrame)
+    : "";
   const rows = metadataNumber(selectedFrame?.metadata, "00280010", 0);
   const columns = metadataNumber(selectedFrame?.metadata, "00280011", 0);
   const bitsStored = metadataNumber(selectedFrame?.metadata, "00280101", 12);
@@ -94,26 +112,28 @@ export function MobileDicomViewer({
     Math.round(windowWidth / 2)
   );
 
-  const loadRenderedFrame = useCallback((url: string): Promise<string> => {
-    let pending = renderedCache.current.get(url);
-    if (!pending) {
-      pending = fetch(url, { headers: { Accept: "image/jpeg" } }).then(
-        async (response) => {
-          if (!response.ok) {
-            throw new Error(`PACS вернул HTTP ${response.status}`);
-          }
-          const objectURL = URL.createObjectURL(await response.blob());
+  const loadRenderedFrame = useCallback(
+    (url: string): Promise<string> => {
+      let pending = renderedCache.current.get(url);
+      if (!pending) {
+        pending = loadRenderedFrameBlob(url, {
+          studyUID,
+          persist: persistentCacheEnabled
+        }).then((blob) => {
+          const objectURL = URL.createObjectURL(blob);
           blobURLs.current.add(objectURL);
           return objectURL;
-        }
-      );
-      renderedCache.current.set(url, pending);
-    }
-    return pending;
-  }, []);
+        });
+        renderedCache.current.set(url, pending);
+      }
+      return pending;
+    },
+    [persistentCacheEnabled, studyUID]
+  );
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     blobURLs.current.forEach((url) => URL.revokeObjectURL(url));
     blobURLs.current.clear();
     renderedCache.current.clear();
@@ -123,25 +143,50 @@ export function MobileDicomViewer({
     setSeriesPreviews({});
     setError("");
     setSeries([]);
+    setPreparedFrames(new Map());
     setSeriesIndex(0);
     setFrameIndex(0);
     setPlaying(false);
+    setZoom(1);
+    setZoomOrigin({ x: 50, y: 50 });
+    setPanOffset({ x: 0, y: 0 });
     setSeriesOpen(false);
 
     void (async () => {
       try {
         const root = dicomWebRoot.replace(/\/$/, "");
-        const response = await fetch(
-          `${root}/studies/${encodeURIComponent(studyUID)}/metadata`,
-          { headers: { Accept: "application/dicom+json" } }
-        );
+        const [response, prepared] = await Promise.all([
+          fetch(`${root}/studies/${encodeURIComponent(studyUID)}/metadata`, {
+            headers: { Accept: "application/dicom+json" },
+            signal: controller.signal
+          }),
+          getPreparedXAManifest(studyUID, {
+            signal: controller.signal
+          }).catch(() => null)
+        ]);
         if (!response.ok) throw new Error(`PACS вернул HTTP ${response.status}`);
         const metadata = (await response.json()) as DicomMetadata[];
         const loadedSeries = buildDicomSeries(metadata, studyUID, root);
         if (!loadedSeries.length) {
           throw new Error("В исследовании не найдены DICOM-кадры");
         }
-        if (!cancelled) setSeries(loadedSeries);
+        if (!cancelled) {
+          setSeries(loadedSeries);
+          if (prepared) {
+            setPreparedFrames(manifestFrameMap(prepared));
+          } else {
+            void getPreparedXAManifest(studyUID, {
+              wait: true,
+              signal: controller.signal
+            })
+              .then((ready) => {
+                if (!cancelled && ready) {
+                  setPreparedFrames(manifestFrameMap(ready));
+                }
+              })
+              .catch(() => undefined);
+          }
+        }
       } catch (reason) {
         if (!cancelled) {
           setError(
@@ -157,8 +202,33 @@ export function MobileDicomViewer({
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [dicomWebRoot, studyUID]);
+
+  useEffect(() => {
+    if (!selectedSeries || preparedFrames.size === 0) return;
+    let cancelled = false;
+    let nextIndex = 0;
+    const urls = selectedSeries.frames.flatMap((frame) => {
+      const url = preparedFrames.get(
+        preparedFrameKey(frame.instanceUID, frame.frameIndex + 1)
+      );
+      return url ? [url] : [];
+    });
+    const worker = async () => {
+      while (!cancelled) {
+        const url = urls[nextIndex];
+        nextIndex += 1;
+        if (!url) return;
+        await loadRenderedFrame(url).catch(() => undefined);
+      }
+    };
+    void Promise.all(Array.from({ length: 6 }, () => worker()));
+    return () => {
+      cancelled = true;
+    };
+  }, [loadRenderedFrame, preparedFrames, selectedSeries]);
 
   useEffect(() => {
     if (!frameURL) return;
@@ -188,7 +258,12 @@ export function MobileDicomViewer({
     void (async () => {
       for (const item of series) {
         if (cancelled) break;
-        const previewURL = renderedFrameURL(item.frames[0]);
+        const firstFrame = item.frames[0];
+        const previewURL = firstFrame
+          ? preparedFrames.get(
+              preparedFrameKey(firstFrame.instanceUID, firstFrame.frameIndex + 1)
+            ) ?? renderedFrameURL(firstFrame)
+          : "";
         try {
           const source = await loadRenderedFrame(previewURL);
           if (!cancelled) {
@@ -205,7 +280,7 @@ export function MobileDicomViewer({
     return () => {
       cancelled = true;
     };
-  }, [loadRenderedFrame, series]);
+  }, [loadRenderedFrame, preparedFrames, series]);
 
   useEffect(() => {
     if (!selectedSeries || playing || !frameReady) return;
@@ -215,7 +290,12 @@ export function MobileDicomViewer({
     ].filter(Boolean);
     void (async () => {
       for (const frame of adjacent) {
-        await loadRenderedFrame(renderedFrameURL(frame)).catch(() => undefined);
+        if (!frame) continue;
+        const url =
+          preparedFrames.get(
+            preparedFrameKey(frame.instanceUID, frame.frameIndex + 1)
+          ) ?? renderedFrameURL(frame);
+        await loadRenderedFrame(url).catch(() => undefined);
       }
     })();
   }, [
@@ -223,6 +303,7 @@ export function MobileDicomViewer({
     frameReady,
     loadRenderedFrame,
     playing,
+    preparedFrames,
     selectedSeries
   ]);
 
@@ -239,7 +320,15 @@ export function MobileDicomViewer({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const nextFrame = (frameIndex + 1) % frameCount;
-    const nextURL = renderedFrameURL(selectedSeries?.frames[nextFrame]);
+    const nextFrameItem = selectedSeries?.frames[nextFrame];
+    const nextURL = nextFrameItem
+      ? preparedFrames.get(
+          preparedFrameKey(
+            nextFrameItem.instanceUID,
+            nextFrameItem.frameIndex + 1
+          )
+        ) ?? renderedFrameURL(nextFrameItem)
+      : "";
     const startedAt = Date.now();
     void loadRenderedFrame(nextURL)
       .then(() => {
@@ -265,6 +354,7 @@ export function MobileDicomViewer({
     frameIndex,
     loadRenderedFrame,
     playing,
+    preparedFrames,
     selectedSeries
   ]);
 
@@ -278,20 +368,29 @@ export function MobileDicomViewer({
           setPlaying(false);
           setError("PACS не смог отрисовать выбранный XA-кадр");
         },
-        onDoubleClick: () => setZoom(1),
+        onDoubleClick: () => {
+          setZoom(1);
+          setPanOffset({ x: 0, y: 0 });
+        },
         style: {
           width: "100%",
           height: "100%",
           objectFit: "contain",
-          transform: `scale(${zoom})`,
+          transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
           transformOrigin: `${zoomOrigin.x}% ${zoomOrigin.y}%`,
-          transition: "transform 120ms ease",
           touchAction: "none",
           userSelect: "none",
           pointerEvents: "none"
         }
       }),
-    [frameSource, zoom, zoomOrigin.x, zoomOrigin.y]
+    [
+      frameSource,
+      panOffset.x,
+      panOffset.y,
+      zoom,
+      zoomOrigin.x,
+      zoomOrigin.y
+    ]
   );
 
   const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) =>
@@ -309,6 +408,7 @@ export function MobileDicomViewer({
         onMoveShouldSetPanResponder: () => !playing,
         onPanResponderGrant: (event) => {
           dragStartFrame.current = frameIndex;
+          panStart.current = panOffset;
           const touches = event.nativeEvent.touches;
           if (touches.length >= 2) {
             pinchStartDistance.current = touchDistance(touches);
@@ -325,13 +425,28 @@ export function MobileDicomViewer({
           if (playing) return;
           const touches = event.nativeEvent.touches;
           if (touches.length >= 2) {
-            setZoom(
-              zoomFromPinch(
-                pinchStartZoom.current,
-                pinchStartDistance.current,
-                touchDistance(touches)
-              )
+            const nextZoom = zoomFromPinch(
+              pinchStartZoom.current,
+              pinchStartDistance.current,
+              touchDistance(touches)
             );
+            setZoom(nextZoom);
+            if (nextZoom <= 1) setPanOffset({ x: 0, y: 0 });
+            return;
+          }
+          if (zoom > 1) {
+            const maxX = viewportSize.width * (zoom - 1) * 0.5;
+            const maxY = viewportSize.height * (zoom - 1) * 0.5;
+            setPanOffset({
+              x: Math.max(
+                -maxX,
+                Math.min(maxX, panStart.current.x + gesture.dx)
+              ),
+              y: Math.max(
+                -maxY,
+                Math.min(maxY, panStart.current.y + gesture.dy)
+              )
+            });
             return;
           }
           setFrameIndex(
@@ -343,13 +458,22 @@ export function MobileDicomViewer({
           );
         }
       }),
-    [frameCount, frameIndex, playing, viewportSize.height, viewportSize.width, zoom]
+    [
+      frameCount,
+      frameIndex,
+      panOffset,
+      playing,
+      viewportSize.height,
+      viewportSize.width,
+      zoom
+    ]
   );
 
   const reset = () => {
     setPlaying(false);
     setZoom(1);
     setZoomOrigin({ x: 50, y: 50 });
+    setPanOffset({ x: 0, y: 0 });
   };
 
   return (
@@ -389,7 +513,9 @@ export function MobileDicomViewer({
             </Text>
             {!playing ? (
               <Text style={styles.gestureHint}>
-                ↑↓ кадры · два пальца — масштаб
+                {zoom > 1
+                  ? "Перетаскивайте увеличенную область"
+                  : "↑↓ кадры · масштаб двумя пальцами в нужной области"}
               </Text>
             ) : null}
           </>
@@ -497,6 +623,8 @@ export function MobileDicomViewer({
                           setPlaying(false);
                           setSeriesIndex(index);
                           setFrameIndex(0);
+                          setZoom(1);
+                          setPanOffset({ x: 0, y: 0 });
                           setSeriesOpen(false);
                         }}
                         style={[

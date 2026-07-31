@@ -5,6 +5,7 @@ import {
   Animated,
   Alert,
   Image,
+  Keyboard,
   Linking,
   Modal,
   PanResponder,
@@ -35,10 +36,12 @@ import {
   deleteUserRequest,
   getAgentHeartbeatTimes,
   getAgents,
+  getOperationPlan,
   getReports,
   getStudies,
   getUserRequests,
   getUserRequest,
+  saveOperationPlanDay,
   searchStudies
 } from "./src/api";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
@@ -50,6 +53,15 @@ import {
   saveRequests,
   saveSettings
 } from "./src/storage";
+import {
+  cancelDicomDownloads,
+  clearDicomCache,
+  downloadStudyForOffline,
+  formatStorageSize,
+  getDicomCacheSnapshot,
+  subscribeDicomCache,
+  type DicomCacheSnapshot
+} from "./src/dicomOfflineCache";
 import {
   colors,
   darkColors,
@@ -65,6 +77,7 @@ import type {
   AppSettings,
   OperationsReport,
   OperationPlan,
+  PlanEntry,
   ReportDocument,
   ReportOperation,
   Study,
@@ -455,8 +468,18 @@ export default function App() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [plan, setPlan] = useState<OperationPlan | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState("");
   const processedCompletions = useRef(new Set<string>());
+  const autoDownloadRunning = useRef(false);
+  const autoDownloadAllowedRef = useRef(false);
   const [toast, setToast] = useState<ToastState>(null);
+  const [dicomCache, setDicomCache] = useState<DicomCacheSnapshot>(
+    getDicomCacheSnapshot
+  );
+  const autoDownloadAllowed =
+    authenticated && compact && settings.autoDownloadAngiography;
+  autoDownloadAllowedRef.current = autoDownloadAllowed;
 
   const loadStudies = useCallback(async () => {
     setStudiesError("");
@@ -526,6 +549,18 @@ export default function App() {
     }
   }, []);
 
+  const loadPlan = useCallback(async () => {
+    setPlanError("");
+    setPlanLoading(true);
+    try {
+      setPlan(await getOperationPlan());
+    } catch (error) {
+      setPlanError(errorMessage(error));
+    } finally {
+      setPlanLoading(false);
+    }
+  }, []);
+
   const updateServerHealth = useCallback(async () => {
     try {
       const message = await checkHealth();
@@ -586,8 +621,15 @@ export default function App() {
     void loadStudies();
     void loadXAStudies();
     void loadRequestHistory();
+    void loadPlan();
     refreshConnectivity();
-  }, [loadRequestHistory, loadStudies, loadXAStudies, refreshConnectivity]);
+  }, [
+    loadPlan,
+    loadRequestHistory,
+    loadStudies,
+    loadXAStudies,
+    refreshConnectivity
+  ]);
 
   useEffect(() => {
     void getAgents()
@@ -621,6 +663,12 @@ export default function App() {
       void loadXAStudies();
     }
   }, [activeTab, loadReports, loadXAStudies]);
+
+  useEffect(() => {
+    if (activeTab !== "reports") return;
+    const timer = setInterval(() => void loadReports(), 30_000);
+    return () => clearInterval(timer);
+  }, [activeTab, loadReports]);
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
@@ -674,17 +722,6 @@ export default function App() {
   }, [activeTab, authenticated]);
 
   useEffect(() => {
-    if (Platform.OS !== "web") return;
-    const splash = document.getElementById("app-splash");
-    if (!splash) return;
-    const frame = requestAnimationFrame(() => {
-      splash.classList.add("viewer-splash-hidden");
-      window.setTimeout(() => splash.remove(), 220);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
-  useEffect(() => {
     const pending = requests.filter(
       (request) => !terminalStatuses.has(request.status)
     );
@@ -711,6 +748,7 @@ export default function App() {
   }, [requests]);
 
   useEffect(() => {
+    const reportRefreshTimers: ReturnType<typeof setTimeout>[] = [];
     const newlyCompleted = requests.filter(
       (request) =>
         request.status === "completed" &&
@@ -724,14 +762,58 @@ export default function App() {
       void loadStudies();
       void loadXAStudies();
     }
-  }, [loadStudies, loadXAStudies, requests]);
+    if (newlyCompleted.some((request) => request.command === "get_report")) {
+      [0, 1_500, 4_000, 8_000].forEach((delay) => {
+        reportRefreshTimers.push(
+          setTimeout(() => void loadReports(), delay)
+        );
+      });
+    }
+    return () =>
+      reportRefreshTimers.forEach((timer) => clearTimeout(timer));
+  }, [loadReports, loadStudies, loadXAStudies, requests]);
+
+  useEffect(
+    () =>
+      subscribeDicomCache(() => {
+        setDicomCache(getDicomCacheSnapshot());
+      }),
+    []
+  );
 
   useEffect(() => {
-    const latest = requests.find(
-      (request) => request.command === "get_plan" && request.status === "completed"
+    if (!autoDownloadAllowed) cancelDicomDownloads();
+  }, [autoDownloadAllowed]);
+
+  useEffect(() => {
+    if (
+      !autoDownloadAllowed ||
+      autoDownloadRunning.current
+    ) {
+      return;
+    }
+    const cachedStudies = getDicomCacheSnapshot().studies;
+    const studiesToDownload = xaStudies.filter(
+      (study) =>
+        study.study_type.toLocaleLowerCase() === "xa" &&
+        !cachedStudies[study.study_id]?.complete
     );
-    if (latest) setPlan(parseObject(latest.result) as OperationPlan);
-  }, [requests]);
+    if (!studiesToDownload.length) return;
+    autoDownloadRunning.current = true;
+    void (async () => {
+      try {
+        for (const study of studiesToDownload) {
+          if (!autoDownloadAllowedRef.current) break;
+          await downloadStudyForOffline(study.study_id);
+        }
+      } finally {
+        autoDownloadRunning.current = false;
+      }
+    })();
+  }, [
+    autoDownloadAllowed,
+    xaStudies
+  ]);
 
   useEffect(() => {
     if (!toast) return;
@@ -808,7 +890,8 @@ export default function App() {
         selectedAgentIds: selectedAgentIds.length
           ? selectedAgentIds
           : [fallbackAgent],
-        userId: next.userId.trim() || defaultSettings.userId
+        userId: next.userId.trim() || defaultSettings.userId,
+        autoDownloadAngiography: next.autoDownloadAngiography
       };
       setSettings(normalized);
       saveSettings(normalized);
@@ -921,7 +1004,11 @@ export default function App() {
 
             <View
               {...(compact ? pageSwipe.panHandlers : {})}
-              style={[styles.content, isAngiography && styles.contentDark]}
+              style={[
+                styles.content,
+                compact && styles.contentCompact,
+                isAngiography && styles.contentDark
+              ]}
             >
               {activeTab === "studies" ? (
                 <StudiesScreen
@@ -954,6 +1041,10 @@ export default function App() {
                   studies={xaStudies}
                   loading={xaLoading}
                   error={xaError}
+                  persistentCacheEnabled={
+                    compact && settings.autoDownloadAngiography
+                  }
+                  dicomCache={dicomCache}
                   onRetry={() => void loadXAStudies()}
                 />
               ) : null}
@@ -995,6 +1086,7 @@ export default function App() {
                   loading={reportsLoading}
                   error={reportsError}
                   onRetry={() => void loadReports()}
+                  onRefresh={() => void loadReports()}
                   onRequest={() =>
                     void submitCommand("get_report", { period: 1 })
                   }
@@ -1008,17 +1100,39 @@ export default function App() {
                   settings={settings}
                   health={health}
                   agentHealthById={agentHealthById}
+                  dicomCache={dicomCache}
                   onSave={saveAppSettings}
                   onCheck={refreshConnectivity}
+                  onClearCache={() => {
+                    void clearDicomCache().then(() =>
+                      setToast({
+                        message: "Сохранённые XA-кадры удалены с устройства",
+                        tone: "success"
+                      })
+                    );
+                  }}
                 />
               ) : null}
               {activeTab === "plan" ? (
                 <PlanScreen
                   compact={compact}
                   plan={plan}
-                  onRequest={(date) =>
-                    void submitCommand("get_plan", date ? { date } : {})
-                  }
+                  loading={planLoading}
+                  error={planError}
+                  onRefresh={() => void loadPlan()}
+                  onSave={async (date, entries) => {
+                    const saved = await saveOperationPlanDay(date, entries);
+                    setPlan((current) =>
+                      current
+                        ? {
+                            ...current,
+                            days: current.days.map((day) =>
+                              day.date === saved.date ? saved : day
+                            )
+                          }
+                        : current
+                    );
+                  }}
                 />
               ) : null}
             </View>
@@ -1085,6 +1199,15 @@ function LoginScreen({
     <SafeAreaView style={styles.loginSafe} edges={["top", "bottom"]}>
       <StatusBar style="light" backgroundColor="#050C15" />
       <View style={[styles.loginLayout, compact && styles.loginLayoutCompact]}>
+        <Image
+          source={require("./assets/angiography-splash.png")}
+          resizeMode="cover"
+          style={[
+            styles.loginBackgroundImage,
+            compact && styles.loginBackgroundImageCompact
+          ]}
+        />
+        <View style={styles.loginBackgroundShade} />
         <View style={[styles.loginPanel, compact && styles.loginPanelCompact]}>
           <View style={styles.loginBrand}>
             <View style={styles.loginBrandIcon}>
@@ -1096,11 +1219,17 @@ function LoginScreen({
             </View>
           </View>
           <View style={styles.loginForm}>
-            <View>
-              <Text style={styles.loginTitle}>Вход в систему</Text>
-              <Text style={styles.loginSubtitle}>
-                Протоколы операций и ангиографии в защищённом контуре.
-              </Text>
+            <View style={styles.loginHeadingRow}>
+              <Text style={styles.loginTitle}>Вход</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Регистрация пока недоступна"
+                accessibilityState={{ disabled: true }}
+                disabled
+                style={styles.loginRegistration}
+              >
+                <Text style={styles.loginRegistrationText}>Регистрация</Text>
+              </Pressable>
             </View>
             <View style={styles.loginFields}>
               <View style={styles.loginField}>
@@ -1123,6 +1252,12 @@ function LoginScreen({
                   placeholder="Пароль"
                   placeholderTextColor={darkColors.textDim}
                   secureTextEntry
+                  returnKeyType="go"
+                  blurOnSubmit
+                  onSubmitEditing={() => {
+                    Keyboard.dismiss();
+                    onEnter();
+                  }}
                   style={styles.loginInput}
                 />
               </View>
@@ -1130,7 +1265,10 @@ function LoginScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Войти"
-              onPress={onEnter}
+              onPress={() => {
+                Keyboard.dismiss();
+                onEnter();
+              }}
               style={({ pressed }) => [
                 styles.loginButton,
                 pressed && styles.loginButtonPressed
@@ -1142,19 +1280,6 @@ function LoginScreen({
             <Text style={styles.loginTemporary}>
               Авторизация будет подключена позднее. Сейчас вход выполняется без
               проверки данных.
-            </Text>
-          </View>
-        </View>
-        <View style={[styles.loginVisual, compact && styles.loginVisualCompact]}>
-          <Image
-            source={require("./assets/angiography-splash.png")}
-            resizeMode="contain"
-            style={styles.loginImage}
-          />
-          <View style={styles.loginVisualCopy}>
-            <Text style={styles.loginVisualLabel}>ANGIOGRAPHY VIEWER</Text>
-            <Text style={styles.loginVisualTitle}>
-              Сосудистая визуализация без лишних шагов
             </Text>
           </View>
         </View>
@@ -1392,13 +1517,12 @@ function MobileNavigation({
   onTabChange: (tab: Tab) => void;
   dark?: boolean;
 }) {
-  const insets = useSafeAreaInsets();
   return (
     <View
+      nativeID="mobile-navigation"
       style={[
         styles.mobileNavSafe,
-        dark && styles.mobileNavSafeDark,
-        { paddingBottom: Math.max(0, insets.bottom - 12) }
+        dark && styles.mobileNavSafeDark
       ]}
     >
       <View style={[styles.mobileNav, dark && styles.mobileNavDark]}>
@@ -1758,12 +1882,16 @@ function AngiographyScreen({
   studies,
   loading,
   error,
+  persistentCacheEnabled,
+  dicomCache,
   onRetry
 }: {
   compact: boolean;
   studies: Study[];
   loading: boolean;
   error: string;
+  persistentCacheEnabled: boolean;
+  dicomCache: DicomCacheSnapshot;
   onRetry: () => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -1860,49 +1988,66 @@ function AngiographyScreen({
               contentContainerStyle={styles.angioListContent}
               showsVerticalScrollIndicator={false}
             >
-              {visibleStudies.map((study, index) => (
-                <Pressable
-                  key={study.id}
-                  accessibilityRole="button"
-                  accessibilityLabel={
-                    compact
-                      ? `Открыть ангиографию ${study.patient}`
-                      : `Исследование ${study.patient} находится в PACS`
-                  }
-                  onPress={() => choose(study)}
-                  style={[
-                    styles.angioRow,
-                    compact &&
-                      selected?.id === study.id &&
-                      styles.angioRowSelected
-                  ]}
-                >
-                  <Text style={styles.angioIndex}>
-                    {String(index + 1).padStart(2, "0")}
-                  </Text>
-                  <View style={styles.angioRowCopy}>
-                    <Text numberOfLines={1} style={styles.angioPatient}>
-                      {study.patient}
+              {visibleStudies.map((study, index) => {
+                const cached = dicomCache.studies[study.study_id];
+                const cacheMeta = cached
+                  ? cached.complete
+                    ? formatStorageSize(cached.bytes)
+                    : cached.downloading
+                      ? `${cached.cachedFrames}/${cached.expectedFrames || "…"} кадров`
+                      : cached.bytes
+                        ? `${formatStorageSize(cached.bytes)} · не полностью`
+                        : ""
+                  : "";
+                return (
+                  <Pressable
+                    key={study.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      compact
+                        ? `Открыть ангиографию ${study.patient}`
+                        : `Исследование ${study.patient} находится в PACS`
+                    }
+                    onPress={() => choose(study)}
+                    style={[
+                      styles.angioRow,
+                      compact &&
+                        selected?.id === study.id &&
+                        styles.angioRowSelected
+                    ]}
+                  >
+                    <Text style={styles.angioIndex}>
+                      {String(index + 1).padStart(2, "0")}
                     </Text>
-                    <Text numberOfLines={1} style={styles.angioMeta}>
-                      {formatDate(study.time_beginning)} ·{" "}
-                      {study.study_type.toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={styles.angioStored}>
+                    <View style={styles.angioRowCopy}>
+                      <Text numberOfLines={1} style={styles.angioPatient}>
+                        {study.patient}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.angioMeta}>
+                        {formatDate(study.time_beginning)} ·{" "}
+                        {study.study_type.toUpperCase()}
+                        {cacheMeta ? ` · ${cacheMeta}` : ""}
+                      </Text>
+                    </View>
+                    <View style={styles.angioStored}>
+                      <Icon
+                        name={
+                          cached?.complete
+                            ? "phone-portrait-outline"
+                            : "cloud-done-outline"
+                        }
+                        size={15}
+                        color={colors.success}
+                      />
+                    </View>
                     <Icon
-                      name="cloud-done-outline"
-                      size={15}
-                      color={colors.success}
+                      name={compact ? "chevron-forward" : "server-outline"}
+                      size={17}
+                      color={darkColors.textDim}
                     />
-                  </View>
-                  <Icon
-                    name={compact ? "chevron-forward" : "server-outline"}
-                    size={17}
-                    color={darkColors.textDim}
-                  />
-                </Pressable>
-              ))}
+                  </Pressable>
+                );
+              })}
               {!visibleStudies.length ? (
                 <Text style={styles.angioNoFilterResults}>
                   В этом разделе исследований пока нет.
@@ -1933,7 +2078,10 @@ function AngiographyScreen({
             {selected ? (
               <>
                 <View style={styles.mobileViewerFrame}>
-                  <MobileDicomViewer studyUID={selected.study_id} />
+                  <MobileDicomViewer
+                    studyUID={selected.study_id}
+                    persistentCacheEnabled={persistentCacheEnabled}
+                  />
                 </View>
                 <View
                   style={[
@@ -2257,6 +2405,7 @@ function ReportsScreen({
   loading,
   error,
   onRetry,
+  onRefresh,
   onRequest,
   onDelete,
   onForward
@@ -2266,6 +2415,7 @@ function ReportsScreen({
   loading: boolean;
   error: string;
   onRetry: () => void;
+  onRefresh: () => void;
   onRequest: () => void;
   onDelete: (report: ReportDocument) => void;
   onForward: (report: ReportDocument) => void;
@@ -2299,7 +2449,7 @@ function ReportsScreen({
         <IconButton
           icon="refresh"
           label="Обновить отчёты"
-          onPress={onRequest}
+          onPress={onRefresh}
         />
       </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
@@ -2316,6 +2466,15 @@ function ReportsScreen({
             style={[styles.reportList, compact && styles.reportListCompact]}
             contentContainerStyle={styles.reportListContent}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+              compact ? (
+                <RefreshControl
+                  refreshing={false}
+                  onRefresh={onRefresh}
+                  tintColor={colors.primary}
+                />
+              ) : undefined
+            }
           >
             {reports.map((report, index) => (
               <SwipeableCard
@@ -2514,77 +2673,434 @@ function ReportSection({
   );
 }
 
+const planDepartments = [
+  "кардио 1",
+  "кардио 2",
+  "рсц",
+  "неврология",
+  "нейро/х",
+  "сосуды",
+  "гинек",
+  "урология",
+  "гной хир"
+] as const;
+
+const defaultPlanOperations: Record<string, string> = {
+  "кардио 1": "каг + стент",
+  "кардио 2": "каг + стент",
+  рсц: "цаг",
+  неврология: "цаг",
+  "нейро/х": "цаг",
+  сосуды: "каротидография",
+  гинек: "эма",
+  урология: "эмб простаты",
+  "гной хир": "бап голени"
+};
+
+const vascularOperations = [
+  "каротидография",
+  "каротиды + стент вса справа",
+  "каротиды + стент вса слева",
+  "ангио н/к справа",
+  "ангио н/к слева",
+  "стент опа/нпа справа",
+  "стент опа/нпа слева",
+  "ангио в/к справа",
+  "ангио в/к слева",
+  "стент подключи справа",
+  "стент подключи слева"
+];
+
+const planOperationsFor = (department: string): string[] => {
+  if (department.startsWith("кардио")) {
+    return ["каг + стент", "каг диагностика"];
+  }
+  if (department === "сосуды") return vascularOperations;
+  return [defaultPlanOperations[department] ?? ""];
+};
+
+const newPlanEntry = (): PlanEntry => ({
+  patient: "",
+  department: "кардио 2",
+  operation: defaultPlanOperations["кардио 2"]!
+});
+
+const weekdayTitle = (date: string) =>
+  new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "2-digit" })
+    .format(new Date(`${date}T12:00:00`))
+    .replace(".", "");
+
+async function sharePlanSnapshot(
+  plan: OperationPlan,
+  target: "MAX" | "Telegram" | "SMS"
+): Promise<void> {
+  const text = plan.days
+    .flatMap((day) =>
+      day.entries.map(
+        (entry) =>
+          `${weekdayTitle(day.date)} — ${entry.patient}: ` +
+          `${entry.department}, ${entry.operation}`
+      )
+    )
+    .join("\n");
+  if (Platform.OS !== "web") {
+    await Share.share({ title: "План операций", message: text || "План пуст" });
+    return;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = 1200;
+  canvas.height = 1500;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Не удалось создать снимок плана");
+  context.fillStyle = "#F3F6F8";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#10212E";
+  context.font = "700 48px -apple-system, sans-serif";
+  context.fillText("План операций", 70, 90);
+  context.font = "400 28px -apple-system, sans-serif";
+  context.fillStyle = "#607482";
+  context.fillText(`Неделя с ${formatDate(plan.week_start)}`, 70, 135);
+  let y = 205;
+  plan.days.forEach((day) => {
+    context.fillStyle = "#DCEAF0";
+    context.fillRect(55, y - 38, 1090, 58);
+    context.fillStyle = "#0B84B3";
+    context.font = "700 27px -apple-system, sans-serif";
+    context.fillText(weekdayTitle(day.date).toLocaleUpperCase("ru"), 75, y);
+    y += 58;
+    const entries = day.entries.length ? day.entries : [null];
+    entries.forEach((entry) => {
+      context.fillStyle = "#10212E";
+      context.font = "700 30px -apple-system, sans-serif";
+      context.fillText(entry?.patient || "—", 75, y);
+      context.font = "400 25px -apple-system, sans-serif";
+      context.fillStyle = "#607482";
+      context.fillText(
+        entry ? `${entry.department} · ${entry.operation}` : "Операций нет",
+        75,
+        y + 35
+      );
+      y += 88;
+    });
+    y += 12;
+  });
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob(
+      (value) => (value ? resolve(value) : reject(new Error("Снимок не создан"))),
+      "image/png"
+    )
+  );
+  const file = new File([blob], "plan.png", { type: "image/png" });
+  if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+    await navigator.share({
+      title: `План операций — ${target}`,
+      text: text || "План операций",
+      files: [file]
+    });
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "plan.png";
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  if (target === "Telegram") {
+    window.open(
+      `https://t.me/share/url?url=&text=${encodeURIComponent(text)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  } else if (target === "SMS") {
+    window.location.href = `sms:?&body=${encodeURIComponent(text)}`;
+  } else {
+    window.open(
+      `https://max.ru/:share?text=${encodeURIComponent(text)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+  }
+}
+
 function PlanScreen({
   compact,
   plan,
-  onRequest
+  loading,
+  error,
+  onRefresh,
+  onSave
 }: {
   compact: boolean;
   plan: OperationPlan | null;
-  onRequest: (date?: string) => void;
+  loading: boolean;
+  error: string;
+  onRefresh: () => void;
+  onSave: (date: string, entries: PlanEntry[]) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<"week" | "day">("week");
-  const [selectedDate, setSelectedDate] = useState(
-    plan?.selected_date ?? new Date().toISOString().slice(0, 10)
-  );
-  const days = plan?.days ?? [];
-  const visibleDays = mode === "week"
-    ? days
-    : days.filter((day) => day.date === selectedDate);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [draft, setDraft] = useState<PlanEntry[]>([newPlanEntry()]);
+  const [picker, setPicker] = useState<{
+    index: number;
+    type: "department" | "operation";
+  } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const openDay = (date: string) => {
+    const entries = plan?.days.find((day) => day.date === date)?.entries ?? [];
+    setDraft(entries.length ? entries.map((entry) => ({ ...entry })) : [newPlanEntry()]);
+    setSelectedDate(date);
+    setPicker(null);
+    setSaveError("");
+  };
+
+  const updateEntry = (index: number, patch: Partial<PlanEntry>) =>
+    setDraft((current) =>
+      current.map((entry, entryIndex) =>
+        entryIndex === index ? { ...entry, ...patch } : entry
+      )
+    );
+
+  const saveDay = async () => {
+    if (!selectedDate) return;
+    setSaving(true);
+    setSaveError("");
+    try {
+      await onSave(
+        selectedDate,
+        draft
+          .map((entry) => ({ ...entry, patient: entry.patient.trim() }))
+          .filter((entry) => entry.patient)
+      );
+      setSelectedDate(null);
+    } catch (reason) {
+      setSaveError(errorMessage(reason));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <ScrollView style={[styles.screen, compact && styles.screenCompact]}
-      contentContainerStyle={[
-        styles.planContent,
-        compact && styles.planContentCompact
-      ]}
-      showsVerticalScrollIndicator={false}>
+    <View style={[styles.screen, compact && styles.screenCompact]}>
       <View style={styles.planToolbar}>
-        <View style={styles.planModeActions}>
-          <Chip label="Неделя" selected={mode === "week"} onPress={() => setMode("week")} />
-          <Chip label="День" selected={mode === "day"} onPress={() => setMode("day")} />
+        <View style={styles.compactScreenHeading}>
+          <Text style={styles.compactScreenTitle}>План операций</Text>
+          <Text style={styles.compactScreenMeta}>
+            Нажмите строку дня для заполнения
+          </Text>
         </View>
-        <IconButton
-          icon="refresh"
-          label="Обновить план"
-          onPress={() => onRequest(mode === "day" ? selectedDate : undefined)}
-        />
+        <View style={styles.planToolbarActions}>
+          <IconButton icon="refresh" label="Обновить план" onPress={onRefresh} />
+          <IconButton
+            icon="share-outline"
+            label="Отправить снимок"
+            onPress={() => {
+              if (plan) setShareOpen(true);
+            }}
+          />
+        </View>
       </View>
-      {mode === "day" ? (
-        <Field label="Дата" value={selectedDate} onChangeText={setSelectedDate}
-          placeholder="YYYY-MM-DD" />
+      {error ? <InlineError message={error} onRetry={onRefresh} /> : null}
+      {loading && !plan ? (
+        <LoadingState label="Загружаем план…" />
+      ) : plan ? (
+        <View style={styles.planTable}>
+          <View style={[styles.planTableRow, styles.planTableHeader]}>
+            <Text style={[styles.planTableHeaderText, styles.planDayCell]}>День</Text>
+            <Text style={[styles.planTableHeaderText, styles.planPatientCell]}>Пациент</Text>
+            <Text style={[styles.planTableHeaderText, styles.planDepartmentCell]}>Отделение</Text>
+            <Text style={[styles.planTableHeaderText, styles.planOperationCell]}>Операция</Text>
+          </View>
+          {plan.days.map((day) => {
+            const first = day.entries[0];
+            return (
+              <Pressable
+                key={day.date}
+                accessibilityRole="button"
+                accessibilityLabel={`Заполнить план на ${formatDate(day.date)}`}
+                onPress={() => openDay(day.date)}
+                style={({ pressed }) => [
+                  styles.planTableRow,
+                  pressed && styles.planTableRowPressed
+                ]}
+              >
+                <Text style={[styles.planTableDayText, styles.planDayCell]}>
+                  {weekdayTitle(day.date)}
+                </Text>
+                <Text
+                  numberOfLines={2}
+                  style={[styles.planTableText, styles.planPatientCell]}
+                >
+                  {first?.patient || "—"}
+                  {day.entries.length > 1 ? `  +${day.entries.length - 1}` : ""}
+                </Text>
+                <Text
+                  numberOfLines={2}
+                  style={[styles.planTableText, styles.planDepartmentCell]}
+                >
+                  {first?.department || "—"}
+                </Text>
+                <Text
+                  numberOfLines={2}
+                  style={[styles.planTableText, styles.planOperationCell]}
+                >
+                  {first?.operation || "—"}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
       ) : null}
-      {!days.length ? (
-        <EmptyState icon="calendar-outline" title="План ещё не загружен"
-          description="Обновите данные из недельного файла «План Отчёты» больничного агента."
-          action={<Button label="Обновить" icon="refresh" onPress={() => onRequest()} />} />
-      ) : (
-        <View style={styles.planDays}>
-          {visibleDays.map((day) => (
-            <View key={day.date} style={styles.planDay}>
-              <View style={styles.planDayHeader}>
-                <Text style={styles.planDayTitle}>{formatDate(day.date)}</Text>
-                <Badge label={`${day.operations.length} пациентов`} tone="neutral" />
+
+      <Sheet
+        visible={Boolean(selectedDate)}
+        title={selectedDate ? `План на ${formatDate(selectedDate)}` : "План дня"}
+        onClose={() => setSelectedDate(null)}
+        fullScreen={compact}
+      >
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.planEditorContent}
+        >
+          {draft.map((entry, index) => (
+            <View key={index} style={styles.planEditorRow}>
+              <View style={styles.planEditorHeader}>
+                <Text style={styles.settingsTitle}>Пациент {index + 1}</Text>
+                {draft.length > 1 ? (
+                  <IconButton
+                    icon="trash-outline"
+                    label="Удалить пациента"
+                    onPress={() =>
+                      setDraft((current) =>
+                        current.filter((_item, itemIndex) => itemIndex !== index)
+                      )
+                    }
+                  />
+                ) : null}
               </View>
-              {day.operations.length ? day.operations.map((operation, index) => (
-                <View key={`${operation.patient}-${index}`} style={styles.operationRow}>
-                  <Text style={styles.operationNumber}>{String(index + 1).padStart(2, "0")}</Text>
-                  <View style={styles.operationCopy}>
-                    <Text style={styles.operationPatient}>{operation.patient || "Пациент не указан"}</Text>
-                    <Text style={styles.operationName}>{operation.operation || "Операция не указана"}</Text>
-                    <Text style={styles.operationMeta}>
-                      {operation.age != null ? `${operation.age} лет · ` : ""}
-                      {operation.department || "отделение не указано"}
-                    </Text>
-                  </View>
+              <TextInput
+                value={entry.patient}
+                onChangeText={(patient) => updateEntry(index, { patient })}
+                placeholder="Фамилия пациента"
+                placeholderTextColor={colors.textDim}
+                autoCapitalize="words"
+                style={styles.planPatientInput}
+              />
+              <Text style={styles.planFieldLabel}>Отделение</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Выбрать отделение пациента ${index + 1}`}
+                onPress={() =>
+                  setPicker(
+                    picker?.index === index && picker.type === "department"
+                      ? null
+                      : { index, type: "department" }
+                  )
+                }
+                style={styles.planSelect}
+              >
+                <Text style={styles.planSelectText}>{entry.department}</Text>
+                <Icon name="chevron-down" size={17} color={colors.textDim} />
+              </Pressable>
+              {picker?.index === index && picker.type === "department" ? (
+                <View style={styles.planOptions}>
+                  {planDepartments.map((department) => (
+                    <Pressable
+                      key={department}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Отделение ${department}`}
+                      onPress={() => {
+                        updateEntry(index, {
+                          department,
+                          operation: defaultPlanOperations[department]!
+                        });
+                        setPicker(null);
+                      }}
+                      style={styles.planOption}
+                    >
+                      <Text style={styles.planOptionText}>{department}</Text>
+                    </Pressable>
+                  ))}
                 </View>
-              )) : (
-                <Text style={styles.emptyDayText}>Операций нет</Text>
-              )}
+              ) : null}
+              <Text style={styles.planFieldLabel}>Операция</Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Выбрать операцию пациента ${index + 1}`}
+                disabled={planOperationsFor(entry.department).length < 2}
+                onPress={() =>
+                  setPicker(
+                    picker?.index === index && picker.type === "operation"
+                      ? null
+                      : { index, type: "operation" }
+                  )
+                }
+                style={styles.planSelect}
+              >
+                <Text style={styles.planSelectText}>{entry.operation}</Text>
+                {planOperationsFor(entry.department).length > 1 ? (
+                  <Icon name="chevron-down" size={17} color={colors.textDim} />
+                ) : null}
+              </Pressable>
+              {picker?.index === index && picker.type === "operation" ? (
+                <View style={styles.planOptions}>
+                  {planOperationsFor(entry.department).map((operation) => (
+                    <Pressable
+                      key={operation}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Операция ${operation}`}
+                      onPress={() => {
+                        updateEntry(index, { operation });
+                        setPicker(null);
+                      }}
+                      style={styles.planOption}
+                    >
+                      <Text style={styles.planOptionText}>{operation}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
             </View>
           ))}
+          <Button
+            label="Добавить пациента"
+            icon="add"
+            variant="ghost"
+            onPress={() => setDraft((current) => [...current, newPlanEntry()])}
+          />
+          {saveError ? <InlineError message={saveError} onRetry={saveDay} /> : null}
+          <View style={styles.planEditorActions}>
+            <Button label="Отмена" variant="ghost" onPress={() => setSelectedDate(null)} />
+            <Button label="Сохранить" loading={saving} onPress={() => void saveDay()} />
+          </View>
+        </ScrollView>
+      </Sheet>
+
+      <Sheet
+        visible={shareOpen}
+        title="Отправить снимок плана"
+        onClose={() => setShareOpen(false)}
+      >
+        <View style={styles.planShareOptions}>
+          {(["MAX", "Telegram", "SMS"] as const).map((target) => (
+            <Button
+              key={target}
+              label={target}
+              icon="share-outline"
+              variant="ghost"
+              onPress={() => {
+                if (!plan) return;
+                setShareOpen(false);
+                void sharePlanSnapshot(plan, target).catch((reason) =>
+                  Alert.alert("Не удалось отправить", errorMessage(reason))
+                );
+              }}
+            />
+          ))}
         </View>
-      )}
-    </ScrollView>
+      </Sheet>
+    </View>
   );
 }
 
@@ -2763,15 +3279,19 @@ function SettingsScreen({
   settings,
   health,
   agentHealthById,
+  dicomCache,
   onSave,
-  onCheck
+  onCheck,
+  onClearCache
 }: {
   compact: boolean;
   settings: AppSettings;
   health: ApiHealth | null;
   agentHealthById: Record<number, AgentHealth>;
+  dicomCache: DicomCacheSnapshot;
   onSave: (settings: AppSettings) => void;
   onCheck: () => void;
+  onClearCache: () => void;
 }) {
   const [agentIds, setAgentIds] = useState(settings.agentIds);
   const [selectedAgentIds, setSelectedAgentIds] = useState(
@@ -2779,6 +3299,9 @@ function SettingsScreen({
   );
   const [newAgentId, setNewAgentId] = useState("");
   const [userId, setUserId] = useState(settings.userId);
+  const [autoDownloadAngiography, setAutoDownloadAngiography] = useState(
+    settings.autoDownloadAngiography
+  );
 
   const addAgent = () => {
     const id = Number.parseInt(newAgentId, 10);
@@ -2903,11 +3426,95 @@ function SettingsScreen({
                 agentId: selectedAgentIds[0] ?? agentIds[0] ?? 2,
                 agentIds,
                 selectedAgentIds,
-                userId
+                userId,
+                autoDownloadAngiography
               })
             }
           />
         </View>
+        {compact ? (
+          <View style={styles.settingsCard}>
+          <View>
+            <Text style={styles.settingsTitle}>Ангиографии на устройстве</Text>
+            <Text style={styles.settingsDescription}>
+              Сервер заранее готовит XA, а после входа приложение параллельно
+              сохраняет готовые кадры. Повторный просмотр открывается локально.
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="switch"
+            accessibilityState={{ checked: autoDownloadAngiography }}
+            onPress={() => {
+              const enabled = !autoDownloadAngiography;
+              setAutoDownloadAngiography(enabled);
+              onSave({
+                ...settings,
+                autoDownloadAngiography: enabled
+              });
+            }}
+            style={({ pressed }) => [
+              styles.cacheToggleRow,
+              pressed && styles.pressed
+            ]}
+          >
+            <View style={styles.cacheToggleCopy}>
+              <Text style={styles.agentRowTitle}>Автозагрузка XA</Text>
+              <Text style={styles.requestMetaText}>
+                {autoDownloadAngiography
+                  ? "Новые исследования будут сохранены автоматически"
+                  : "Кадры загружаются только во время просмотра"}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.cacheSwitch,
+                autoDownloadAngiography && styles.cacheSwitchActive
+              ]}
+            >
+              <View
+                style={[
+                  styles.cacheSwitchThumb,
+                  autoDownloadAngiography && styles.cacheSwitchThumbActive
+                ]}
+              />
+            </View>
+          </Pressable>
+          <View style={styles.cacheUsage}>
+            <View>
+              <Text style={styles.requestMetaText}>Занято на устройстве</Text>
+              <Text style={styles.cacheUsageValue}>
+                {formatStorageSize(dicomCache.totalBytes)}
+              </Text>
+            </View>
+            <Text style={styles.cacheUsageMeta}>
+              {
+                Object.values(dicomCache.studies).filter(
+                  (study) => study.complete
+                ).length
+              }{" "}
+              полностью
+            </Text>
+          </View>
+          {!dicomCache.supported ? (
+            <Text style={styles.settingsDescription}>
+              Постоянное хранилище недоступно в этом режиме браузера.
+            </Text>
+          ) : null}
+          {dicomCache.totalBytes > 0 ? (
+            <Button
+              label="Очистить сохранённые XA"
+              variant="secondary"
+              icon="trash-outline"
+              onPress={() =>
+                confirmDeleteAll(
+                  "Удалить сохранённые XA-кадры с этого устройства?",
+                  onClearCache
+                )
+              }
+            />
+          ) : null}
+          </View>
+        ) : null}
         <View style={styles.settingsCard}>
           <Text style={styles.settingsTitle}>Состояние контура</Text>
           <StatusLine
@@ -3090,36 +3697,54 @@ const styles = StyleSheet.create({
   loginSafe: { flex: 1, backgroundColor: "#050C15" },
   loginLayout: {
     flex: 1,
-    flexDirection: "row",
+    position: "relative",
+    overflow: "hidden",
     backgroundColor: "#050C15"
   },
-  loginLayoutCompact: { flexDirection: "column-reverse" },
+  loginLayoutCompact: { backgroundColor: "#050C15" },
+  loginBackgroundImage: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    width: "100%",
+    height: "100%"
+  },
+  loginBackgroundImageCompact: {
+    top: 0,
+    left: 0,
+    right: 0,
+    width: "100%",
+    height: "100%"
+  },
+  loginBackgroundShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(5,12,21,0.32)"
+  },
   loginPanel: {
     width: "44%",
     minWidth: 430,
+    height: "100%",
     paddingHorizontal: 54,
     paddingVertical: 42,
     justifyContent: "space-between",
-    backgroundColor: "#07131F",
-    borderRightWidth: 1,
-    borderRightColor: "rgba(53,194,255,0.12)"
+    backgroundColor: "transparent"
   },
   loginPanelCompact: {
     position: "absolute",
+    top: 0,
     left: 0,
     right: 0,
     bottom: 0,
     width: "100%",
-    height: "54%",
+    height: "100%",
     minWidth: 0,
     flex: 0,
     paddingHorizontal: 20,
     paddingTop: 18,
     paddingBottom: 18,
     gap: 16,
-    borderRightWidth: 0,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(53,194,255,0.12)"
+    backgroundColor: "transparent"
   },
   loginBrand: {
     flexDirection: "row",
@@ -3152,6 +3777,12 @@ const styles = StyleSheet.create({
     letterSpacing: 1.8
   },
   loginForm: { width: "100%", maxWidth: 430, gap: 18 },
+  loginHeadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 14
+  },
   loginTitle: {
     color: darkColors.text,
     fontSize: 29,
@@ -3159,10 +3790,21 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     letterSpacing: -0.5
   },
-  loginSubtitle: {
-    ...typography.body,
-    color: darkColors.textMuted,
-    marginTop: 7
+  loginRegistration: {
+    minHeight: 34,
+    paddingHorizontal: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: "rgba(134,213,247,0.42)",
+    backgroundColor: "rgba(5,12,21,0.34)"
+  },
+  loginRegistrationText: {
+    color: darkColors.primary,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700"
   },
   loginFields: { gap: 10 },
   loginField: {
@@ -3186,6 +3828,7 @@ const styles = StyleSheet.create({
   } as never,
   loginButton: {
     minHeight: 52,
+    zIndex: 3,
     paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
@@ -3207,53 +3850,19 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     textAlign: "center"
   },
-  loginVisual: {
-    flex: 1,
-    minWidth: 0,
-    position: "relative",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    backgroundColor: "#050C15"
-  },
-  loginVisualCompact: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: "48%",
-    minHeight: 0,
-    flex: 0
-  },
-  loginImage: { width: "100%", height: "100%" },
-  loginVisualCopy: {
-    position: "absolute",
-    left: 32,
-    right: 32,
-    bottom: 32
-  },
-  loginVisualLabel: {
-    color: darkColors.primary,
-    fontSize: 9,
-    lineHeight: 12,
-    fontWeight: "800",
-    letterSpacing: 1.5
-  },
-  loginVisualTitle: {
-    maxWidth: 540,
-    marginTop: 6,
-    color: darkColors.text,
-    fontSize: 22,
-    lineHeight: 28,
-    fontWeight: "700"
-  },
   safeArea: { flex: 1, backgroundColor: colors.canvas },
   safeAreaDark: { backgroundColor: darkColors.canvas },
   app: { flex: 1, flexDirection: "row", backgroundColor: colors.canvas },
   appDark: { backgroundColor: darkColors.canvas },
-  main: { flex: 1, minWidth: 0, backgroundColor: colors.canvas },
+  main: {
+    flex: 1,
+    minWidth: 0,
+    position: "relative",
+    backgroundColor: colors.canvas
+  },
   mainDark: { backgroundColor: darkColors.canvas },
   content: { flex: 1, minHeight: 0, backgroundColor: colors.canvas },
+  contentCompact: { paddingBottom: 48 },
   contentDark: { backgroundColor: darkColors.canvas },
   mobileHeaderFloat: {
     minHeight: 58,
@@ -3998,6 +4607,9 @@ const styles = StyleSheet.create({
     marginTop: 18
   },
   reportWorkspaceCompact: {
+    flex: 1,
+    flexGrow: 1,
+    minHeight: 0,
     flexDirection: "column",
     gap: 8,
     marginTop: 8
@@ -4013,6 +4625,9 @@ const styles = StyleSheet.create({
   reportListCompact: {
     width: "100%",
     flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 0,
     borderRadius: radii.md
   },
   reportListContent: { padding: 8, gap: 5 },
@@ -4159,6 +4774,52 @@ const styles = StyleSheet.create({
   },
   agentRowCopy: { flex: 1, minWidth: 0 },
   agentRowTitle: { ...typography.label, color: colors.text },
+  cacheToggleRow: {
+    minHeight: 64,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSoft
+  },
+  cacheToggleCopy: { flex: 1, minWidth: 0 },
+  cacheSwitch: {
+    width: 46,
+    height: 28,
+    padding: 3,
+    borderRadius: 14,
+    justifyContent: "center",
+    backgroundColor: colors.border
+  },
+  cacheSwitchActive: { backgroundColor: colors.primary },
+  cacheSwitchThumb: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#fff"
+  },
+  cacheSwitchThumbActive: { alignSelf: "flex-end" },
+  cacheUsage: {
+    minHeight: 66,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.primarySoft
+  },
+  cacheUsageValue: {
+    marginTop: 2,
+    color: colors.text,
+    fontSize: 21,
+    lineHeight: 26,
+    fontWeight: "700"
+  },
+  cacheUsageMeta: { ...typography.meta, color: colors.primary },
   addAgentRow: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -4301,32 +4962,141 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     borderColor: colors.primary
   },
-  planContent: { padding: 16, gap: 14, paddingBottom: 40 },
-  planContentCompact: { padding: 0, paddingTop: 4, paddingBottom: 28, gap: 10 },
   planToolbar: {
-    minHeight: 48,
+    minHeight: 54,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10
   },
-  planModeActions: { flexDirection: "row", alignItems: "center", gap: 7 },
-  planDays: { gap: 12 },
-  planDay: {
-    padding: 14,
-    gap: 8,
-    borderRadius: radii.lg,
+  planToolbarActions: { flexDirection: "row", alignItems: "center", gap: 5 },
+  planTable: {
+    flex: 1,
+    minHeight: 0,
+    marginTop: 8,
+    marginBottom: 8,
+    overflow: "hidden",
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.canvasRaised
+  },
+  planTableRow: {
+    flex: 1,
+    minHeight: 56,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft,
+    backgroundColor: colors.canvasRaised
+  },
+  planTableRowPressed: { backgroundColor: colors.primarySoft },
+  planTableHeader: {
+    flexGrow: 0,
+    flexBasis: 42,
+    minHeight: 42,
+    backgroundColor: colors.surfaceSoft
+  },
+  planTableHeaderText: {
+    paddingHorizontal: 5,
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "800",
+    textTransform: "uppercase"
+  },
+  planTableText: {
+    paddingHorizontal: 5,
+    color: colors.textMuted,
+    fontSize: 11,
+    lineHeight: 15
+  },
+  planTableDayText: {
+    paddingHorizontal: 5,
+    color: colors.primary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: "800",
+    textTransform: "capitalize"
+  },
+  planDayCell: { flex: 0.72 },
+  planPatientCell: { flex: 1.25 },
+  planDepartmentCell: { flex: 1.08 },
+  planOperationCell: { flex: 1.45 },
+  planEditorContent: {
+    padding: 16,
+    paddingBottom: 34,
+    gap: 12
+  },
+  planEditorRow: {
+    padding: 13,
+    gap: 7,
+    borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface
   },
-  planDayHeader: {
+  planEditorHeader: {
+    minHeight: 30,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between"
   },
-  planDayTitle: { ...typography.title, color: colors.text },
-  emptyDayText: { ...typography.body, color: colors.textDim, padding: 10 },
+  planPatientInput: {
+    minHeight: 46,
+    paddingHorizontal: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    color: colors.text,
+    backgroundColor: colors.canvasRaised,
+    fontSize: 15
+  },
+  planFieldLabel: {
+    marginTop: 3,
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "700",
+    textTransform: "uppercase"
+  },
+  planSelect: {
+    minHeight: 44,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.canvasRaised
+  },
+  planSelectText: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: "600"
+  },
+  planOptions: {
+    overflow: "hidden",
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.canvasRaised
+  },
+  planOption: {
+    minHeight: 40,
+    paddingHorizontal: 12,
+    justifyContent: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  planOptionText: { color: colors.textMuted, fontSize: 13 },
+  planEditorActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8
+  },
+  planShareOptions: { padding: 16, gap: 8 },
   profileCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -4415,7 +5185,10 @@ const styles = StyleSheet.create({
   filterOptionText: { ...typography.label, color: colors.textMuted },
   filterOptionTextSelected: { color: colors.primary },
   mobileNavSafe: {
-    position: "relative",
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     zIndex: 50,
     elevation: 20,
     backgroundColor: colors.canvas,
@@ -4425,7 +5198,7 @@ const styles = StyleSheet.create({
   },
   mobileNavSafeDark: { backgroundColor: darkColors.canvas },
   mobileNav: {
-    height: 54,
+    height: 48,
     flexDirection: "row",
     paddingHorizontal: 2,
     paddingVertical: 2,

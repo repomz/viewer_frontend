@@ -113,25 +113,21 @@ export type AppSettings = {
   agentIds: number[];
   selectedAgentIds: number[];
   userId: string;
+  autoDownloadAngiography: boolean;
 };
 
-export type PlanOperation = {
+export type PlanEntry = {
   patient: string;
-  birth_date?: string;
-  age?: number | null;
-  department?: string;
-  operation?: string;
+  department: string;
+  operation: string;
 };
 
 export type PlanDay = {
   date: string;
-  weekday: string;
-  operations: PlanOperation[];
+  entries: PlanEntry[];
 };
 
 export type OperationPlan = {
-  week_start?: string;
-  week_end?: string;
-  selected_date?: string;
-  days?: PlanDay[];
+  week_start: string;
+  days: PlanDay[];
 };

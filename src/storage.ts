@@ -7,7 +7,8 @@ export const defaultSettings: AppSettings = {
   agentId: 2,
   agentIds: [2],
   selectedAgentIds: [2],
-  userId: "doctor-local"
+  userId: "doctor-local",
+  autoDownloadAngiography: false
 };
 
 function hasStorage(): boolean {
@@ -42,7 +43,8 @@ export function loadSettings(): AppSettings {
       userId:
         typeof stored.userId === "string" && stored.userId.trim()
           ? stored.userId.trim()
-          : defaultSettings.userId
+          : defaultSettings.userId,
+      autoDownloadAngiography: stored.autoDownloadAngiography === true
     };
   } catch {
     return defaultSettings;

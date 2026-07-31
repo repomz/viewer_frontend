@@ -1,9 +1,12 @@
 import {
   copyFileSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  renameSync,
   writeFileSync
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -49,10 +52,6 @@ writeFileSync(
   )
 );
 
-const splashMarkup = `
-    <div id="app-splash" aria-hidden="true">
-      <img src="/splash-xa-v3.png" alt="" />
-    </div>`;
 const splashHead = `
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-xa-v3.png?v=3" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v3.png?v=3" />
@@ -60,31 +59,44 @@ const splashHead = `
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style id="viewer-launch-screen">
-      html, body { background: #07131F; }
-      #app-splash {
-        position: fixed;
-        inset: 0;
-        z-index: 2147483647;
-        display: grid;
-        place-items: center;
+      html, body, #root {
+        width: 100%;
+        height: 100%;
+        height: 100dvh;
+        min-height: 100dvh;
+        overflow: hidden;
         background: #07131F;
-        opacity: 1;
-        transition: opacity 180ms ease-out;
-        pointer-events: none;
       }
-      #app-splash img {
-        width: min(58vw, 300px);
-        height: min(58vw, 300px);
-        object-fit: contain;
+      @media (display-mode: standalone) {
+        #mobile-navigation {
+          position: fixed !important;
+          left: 0 !important;
+          right: 0 !important;
+          bottom: 0 !important;
+        }
       }
-      #app-splash.viewer-splash-hidden { opacity: 0; }
     </style>`;
 
 let html = readFileSync(indexPath, "utf8");
+const webBundleDirectory = resolve(dist, "_expo/static/js/web");
+const webBundle = readdirSync(webBundleDirectory).find((filename) =>
+  filename.endsWith(".js")
+);
+if (webBundle) {
+  const bundlePath = resolve(webBundleDirectory, webBundle);
+  const bundleHash = createHash("sha256")
+    .update(readFileSync(bundlePath))
+    .digest("hex")
+    .slice(0, 16);
+  const hashedBundle = `index-${bundleHash}.js`;
+  if (webBundle !== hashedBundle) {
+    renameSync(bundlePath, resolve(webBundleDirectory, hashedBundle));
+    html = html.replace(
+      `/_expo/static/js/web/${webBundle}`,
+      `/_expo/static/js/web/${hashedBundle}`
+    );
+  }
+}
 html = html.replace(/<link rel="icon"[^>]*>/i, "");
 html = html.replace("</head>", `${splashHead}\n  </head>`);
-html = html.replace(
-  '<div id="root"></div>',
-  `<div id="root"></div>${splashMarkup}`
-);
 writeFileSync(indexPath, html);
