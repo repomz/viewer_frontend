@@ -2,6 +2,7 @@ import {
   buildDicomSeries,
   type DicomMetadata
 } from "./dicomSeries";
+import { manifestDicomSeries } from "./xaPreparedCache";
 
 const metadata = (
   seriesUID: string,
@@ -48,5 +49,29 @@ describe("buildDicomSeries", () => {
         frameIndex: 0
       })
     ]);
+  });
+
+  it("can open prepared XA when the direct PACS metadata route is unavailable", () => {
+    const result = manifestDicomSeries({
+      status: "ready",
+      study_uid: "1.2.study",
+      prepared_at: "2026-07-31T12:00:00Z",
+      frame_count: 2,
+      total_bytes: 100,
+      series: [
+        {
+          series_uid: "1.2.series",
+          number: 3,
+          description: "XA cine",
+          frames: [
+            { id: "a.jpg", instance_uid: "1.2.instance", frame_index: 1, path: "/a", size: 50 },
+            { id: "b.jpg", instance_uid: "1.2.instance", frame_index: 2, path: "/b", size: 50 }
+          ]
+        }
+      ]
+    });
+
+    expect(result[0]).toMatchObject({ uid: "1.2.series", number: 3 });
+    expect(result[0]?.frames.map((frame) => frame.frameIndex)).toEqual([0, 1]);
   });
 });

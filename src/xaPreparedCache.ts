@@ -1,3 +1,5 @@
+import type { DicomSeries } from "./dicomSeries";
+
 export type PreparedXAFrame = {
   id: string;
   instance_uid: string;
@@ -103,4 +105,25 @@ export function manifestFrameMap(
       )
     )
   );
+}
+
+export function manifestDicomSeries(
+  manifest: PreparedXAManifest,
+  dicomWebRoot = "/dicom-web"
+): DicomSeries[] {
+  const root = dicomWebRoot.replace(/\/$/, "");
+  return manifest.series.map((series) => ({
+    uid: series.series_uid,
+    number: series.number,
+    description: series.description || "Ангиографическая серия",
+    frames: series.frames.map((frame) => ({
+      instanceUID: frame.instance_uid,
+      instanceURL:
+        `${root}/studies/${encodeURIComponent(manifest.study_uid)}` +
+        `/series/${encodeURIComponent(series.series_uid)}` +
+        `/instances/${encodeURIComponent(frame.instance_uid)}`,
+      frameIndex: Math.max(0, frame.frame_index - 1),
+      metadata: {}
+    }))
+  }));
 }

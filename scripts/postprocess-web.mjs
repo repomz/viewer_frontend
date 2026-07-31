@@ -21,7 +21,8 @@ for (const filename of [
   "favicon-xa-v3.png",
   "apple-touch-icon-v3.png",
   "pwa-icon-512-v3.png",
-  "splash-xa-v3.png"
+  "splash-xa-v3.png",
+  "angiography-splash.webp"
 ]) {
   copyFileSync(resolve(assets, filename), resolve(dist, filename));
 }
@@ -52,7 +53,12 @@ writeFileSync(
   )
 );
 
+const embeddedSplash = readFileSync(
+  resolve(assets, "angiography-splash.webp")
+).toString("base64");
+
 const splashHead = `
+    <link rel="preload" as="image" href="/angiography-splash.webp" fetchpriority="high" />
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-xa-v3.png?v=3" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v3.png?v=3" />
     <link rel="manifest" href="/manifest.webmanifest?v=3" />
@@ -67,6 +73,30 @@ const splashHead = `
         overflow: hidden;
         background: #07131F;
       }
+      #viewer-preboot {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: grid;
+        place-items: center;
+        background: #07131F url('data:image/webp;base64,${embeddedSplash}') center / cover no-repeat;
+      }
+      #viewer-preboot::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: rgba(5, 12, 21, .24);
+      }
+      #viewer-preboot-spinner {
+        position: relative;
+        width: 34px;
+        height: 34px;
+        border: 2px solid rgba(134, 213, 247, .25);
+        border-top-color: #86d5f7;
+        border-radius: 50%;
+        animation: viewer-spin .8s linear infinite;
+      }
+      @keyframes viewer-spin { to { transform: rotate(360deg); } }
       @media (display-mode: standalone) {
         #mobile-navigation {
           position: fixed !important;
@@ -99,4 +129,8 @@ if (webBundle) {
 }
 html = html.replace(/<link rel="icon"[^>]*>/i, "");
 html = html.replace("</head>", `${splashHead}\n  </head>`);
+html = html.replace(
+  '<div id="root"></div>',
+  '<div id="root"><div id="viewer-preboot"><div id="viewer-preboot-spinner"></div></div></div>'
+);
 writeFileSync(indexPath, html);

@@ -344,10 +344,10 @@ export async function loadRenderedFrameBlob(
 export async function downloadStudyForOffline(
   studyUID: string,
   dicomWebRoot = "/dicom-web"
-): Promise<void> {
-  if (!supported() || activeDownloads.has(studyUID)) return;
+): Promise<boolean> {
+  if (!supported() || activeDownloads.has(studyUID)) return false;
   const existing = getDicomCacheSnapshot().studies[studyUID];
-  if (existing?.complete) return;
+  if (existing?.complete) return true;
 
   activeDownloads.add(studyUID);
   const controller = new AbortController();
@@ -406,7 +406,7 @@ export async function downloadStudyForOffline(
             controller.signal
           )
         ) {
-          return;
+          return true;
         }
       } catch (reason) {
         if (controller.signal.aborted) throw reason;
@@ -433,6 +433,7 @@ export async function downloadStudyForOffline(
     await Promise.all(
       Array.from({ length: preparedOnServer ? 6 : 2 }, () => worker())
     );
+    return true;
   } catch (reason) {
     if (!controller.signal.aborted) {
       downloadErrors.set(
@@ -440,6 +441,7 @@ export async function downloadStudyForOffline(
         reason instanceof Error ? reason.message : "Не удалось сохранить XA"
       );
     }
+    return false;
   } finally {
     downloadControllers.delete(studyUID);
     activeDownloads.delete(studyUID);

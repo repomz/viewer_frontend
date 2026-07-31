@@ -3,6 +3,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
+  ActivityIndicator,
   Alert,
   Image,
   Keyboard,
@@ -455,6 +456,8 @@ export default function App() {
   const { width } = useWindowDimensions();
   const compact = width < layout.mobileBreakpoint;
   const [authenticated, setAuthenticated] = useState(false);
+  const [appReady, setAppReady] = useState(false);
+  const [enterRequested, setEnterRequested] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("studies");
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const [studies, setStudies] = useState<Study[]>([]);
@@ -489,8 +492,13 @@ export default function App() {
         .map((request) => request.id)
     )
   );
+  const preloadStarted = useRef(false);
   const autoDownloadRunning = useRef(false);
   const autoDownloadAllowedRef = useRef(false);
+  const autoDownloadRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
+  const [autoDownloadAttempt, setAutoDownloadAttempt] = useState(0);
   const [toast, setToast] = useState<ToastState>(null);
   const [dicomCache, setDicomCache] = useState<DicomCacheSnapshot>(
     getDicomCacheSnapshot
@@ -641,22 +649,32 @@ export default function App() {
   }, [updateAgentHealth, updateServerHealth]);
 
   useEffect(() => {
-    if (!authenticated) return;
-    void loadStudies();
-    void loadRequestHistory();
-    if (autoDownloadAllowed) void loadXAStudies();
-    refreshConnectivity();
+    if (preloadStarted.current) return;
+    preloadStarted.current = true;
+    void Promise.allSettled([
+      loadStudies(),
+      loadRequestHistory(),
+      loadXAStudies(),
+      loadReports(),
+      loadPlan(0),
+      updateServerHealth(),
+      updateAgentHealth()
+    ]).finally(() => setAppReady(true));
   }, [
-    authenticated,
-    autoDownloadAllowed,
     loadRequestHistory,
+    loadPlan,
+    loadReports,
     loadStudies,
     loadXAStudies,
-    refreshConnectivity
+    updateAgentHealth,
+    updateServerHealth
   ]);
 
   useEffect(() => {
-    if (!authenticated) return;
+    if (appReady && enterRequested) setAuthenticated(true);
+  }, [appReady, enterRequested]);
+
+  useEffect(() => {
     void getAgents()
       .then((ids) => {
         if (!ids.length) return;
@@ -673,7 +691,7 @@ export default function App() {
       .catch(() => {
         // Older backend deployments do not expose the agent directory yet.
       });
-  }, [authenticated]);
+  }, []);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -821,8 +839,23 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!autoDownloadAllowed) cancelDicomDownloads();
+    if (!autoDownloadAllowed) {
+      cancelDicomDownloads();
+      if (autoDownloadRetryTimer.current) {
+        clearTimeout(autoDownloadRetryTimer.current);
+        autoDownloadRetryTimer.current = null;
+      }
+    }
   }, [autoDownloadAllowed]);
+
+  useEffect(
+    () => () => {
+      if (autoDownloadRetryTimer.current) {
+        clearTimeout(autoDownloadRetryTimer.current);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (
@@ -840,17 +873,26 @@ export default function App() {
     if (!studiesToDownload.length) return;
     autoDownloadRunning.current = true;
     void (async () => {
+      let retryNeeded = false;
       try {
         for (const study of studiesToDownload) {
           if (!autoDownloadAllowedRef.current) break;
-          await downloadStudyForOffline(study.study_id);
+          const complete = await downloadStudyForOffline(study.study_id);
+          retryNeeded ||= !complete;
         }
       } finally {
         autoDownloadRunning.current = false;
+        if (retryNeeded && autoDownloadAllowedRef.current) {
+          autoDownloadRetryTimer.current = setTimeout(() => {
+            autoDownloadRetryTimer.current = null;
+            setAutoDownloadAttempt((attempt) => attempt + 1);
+          }, 15_000);
+        }
       }
     })();
   }, [
     autoDownloadAllowed,
+    autoDownloadAttempt,
     xaStudies
   ]);
 
@@ -1012,7 +1054,15 @@ export default function App() {
   if (!authenticated) {
     return (
       <SafeAreaProvider>
-        <LoginScreen compact={compact} onEnter={() => setAuthenticated(true)} />
+        <LoginScreen
+          compact={compact}
+          ready={appReady}
+          entering={enterRequested && !appReady}
+          onEnter={() => {
+            if (appReady) setAuthenticated(true);
+            else setEnterRequested(true);
+          }}
+        />
       </SafeAreaProvider>
     );
   }
@@ -1228,13 +1278,18 @@ export default function App() {
 
 function LoginScreen({
   compact,
+  ready,
+  entering,
   onEnter
 }: {
   compact: boolean;
+  ready: boolean;
+  entering: boolean;
   onEnter: () => void;
 }) {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
+  const [backgroundReady, setBackgroundReady] = useState(false);
 
   return (
     <SafeAreaView style={styles.loginSafe} edges={["top", "bottom"]}>
@@ -1247,13 +1302,25 @@ function LoginScreen({
               : require("./assets/angiography-splash.png")
           }
           resizeMode="cover"
+          onLoadEnd={() => setBackgroundReady(true)}
           style={[
             styles.loginBackgroundImage,
             compact && styles.loginBackgroundImageCompact
           ]}
         />
         <View style={styles.loginBackgroundShade} />
-        <View style={[styles.loginPanel, compact && styles.loginPanelCompact]}>
+        {!backgroundReady ? (
+          <View style={styles.loginLaunchLoader}>
+            <ActivityIndicator size="small" color={darkColors.primary} />
+          </View>
+        ) : null}
+        <View
+          style={[
+            styles.loginPanel,
+            compact && styles.loginPanelCompact,
+            !backgroundReady && styles.loginPanelHidden
+          ]}
+        >
           <View style={styles.loginBrand}>
             <View style={styles.loginBrandIcon}>
               <Icon name="scan" size={21} color={darkColors.primary} />
@@ -1319,9 +1386,23 @@ function LoginScreen({
                 pressed && styles.loginButtonPressed
               ]}
             >
-              <Text style={styles.loginButtonText}>Войти</Text>
-              <Icon name="arrow-forward" size={19} color="#04111A" />
+              {entering ? (
+                <ActivityIndicator size="small" color="#04111A" />
+              ) : (
+                <>
+                  <Text style={styles.loginButtonText}>Войти</Text>
+                  <Icon name="arrow-forward" size={19} color="#04111A" />
+                </>
+              )}
             </Pressable>
+            {!ready ? (
+              <View style={styles.loginPreparing}>
+                <View style={styles.loginPreparingDot} />
+                <Text style={styles.loginPreparingText}>
+                  Подготавливаем рабочее пространство
+                </Text>
+              </View>
+            ) : null}
             <Text style={styles.loginTemporary}>
               Авторизация будет подключена позднее. Сейчас вход выполняется без
               проверки данных.
@@ -1845,6 +1926,65 @@ function StudyRow({
   );
 }
 
+function protocolSections(description: string): {
+  conclusion: string;
+  course: string;
+  recommendation: string;
+} {
+  const result = { conclusion: "", course: "", recommendation: "" };
+  const normalized = description.trim();
+  const labels = [...normalized.matchAll(/(?:^|\n)(ЗАКЛЮЧЕНИЕ|ХОД ОПЕРАЦИИ|РЕКОМЕНДАЦИИ):\s*/gim)];
+  if (labels.length) {
+    labels.forEach((match, index) => {
+      const value = normalized
+        .slice((match.index ?? 0) + match[0].length, labels[index + 1]?.index)
+        .trim();
+      const label = match[1]?.toLocaleLowerCase("ru");
+      if (label === "заключение") result.conclusion = value;
+      if (label === "ход операции") result.course = value;
+      if (label === "рекомендации") result.recommendation = value;
+    });
+    return result;
+  }
+  const marker = /(?:в\s+ходе\s+исследования\s+выявлено|заключение)\s*:\s*/i.exec(normalized);
+  if (marker?.index !== undefined) {
+    result.course = normalized.slice(0, marker.index).trim();
+    result.conclusion = normalized.slice(marker.index + marker[0].length).trim();
+  } else {
+    result.course = normalized;
+  }
+  return result;
+}
+
+function ProtocolDescription({ description }: { description: string }) {
+  const sections = protocolSections(description);
+  return (
+    <View style={styles.protocolContent}>
+      {sections.conclusion ? (
+        <View style={styles.protocolConclusion}>
+          <Text style={styles.protocolConclusionLabel}>ЗАКЛЮЧЕНИЕ</Text>
+          <Text style={styles.protocolConclusionText}>{sections.conclusion}</Text>
+        </View>
+      ) : null}
+      {sections.course ? (
+        <View style={styles.protocolCourse}>
+          <Text style={styles.detailLabel}>ХОД ОПЕРАЦИИ</Text>
+          <Text style={styles.detailDescription}>{sections.course}</Text>
+        </View>
+      ) : null}
+      {sections.recommendation ? (
+        <View style={styles.protocolCourse}>
+          <Text style={styles.detailLabel}>РЕКОМЕНДАЦИИ</Text>
+          <Text style={styles.detailDescription}>{sections.recommendation}</Text>
+        </View>
+      ) : null}
+      {!sections.conclusion && !sections.course ? (
+        <Text style={styles.detailDescription}>Описание пока не добавлено.</Text>
+      ) : null}
+    </View>
+  );
+}
+
 function StudyDetails({ study }: { study: Study }) {
   const type = study.study_type.toUpperCase();
 
@@ -1883,10 +2023,7 @@ function StudyDetails({ study }: { study: Study }) {
       </View>
 
       <View style={styles.protocolSection}>
-        <Text style={styles.detailLabel}>ПОЛНЫЙ ПРОТОКОЛ ОПЕРАЦИИ</Text>
-        <Text style={styles.detailDescription}>
-          {study.descr_operation || "Описание пока не добавлено."}
-        </Text>
+        <ProtocolDescription description={study.descr_operation || ""} />
       </View>
 
     </View>
@@ -1954,7 +2091,7 @@ function AngiographyScreen({
   return (
     <View style={styles.angioScreen}>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
-      {loading ? (
+      {loading && !studies.length ? (
         <LoadingState label="Проверяем XA-исследования…" />
       ) : studies.length ? (
         <>
@@ -2019,7 +2156,7 @@ function AngiographyScreen({
                   ? cached.complete
                     ? formatStorageSize(cached.bytes)
                     : cached.downloading
-                      ? `${cached.cachedFrames}/${cached.expectedFrames || "…"} кадров`
+                      ? `загрузка ${cached.cachedFrames}/${cached.expectedFrames || "…"}`
                       : cached.bytes
                         ? `${formatStorageSize(cached.bytes)} · не полностью`
                         : ""
@@ -2359,11 +2496,9 @@ function RequestCard({
                   {String(protocol.department ?? "Отделение не указано")} ·{" "}
                   {String(protocol.surgeon ?? "Хирург не указан")}
                 </Text>
-                <Text style={styles.resultProtocol}>
-                  {String(
-                    protocol.descr_operation ?? "Описание протокола отсутствует"
-                  )}
-                </Text>
+                <ProtocolDescription
+                  description={String(protocol.descr_operation ?? "")}
+                />
                 {!saved && protocol.protocol_ref ? (
                   <Button
                     label="Загрузить этот протокол"
@@ -3629,9 +3764,11 @@ function CommandSheet({
   const [patient, setPatient] = useState("");
   const [studyUID, setStudyUID] = useState("");
   const [period, setPeriod] = useState("1");
+  const [searchPeriod, setSearchPeriod] = useState("today");
   const [submitting, setSubmitting] = useState(false);
   const needsPatient = ["find_study", "find_xa", "find_ct"].includes(command);
   const needsUID = ["get_xa", "get_ct"].includes(command);
+  const needsPacsPeriod = ["find_xa", "find_ct"].includes(command);
   const isReport = command === "get_report";
   const valid =
     (!needsPatient || patient.trim().length >= 2) &&
@@ -3642,7 +3779,10 @@ function CommandSheet({
     if (!valid) return;
     setSubmitting(true);
     const payload = needsPatient
-      ? { patient: patient.trim() }
+      ? {
+          patient: patient.trim(),
+          ...(needsPacsPeriod ? { period: searchPeriod } : {})
+        }
       : needsUID
         ? { study_uid: studyUID.trim() }
         : isReport
@@ -3698,6 +3838,45 @@ function CommandSheet({
             placeholder="Например, Иванов"
             hint="Результат появится во вкладке «Задания»."
           />
+        ) : null}
+        {needsPacsPeriod ? (
+          <View style={styles.commandPeriodSection}>
+            <Text style={styles.commandGroupLabel}>ПЕРИОД ИССЛЕДОВАНИЯ</Text>
+            <View style={styles.commandPeriodOptions}>
+              {(
+                [
+                  ["today", "Сегодня"],
+                  ["yesterday", "Вчера"],
+                  ["three_days", "3 дня"],
+                  ["week", "Неделя"],
+                  ["month", "Месяц"],
+                  ["six_months", "Полгода"],
+                  ["year", "Год"]
+                ] as const
+              ).map(([value, label]) => (
+                <Pressable
+                  key={value}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: searchPeriod === value }}
+                  onPress={() => setSearchPeriod(value)}
+                  style={[
+                    styles.commandPeriodOption,
+                    searchPeriod === value && styles.commandPeriodOptionActive
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.commandPeriodOptionText,
+                      searchPeriod === value &&
+                        styles.commandPeriodOptionTextActive
+                    ]}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
         ) : null}
         {needsUID ? (
           <Field
@@ -3760,6 +3939,13 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(5,12,21,0.32)"
   },
+  loginLaunchLoader: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 4,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  loginPanelHidden: { opacity: 0 },
   loginPanel: {
     width: "44%",
     minWidth: 430,
@@ -3882,6 +4068,24 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
     fontWeight: "800"
+  },
+  loginPreparing: {
+    minHeight: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7
+  },
+  loginPreparingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: darkColors.primary
+  },
+  loginPreparingText: {
+    color: darkColors.textDim,
+    fontSize: 10,
+    lineHeight: 14
   },
   loginTemporary: {
     color: darkColors.textDim,
@@ -4292,6 +4496,29 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: colors.borderSoft
   },
+  protocolContent: { gap: 14 },
+  protocolConclusion: {
+    padding: 14,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: "rgba(11,132,179,0.24)",
+    backgroundColor: colors.primarySoft
+  },
+  protocolConclusionLabel: {
+    color: colors.primary,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "800",
+    letterSpacing: 1.1
+  },
+  protocolConclusionText: {
+    marginTop: 6,
+    color: colors.text,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: "600"
+  },
+  protocolCourse: { gap: 2 },
   detailLabel: {
     color: colors.primary,
     fontSize: 10,
@@ -4922,6 +5149,32 @@ const styles = StyleSheet.create({
   },
   commandOptionText: { ...typography.label, color: colors.textMuted },
   commandOptionTextSelected: { color: colors.text },
+  commandPeriodSection: { gap: 8 },
+  commandPeriodOptions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6
+  },
+  commandPeriodOption: {
+    minHeight: 34,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.canvasRaised
+  },
+  commandPeriodOptionActive: {
+    borderColor: "rgba(11,132,179,0.34)",
+    backgroundColor: colors.primarySoft
+  },
+  commandPeriodOptionText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "600"
+  },
+  commandPeriodOptionTextActive: { color: colors.primary },
   commandActions: {
     flexDirection: "row",
     justifyContent: "flex-end",
@@ -5052,7 +5305,7 @@ const styles = StyleSheet.create({
   },
   planTableBody: { flex: 1, minHeight: 0 },
   planTableDayRow: {
-    minHeight: 48,
+    minHeight: 40,
     flexDirection: "row",
     alignItems: "stretch",
     borderBottomWidth: 1,
@@ -5061,7 +5314,7 @@ const styles = StyleSheet.create({
   },
   planEntriesColumn: { flex: 3.78 },
   planEntryRow: {
-    minHeight: 42,
+    minHeight: 34,
     flexDirection: "row",
     alignItems: "center",
     borderBottomWidth: 1,
@@ -5070,8 +5323,8 @@ const styles = StyleSheet.create({
   planTableRowPressed: { backgroundColor: colors.primarySoft },
   planTableHeader: {
     flexGrow: 0,
-    flexBasis: 42,
-    minHeight: 42,
+    flexBasis: 36,
+    minHeight: 36,
     backgroundColor: colors.surfaceSoft
   },
   planTableHeaderText: {
@@ -5094,34 +5347,34 @@ const styles = StyleSheet.create({
     lineHeight: 15,
     fontWeight: "800",
     textTransform: "capitalize",
-    paddingTop: 13
+    paddingTop: 10
   },
   planDayCell: { flex: 0.72 },
   planPatientCell: { flex: 1.25 },
   planDepartmentCell: { flex: 1.08 },
   planOperationCell: { flex: 1.45 },
   planEditorContent: {
-    padding: 16,
-    paddingBottom: 34,
-    gap: 12
+    padding: 12,
+    paddingBottom: 24,
+    gap: 8
   },
   planEditorRow: {
-    padding: 13,
-    gap: 7,
+    padding: 10,
+    gap: 5,
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface
   },
   planEditorHeader: {
-    minHeight: 30,
+    minHeight: 26,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between"
   },
   planPatientInput: {
-    minHeight: 46,
-    paddingHorizontal: 12,
+    minHeight: 42,
+    paddingHorizontal: 10,
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.border,
@@ -5130,15 +5383,15 @@ const styles = StyleSheet.create({
     fontSize: 15
   },
   planFieldLabel: {
-    marginTop: 3,
+    marginTop: 1,
     color: colors.textDim,
     fontSize: 10,
     fontWeight: "700",
     textTransform: "uppercase"
   },
   planSelect: {
-    minHeight: 44,
-    paddingHorizontal: 12,
+    minHeight: 42,
+    paddingHorizontal: 10,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -5162,7 +5415,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.canvasRaised
   },
   planOption: {
-    minHeight: 40,
+    minHeight: 36,
     paddingHorizontal: 12,
     justifyContent: "center",
     borderBottomWidth: 1,

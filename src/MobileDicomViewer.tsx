@@ -32,6 +32,7 @@ import {
 import { loadRenderedFrameBlob } from "./dicomOfflineCache";
 import {
   getPreparedXAManifest,
+  manifestDicomSeries,
   manifestFrameMap,
   preparedFrameKey
 } from "./xaPreparedCache";
@@ -155,20 +156,48 @@ export function MobileDicomViewer({
     void (async () => {
       try {
         const root = dicomWebRoot.replace(/\/$/, "");
-        const [response, prepared] = await Promise.all([
+        const [metadataResult, preparedResult] = await Promise.allSettled([
           fetch(`${root}/studies/${encodeURIComponent(studyUID)}/metadata`, {
             headers: { Accept: "application/dicom+json" },
             signal: controller.signal
           }),
           getPreparedXAManifest(studyUID, {
             signal: controller.signal
-          }).catch(() => null)
+          })
         ]);
-        if (!response.ok) throw new Error(`PACS вернул HTTP ${response.status}`);
-        const metadata = (await response.json()) as DicomMetadata[];
-        const loadedSeries = buildDicomSeries(metadata, studyUID, root);
+        const prepared =
+          preparedResult.status === "fulfilled" ? preparedResult.value : null;
+        let loadedSeries: DicomSeries[] = [];
+        if (
+          metadataResult.status === "fulfilled" &&
+          metadataResult.value.ok
+        ) {
+          const metadata = (await metadataResult.value.json()) as DicomMetadata[];
+          loadedSeries = buildDicomSeries(metadata, studyUID, root);
+        }
+        if (!loadedSeries.length && prepared) {
+          loadedSeries = manifestDicomSeries(prepared, root);
+        }
+        if (!loadedSeries.length && !prepared) {
+          const ready = await getPreparedXAManifest(studyUID, {
+            wait: true,
+            signal: controller.signal
+          });
+          if (ready) {
+            loadedSeries = manifestDicomSeries(ready, root);
+            if (!cancelled) setPreparedFrames(manifestFrameMap(ready));
+          }
+        }
         if (!loadedSeries.length) {
-          throw new Error("В исследовании не найдены DICOM-кадры");
+          const pacsStatus =
+            metadataResult.status === "fulfilled"
+              ? metadataResult.value.status
+              : 0;
+          throw new Error(
+            pacsStatus
+              ? `Не удалось подготовить XA (PACS HTTP ${pacsStatus})`
+              : "В исследовании не найдены DICOM-кадры"
+          );
         }
         if (!cancelled) {
           setSeries(loadedSeries);
