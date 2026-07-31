@@ -189,7 +189,17 @@ export async function getOperationPlan(
   const query = weekStart
     ? `?week_start=${encodeURIComponent(weekStart)}`
     : "";
-  return request<OperationPlan>(`/operation-plan${query}`);
+  const response = await request<OperationPlan>(`/operation-plan${query}`);
+  return {
+    week_start:
+      typeof response?.week_start === "string" ? response.week_start : "",
+    days: Array.isArray(response?.days)
+      ? response.days.map((day) => ({
+          ...day,
+          entries: Array.isArray(day.entries) ? day.entries : []
+        }))
+      : []
+  };
 }
 
 export async function saveOperationPlanDay(
@@ -217,6 +227,7 @@ export async function getAgentHeartbeatTimes(
   status?: "well" | "with_errors"
 ): Promise<string[]> {
   const params = new URLSearchParams({ agent_id: String(agentId) });
+  params.set("limit", "1");
   if (status) params.set("status", status);
   const endpoint = status
     ? "/agent_status/searchby_status"

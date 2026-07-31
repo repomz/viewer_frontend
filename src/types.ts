@@ -43,7 +43,7 @@ export type UserRequest = {
 
 export type AgentCommand =
   | "get_report"
-  | "get_plan"
+  | "sync_studies"
   | "find_study"
   | "import_study"
   | "find_xa"

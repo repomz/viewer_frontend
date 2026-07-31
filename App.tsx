@@ -173,7 +173,7 @@ const studyCategories: StudyCategory[] = [
 
 const commandLabels: Record<AgentCommand, string> = {
   get_report: "Получить отчёт",
-  get_plan: "Получить оперативный план",
+  sync_studies: "Проверить новые протоколы",
   find_study: "Найти протокол",
   import_study: "Загрузить выбранный протокол",
   find_xa: "Найти XA",
@@ -189,13 +189,13 @@ const commandLabels: Record<AgentCommand, string> = {
 };
 
 export const agentCommandOptions: AgentCommand[] = [
+  "sync_studies",
   "find_study",
   "find_xa",
   "find_ct",
   "get_xa",
   "get_ct",
   "get_report",
-  "get_plan",
   "xa_polling_on",
   "xa_polling_off",
   "ct_polling_on",
@@ -243,6 +243,17 @@ function formatDate(value?: string, withTime = false): string {
     year: "numeric",
     ...(withTime ? { hour: "2-digit", minute: "2-digit" } : {})
   }).format(date);
+}
+
+function operationPlanWeekStart(offsetWeeks = 0): string {
+  const date = new Date();
+  const dayFromMonday = (date.getDay() + 6) % 7;
+  date.setHours(12, 0, 0, 0);
+  date.setDate(date.getDate() - dayFromMonday + offsetWeeks * 7);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function formatDuration(minutes: number): string {
@@ -468,9 +479,16 @@ export default function App() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [plan, setPlan] = useState<OperationPlan | null>(null);
+  const [planWeekOffset, setPlanWeekOffset] = useState<0 | 1>(0);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState("");
-  const processedCompletions = useRef(new Set<string>());
+  const processedCompletions = useRef(
+    new Set(
+      requests
+        .filter((request) => terminalStatuses.has(request.status))
+        .map((request) => request.id)
+    )
+  );
   const autoDownloadRunning = useRef(false);
   const autoDownloadAllowedRef = useRef(false);
   const [toast, setToast] = useState<ToastState>(null);
@@ -530,6 +548,11 @@ export default function App() {
   const loadRequestHistory = useCallback(async () => {
     try {
       const response = await getUserRequests(settings.userId, settings.agentId);
+      response.forEach((request) => {
+        if (terminalStatuses.has(request.status)) {
+          processedCompletions.current.add(request.id);
+        }
+      });
       setRequests(response);
       saveRequests(response);
     } catch {
@@ -549,11 +572,11 @@ export default function App() {
     }
   }, []);
 
-  const loadPlan = useCallback(async () => {
+  const loadPlan = useCallback(async (weekOffset: 0 | 1) => {
     setPlanError("");
     setPlanLoading(true);
     try {
-      setPlan(await getOperationPlan());
+      setPlan(await getOperationPlan(operationPlanWeekStart(weekOffset)));
     } catch (error) {
       setPlanError(errorMessage(error));
     } finally {
@@ -618,13 +641,14 @@ export default function App() {
   }, [updateAgentHealth, updateServerHealth]);
 
   useEffect(() => {
+    if (!authenticated) return;
     void loadStudies();
-    void loadXAStudies();
     void loadRequestHistory();
-    void loadPlan();
+    if (autoDownloadAllowed) void loadXAStudies();
     refreshConnectivity();
   }, [
-    loadPlan,
+    authenticated,
+    autoDownloadAllowed,
     loadRequestHistory,
     loadStudies,
     loadXAStudies,
@@ -632,6 +656,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (!authenticated) return;
     void getAgents()
       .then((ids) => {
         if (!ids.length) return;
@@ -648,27 +673,39 @@ export default function App() {
       .catch(() => {
         // Older backend deployments do not expose the agent directory yet.
       });
-  }, []);
+  }, [authenticated]);
 
   useEffect(() => {
+    if (!authenticated) return;
     const timer = setInterval(refreshConnectivity, 30_000);
     return () => clearInterval(timer);
-  }, [refreshConnectivity]);
+  }, [authenticated, refreshConnectivity]);
 
   useEffect(() => {
+    if (!authenticated) return;
     if (activeTab === "reports") {
       void loadReports();
     }
     if (activeTab === "angiography") {
       void loadXAStudies();
     }
-  }, [activeTab, loadReports, loadXAStudies]);
+    if (activeTab === "plan") {
+      void loadPlan(planWeekOffset);
+    }
+  }, [
+    activeTab,
+    authenticated,
+    loadPlan,
+    loadReports,
+    loadXAStudies,
+    planWeekOffset
+  ]);
 
   useEffect(() => {
-    if (activeTab !== "reports") return;
+    if (!authenticated || activeTab !== "reports") return;
     const timer = setInterval(() => void loadReports(), 30_000);
     return () => clearInterval(timer);
-  }, [activeTab, loadReports]);
+  }, [activeTab, authenticated, loadReports]);
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
@@ -722,6 +759,7 @@ export default function App() {
   }, [activeTab, authenticated]);
 
   useEffect(() => {
+    if (!authenticated) return;
     const pending = requests.filter(
       (request) => !terminalStatuses.has(request.status)
     );
@@ -745,9 +783,10 @@ export default function App() {
     };
     const timer = setInterval(() => void poll(), 4_000);
     return () => clearInterval(timer);
-  }, [requests]);
+  }, [authenticated, requests]);
 
   useEffect(() => {
+    if (!authenticated) return;
     const reportRefreshTimers: ReturnType<typeof setTimeout>[] = [];
     const newlyCompleted = requests.filter(
       (request) =>
@@ -756,7 +795,7 @@ export default function App() {
     );
     newlyCompleted.forEach((request) => processedCompletions.current.add(request.id));
     if (newlyCompleted.some((request) =>
-      ["import_study", "get_xa", "get_ct", "send_xa_to_pacs", "send_ct_to_pacs"]
+      ["sync_studies", "import_study", "get_xa", "get_ct", "send_xa_to_pacs", "send_ct_to_pacs"]
         .includes(request.command)
     )) {
       void loadStudies();
@@ -771,7 +810,7 @@ export default function App() {
     }
     return () =>
       reportRefreshTimers.forEach((timer) => clearTimeout(timer));
-  }, [loadReports, loadStudies, loadXAStudies, requests]);
+  }, [authenticated, loadReports, loadStudies, loadXAStudies, requests]);
 
   useEffect(
     () =>
@@ -1028,9 +1067,6 @@ export default function App() {
                   onSelect={setSelectedStudy}
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
-                  onRequestStudy={(study, command) =>
-                    void submitCommand(command, { study_uid: study.study_id })
-                  }
                   angiographies={xaStudies}
                   onDelete={(study) => void removeStudy(study)}
                 />
@@ -1119,7 +1155,12 @@ export default function App() {
                   plan={plan}
                   loading={planLoading}
                   error={planError}
-                  onRefresh={() => void loadPlan()}
+                  weekOffset={planWeekOffset}
+                  onWeekChange={(weekOffset) => {
+                    setPlan(null);
+                    setPlanWeekOffset(weekOffset);
+                  }}
+                  onRetry={() => void loadPlan(planWeekOffset)}
                   onSave={async (date, entries) => {
                     const saved = await saveOperationPlanDay(date, entries);
                     setPlan((current) =>
@@ -1200,7 +1241,11 @@ function LoginScreen({
       <StatusBar style="light" backgroundColor="#050C15" />
       <View style={[styles.loginLayout, compact && styles.loginLayoutCompact]}>
         <Image
-          source={require("./assets/angiography-splash.png")}
+          source={
+            Platform.OS === "web"
+              ? require("./assets/angiography-splash.webp")
+              : require("./assets/angiography-splash.png")
+          }
           resizeMode="cover"
           style={[
             styles.loginBackgroundImage,
@@ -1593,7 +1638,6 @@ function StudiesScreen({
   onSelect,
   onRetry,
   onRefresh,
-  onRequestStudy,
   angiographies,
   onDelete
 }: {
@@ -1613,7 +1657,6 @@ function StudiesScreen({
   onSelect: (study: Study | null) => void;
   onRetry: () => void;
   onRefresh: () => void;
-  onRequestStudy: (study: Study, command: "get_ct" | "get_xa") => void;
   angiographies: Study[];
   onDelete: (study: Study) => void;
 }) {
@@ -1721,7 +1764,7 @@ function StudiesScreen({
             contentContainerStyle={styles.detailPaneContent}
           >
             {selected ? (
-              <StudyDetails study={selected} onRequest={onRequestStudy} />
+              <StudyDetails study={selected} />
             ) : (
               <EmptyState
                 icon="reader-outline"
@@ -1743,7 +1786,7 @@ function StudiesScreen({
         >
           {selected ? (
             <ScrollView contentContainerStyle={styles.sheetScroll}>
-              <StudyDetails study={selected} onRequest={onRequestStudy} />
+              <StudyDetails study={selected} />
             </ScrollView>
           ) : null}
         </Sheet>
@@ -1802,16 +1845,8 @@ function StudyRow({
   );
 }
 
-function StudyDetails({
-  study,
-  onRequest
-}: {
-  study: Study;
-  onRequest: (study: Study, command: "get_ct" | "get_xa") => void;
-}) {
+function StudyDetails({ study }: { study: Study }) {
   const type = study.study_type.toUpperCase();
-  const preferredCommand: "get_ct" | "get_xa" =
-    type.includes("CT") ? "get_ct" : "get_xa";
 
   return (
     <View style={styles.detailsCard}>
@@ -1854,16 +1889,6 @@ function StudyDetails({
         </Text>
       </View>
 
-      <View style={styles.detailsActions}>
-        {!study.dicom_link ? (
-          <Button
-            label={`Запросить ${preferredCommand === "get_ct" ? "CT" : "XA"}`}
-            icon="cloud-download-outline"
-            onPress={() => onRequest(study, preferredCommand)}
-            style={styles.flexButton}
-          />
-        ) : null}
-      </View>
     </View>
   );
 }
@@ -2827,14 +2852,18 @@ function PlanScreen({
   plan,
   loading,
   error,
-  onRefresh,
+  weekOffset,
+  onWeekChange,
+  onRetry,
   onSave
 }: {
   compact: boolean;
   plan: OperationPlan | null;
   loading: boolean;
   error: string;
-  onRefresh: () => void;
+  weekOffset: 0 | 1;
+  onWeekChange: (weekOffset: 0 | 1) => void;
+  onRetry: () => void;
   onSave: (date: string, entries: PlanEntry[]) => Promise<void>;
 }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -2891,7 +2920,6 @@ function PlanScreen({
           </Text>
         </View>
         <View style={styles.planToolbarActions}>
-          <IconButton icon="refresh" label="Обновить план" onPress={onRefresh} />
           <IconButton
             icon="share-outline"
             label="Отправить снимок"
@@ -2901,7 +2929,30 @@ function PlanScreen({
           />
         </View>
       </View>
-      {error ? <InlineError message={error} onRetry={onRefresh} /> : null}
+      <View style={styles.planWeekSelector}>
+        {([0, 1] as const).map((offset) => (
+          <Pressable
+            key={offset}
+            accessibilityRole="button"
+            accessibilityState={{ selected: weekOffset === offset }}
+            onPress={() => onWeekChange(offset)}
+            style={[
+              styles.planWeekOption,
+              weekOffset === offset && styles.planWeekOptionActive
+            ]}
+          >
+            <Text
+              style={[
+                styles.planWeekOptionText,
+                weekOffset === offset && styles.planWeekOptionTextActive
+              ]}
+            >
+              {offset === 0 ? "Текущая неделя" : "Следующая неделя"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      {error ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !plan ? (
         <LoadingState label="Загружаем план…" />
       ) : plan ? (
@@ -2912,44 +2963,44 @@ function PlanScreen({
             <Text style={[styles.planTableHeaderText, styles.planDepartmentCell]}>Отделение</Text>
             <Text style={[styles.planTableHeaderText, styles.planOperationCell]}>Операция</Text>
           </View>
-          {plan.days.map((day) => {
-            const first = day.entries[0];
-            return (
+          <ScrollView
+            style={styles.planTableBody}
+            showsVerticalScrollIndicator={false}
+          >
+          {plan.days.map((day) => (
               <Pressable
                 key={day.date}
                 accessibilityRole="button"
                 accessibilityLabel={`Заполнить план на ${formatDate(day.date)}`}
                 onPress={() => openDay(day.date)}
                 style={({ pressed }) => [
-                  styles.planTableRow,
+                  styles.planTableDayRow,
                   pressed && styles.planTableRowPressed
                 ]}
               >
                 <Text style={[styles.planTableDayText, styles.planDayCell]}>
                   {weekdayTitle(day.date)}
                 </Text>
-                <Text
-                  numberOfLines={2}
-                  style={[styles.planTableText, styles.planPatientCell]}
-                >
-                  {first?.patient || "—"}
-                  {day.entries.length > 1 ? `  +${day.entries.length - 1}` : ""}
-                </Text>
-                <Text
-                  numberOfLines={2}
-                  style={[styles.planTableText, styles.planDepartmentCell]}
-                >
-                  {first?.department || "—"}
-                </Text>
-                <Text
-                  numberOfLines={2}
-                  style={[styles.planTableText, styles.planOperationCell]}
-                >
-                  {first?.operation || "—"}
-                </Text>
+                <View style={styles.planEntriesColumn}>
+                  {(day.entries.length ? day.entries : [null]).map(
+                    (entry, index) => (
+                      <View key={index} style={styles.planEntryRow}>
+                        <Text style={[styles.planTableText, styles.planPatientCell]}>
+                          {entry?.patient || "—"}
+                        </Text>
+                        <Text style={[styles.planTableText, styles.planDepartmentCell]}>
+                          {entry?.department || "—"}
+                        </Text>
+                        <Text style={[styles.planTableText, styles.planOperationCell]}>
+                          {entry?.operation || "—"}
+                        </Text>
+                      </View>
+                    )
+                  )}
+                </View>
               </Pressable>
-            );
-          })}
+          ))}
+          </ScrollView>
         </View>
       ) : null}
 
@@ -3574,11 +3625,10 @@ function CommandSheet({
     payload: Record<string, unknown>
   ) => Promise<boolean>;
 }) {
-  const [command, setCommand] = useState<AgentCommand>("find_study");
+  const [command, setCommand] = useState<AgentCommand>("sync_studies");
   const [patient, setPatient] = useState("");
   const [studyUID, setStudyUID] = useState("");
   const [period, setPeriod] = useState("1");
-  const [planDate, setPlanDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const needsPatient = ["find_study", "find_xa", "find_ct"].includes(command);
   const needsUID = ["get_xa", "get_ct"].includes(command);
@@ -3597,8 +3647,6 @@ function CommandSheet({
         ? { study_uid: studyUID.trim() }
         : isReport
           ? { period: Number(period) }
-          : command === "get_plan" && planDate.trim()
-            ? { date: planDate.trim() }
           : {};
     const ok = await onSubmit(command, payload);
     setSubmitting(false);
@@ -3667,15 +3715,6 @@ function CommandSheet({
             onChangeText={setPeriod}
             keyboardType="number-pad"
             hint="Допустимое значение от 1 до 4."
-          />
-        ) : null}
-        {command === "get_plan" ? (
-          <Field
-            label="Дата (необязательно)"
-            value={planDate}
-            onChangeText={setPlanDate}
-            placeholder="YYYY-MM-DD"
-            hint="Без даты агент вернёт текущую рабочую неделю."
           />
         ) : null}
         <View style={styles.commandActions}>
@@ -4970,6 +5009,28 @@ const styles = StyleSheet.create({
     gap: 10
   },
   planToolbarActions: { flexDirection: "row", alignItems: "center", gap: 5 },
+  planWeekSelector: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    gap: 4,
+    padding: 4,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSoft
+  },
+  planWeekOption: {
+    minHeight: 34,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.sm
+  },
+  planWeekOptionActive: { backgroundColor: colors.canvasRaised },
+  planWeekOptionText: {
+    color: colors.textDim,
+    fontSize: 12,
+    fontWeight: "700"
+  },
+  planWeekOptionTextActive: { color: colors.primary },
   planTable: {
     flex: 1,
     minHeight: 0,
@@ -4982,13 +5043,29 @@ const styles = StyleSheet.create({
     backgroundColor: colors.canvasRaised
   },
   planTableRow: {
-    flex: 1,
     minHeight: 56,
     flexDirection: "row",
     alignItems: "center",
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
     backgroundColor: colors.canvasRaised
+  },
+  planTableBody: { flex: 1, minHeight: 0 },
+  planTableDayRow: {
+    minHeight: 48,
+    flexDirection: "row",
+    alignItems: "stretch",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft,
+    backgroundColor: colors.canvasRaised
+  },
+  planEntriesColumn: { flex: 3.78 },
+  planEntryRow: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
   },
   planTableRowPressed: { backgroundColor: colors.primarySoft },
   planTableHeader: {
@@ -5016,7 +5093,8 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 15,
     fontWeight: "800",
-    textTransform: "capitalize"
+    textTransform: "capitalize",
+    paddingTop: 13
   },
   planDayCell: { flex: 0.72 },
   planPatientCell: { flex: 1.25 },

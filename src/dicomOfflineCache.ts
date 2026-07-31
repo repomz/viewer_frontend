@@ -1,7 +1,11 @@
 import { buildDicomSeries, type DicomMetadata } from "./dicomSeries";
+import { unzip } from "fflate";
 import {
   getPreparedXAManifest,
-  manifestFrameURLs
+  manifestFrameURLs,
+  preparedArchiveURL,
+  preparedFrameURL,
+  type PreparedXAManifest
 } from "./xaPreparedCache";
 
 const CACHE_NAME = "viewer-xa-frames-v2";
@@ -134,6 +138,85 @@ function recordFrame(url: string, studyUID: string, bytes: number): void {
   index[url] = { studyUID, bytes };
   writeRecord(INDEX_KEY, index);
   emit();
+}
+
+function recordFrames(
+  frames: { url: string; studyUID: string; bytes: number }[]
+): void {
+  const index = readRecord<CacheIndex>(INDEX_KEY);
+  frames.forEach((frame) => {
+    index[frame.url] = { studyUID: frame.studyUID, bytes: frame.bytes };
+  });
+  writeRecord(INDEX_KEY, index);
+  emit();
+}
+
+function unzipFrames(data: Uint8Array): Promise<Record<string, Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    unzip(data, (error, files) => {
+      if (error) reject(error);
+      else resolve(files);
+    });
+  });
+}
+
+async function persistPreparedArchive(
+  studyUID: string,
+  manifest: PreparedXAManifest,
+  signal: AbortSignal
+): Promise<boolean> {
+  const archiveURL = preparedArchiveURL(manifest);
+  if (!archiveURL) return false;
+  const response = await fetch(archiveURL, {
+    headers: { Accept: "application/zip" },
+    signal
+  });
+  if (!response.ok) {
+    throw new Error(`Архив XA вернул HTTP ${response.status}`);
+  }
+  const files = await unzipFrames(new Uint8Array(await response.arrayBuffer()));
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+  const frames = manifest.series.flatMap((series) =>
+    series.frames.map((frame) => {
+      const bytes = files[`frames/${frame.id}`];
+      if (!bytes) throw new Error(`В архиве XA отсутствует кадр ${frame.id}`);
+      return {
+        url: preparedFrameURL(frame.path),
+        blob: new Blob([Uint8Array.from(bytes)], { type: "image/jpeg" })
+      };
+    })
+  );
+
+  if (hasCacheAPI()) {
+    const cache = await window.caches.open(CACHE_NAME);
+    let nextIndex = 0;
+    const worker = async () => {
+      while (!signal.aborted) {
+        const frame = frames[nextIndex++];
+        if (!frame) return;
+        await cache.put(
+          frame.url,
+          new Response(frame.blob, { headers: { "Content-Type": "image/jpeg" } })
+        );
+      }
+    };
+    await Promise.all(Array.from({ length: 8 }, () => worker()));
+    if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  } else {
+    for (const frame of frames) {
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      await writeIndexedFrame(frame.url, frame.blob);
+    }
+  }
+  recordFrames(
+    frames.map((frame) => ({
+      url: frame.url,
+      studyUID,
+      bytes: frame.blob.size
+    }))
+  );
+  return true;
 }
 
 function renderedURL(instanceURL: string, frameIndex: number): string {
@@ -274,6 +357,7 @@ export async function downloadStudyForOffline(
   try {
     await requestPersistentStorage();
     let urls: string[];
+    let preparedManifest: PreparedXAManifest | null = null;
     let preparedOnServer = false;
     try {
       const manifest = await getPreparedXAManifest(studyUID, {
@@ -281,6 +365,7 @@ export async function downloadStudyForOffline(
         signal: controller.signal
       });
       urls = manifest ? manifestFrameURLs(manifest) : [];
+      preparedManifest = manifest;
       preparedOnServer = Boolean(manifest);
     } catch (reason) {
       if (controller.signal.aborted) throw reason;
@@ -311,6 +396,23 @@ export async function downloadStudyForOffline(
     expected[studyUID] = urls.length;
     writeRecord(EXPECTED_KEY, expected);
     emit();
+
+    if (preparedManifest?.archive_path) {
+      try {
+        if (
+          await persistPreparedArchive(
+            studyUID,
+            preparedManifest,
+            controller.signal
+          )
+        ) {
+          return;
+        }
+      } catch (reason) {
+        if (controller.signal.aborted) throw reason;
+        // A partially upgraded server or browser falls back to frame downloads.
+      }
+    }
 
     // Orthanc rendering remains limited to two requests, but static prepared
     // files can saturate Wi-Fi safely with six parallel downloads.

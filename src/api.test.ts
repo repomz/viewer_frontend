@@ -1,4 +1,9 @@
-import { checkHealth, getAgentHeartbeatTimes, getStudies } from "./api";
+import {
+  checkHealth,
+  getAgentHeartbeatTimes,
+  getOperationPlan,
+  getStudies
+} from "./api";
 
 describe("Viewer API client", () => {
   afterEach(() => {
@@ -60,8 +65,25 @@ describe("Viewer API client", () => {
 
     await expect(getAgentHeartbeatTimes(2, "well")).resolves.toEqual(payload);
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/agent_status/searchby_status?agent_id=2&status=well",
+      "/api/agent_status/searchby_status?agent_id=2&limit=1&status=well",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
+  });
+
+  it("normalizes empty operation-plan days returned as null", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          week_start: "2026-07-27",
+          days: [{ date: "2026-07-27", entries: null }]
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+
+    await expect(getOperationPlan()).resolves.toEqual({
+      week_start: "2026-07-27",
+      days: [{ date: "2026-07-27", entries: [] }]
+    });
   });
 });

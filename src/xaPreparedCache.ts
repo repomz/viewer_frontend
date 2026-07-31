@@ -19,6 +19,8 @@ export type PreparedXAManifest = {
   prepared_at: string;
   frame_count: number;
   total_bytes: number;
+  archive_path?: string;
+  archive_bytes?: number;
   series: PreparedXASeries[];
 };
 
@@ -42,6 +44,9 @@ const sleep = (milliseconds: number, signal?: AbortSignal) =>
 
 export const preparedFrameURL = (path: string): string =>
   path.startsWith("/api/") ? path : `/api${path.startsWith("/") ? path : `/${path}`}`;
+
+export const preparedArchiveURL = (manifest: PreparedXAManifest): string | null =>
+  manifest.archive_path ? preparedFrameURL(manifest.archive_path) : null;
 
 export const preparedFrameKey = (
   instanceUID: string,
