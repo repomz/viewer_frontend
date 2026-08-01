@@ -97,6 +97,7 @@ export function MobileDicomViewer({
     playing: false
   });
   const videoElement = useRef<HTMLVideoElement | null>(null);
+  const cineFallbackUsed = useRef(false);
   const [series, setSeries] = useState<DicomSeries[]>([]);
   const [seriesIndex, setSeriesIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
@@ -285,6 +286,7 @@ export function MobileDicomViewer({
     setCineReady(false);
     setCineSource("");
     setPreciseMode(false);
+    cineFallbackUsed.current = false;
     if (!selectedCineURL) return;
     void resolvePreparedCineSource(selectedCineURL)
       .then(({ source, local }) => {
@@ -518,6 +520,17 @@ export function MobileDicomViewer({
         },
         onError: () => {
           setPlaying(false);
+          if (
+            cineSource.startsWith("blob:") &&
+            selectedCineURL &&
+            !cineFallbackUsed.current
+          ) {
+            cineFallbackUsed.current = true;
+            setCineReady(false);
+            setError("");
+            setCineSource(selectedCineURL);
+            return;
+          }
           setError("Не удалось воспроизвести подготовленную XA-серию");
         },
         style: {
@@ -540,6 +553,7 @@ export function MobileDicomViewer({
       panOffset.x,
       panOffset.y,
       preciseMode,
+      selectedCineURL,
       selectedFPS,
       zoom
     ]
