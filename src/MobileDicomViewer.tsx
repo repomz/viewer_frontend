@@ -26,15 +26,22 @@ import {
   type DicomSeries
 } from "./dicomSeries";
 import {
+  clampImagePan,
   frameFromVerticalDrag,
+  panForFocalZoom,
   zoomFromPinch
 } from "./dicomGestures";
-import { loadRenderedFrameBlob } from "./dicomOfflineCache";
+import {
+  loadRenderedFrameBlob,
+  resolvePreparedCineSource
+} from "./dicomOfflineCache";
 import {
   getPreparedXAManifest,
   manifestDicomSeries,
   manifestFrameMap,
-  preparedFrameKey
+  preparedCineURL,
+  preparedFrameKey,
+  type PreparedXAManifest
 } from "./xaPreparedCache";
 
 const metadataNumber = (
@@ -54,6 +61,14 @@ const renderedFrameURL = (
       "?viewport=768,768&quality=85"
     : "";
 
+const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) =>
+  touches.length < 2
+    ? 0
+    : Math.hypot(
+        touches[0]!.pageX - touches[1]!.pageX,
+        touches[0]!.pageY - touches[1]!.pageY
+      );
+
 export function MobileDicomViewer({
   studyUID,
   dicomWebRoot = "/dicom-web",
@@ -66,23 +81,39 @@ export function MobileDicomViewer({
   const insets = useSafeAreaInsets();
   const renderedCache = useRef(new Map<string, Promise<string>>());
   const blobURLs = useRef(new Set<string>());
-  const dragStartFrame = useRef(0);
   const pinchStartDistance = useRef(0);
   const pinchStartZoom = useRef(1);
+  const pinchStartFocal = useRef({ x: 0, y: 0 });
+  const pinchStartPan = useRef({ x: 0, y: 0 });
   const panStart = useRef({ x: 0, y: 0 });
+  const singleStartTouch = useRef({ x: 0, y: 0 });
+  const singleStartFrame = useRef(0);
+  const gestureState = useRef({
+    frameIndex: 0,
+    frameCount: 0,
+    zoom: 1,
+    panOffset: { x: 0, y: 0 },
+    viewport: { width: 1, height: 1 },
+    playing: false
+  });
+  const videoElement = useRef<HTMLVideoElement | null>(null);
   const [series, setSeries] = useState<DicomSeries[]>([]);
   const [seriesIndex, setSeriesIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [fps, setFps] = useState(12);
   const [zoom, setZoom] = useState(1);
-  const [zoomOrigin, setZoomOrigin] = useState({ x: 50, y: 50 });
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [seriesOpen, setSeriesOpen] = useState(false);
   const [metadataLoading, setMetadataLoading] = useState(true);
   const [frameReady, setFrameReady] = useState(false);
   const [frameSource, setFrameSource] = useState("");
+  const [preparedManifest, setPreparedManifest] =
+    useState<PreparedXAManifest | null>(null);
+  const [cineSource, setCineSource] = useState("");
+  const [cineReady, setCineReady] = useState(false);
+  const [preciseMode, setPreciseMode] = useState(false);
   const [seriesPreviews, setSeriesPreviews] = useState<Record<string, string>>(
     {}
   );
@@ -94,6 +125,13 @@ export function MobileDicomViewer({
   const selectedSeries = series[seriesIndex] ?? null;
   const frameCount = selectedSeries?.frames.length ?? 0;
   const selectedFrame = selectedSeries?.frames[frameIndex];
+  const selectedPreparedSeries = preparedManifest?.series.find(
+    (item) => item.series_uid === selectedSeries?.uid
+  );
+  const selectedCineURL = selectedPreparedSeries
+    ? preparedCineURL(selectedPreparedSeries)
+    : null;
+  const selectedFPS = selectedPreparedSeries?.fps || fps;
   const frameURL = selectedFrame
     ? preparedFrames.get(
         preparedFrameKey(selectedFrame.instanceUID, selectedFrame.frameIndex + 1)
@@ -144,13 +182,16 @@ export function MobileDicomViewer({
     setSeriesPreviews({});
     setError("");
     setSeries([]);
+    setPreparedManifest(null);
     setPreparedFrames(new Map());
     setSeriesIndex(0);
     setFrameIndex(0);
     setPlaying(false);
     setZoom(1);
-    setZoomOrigin({ x: 50, y: 50 });
     setPanOffset({ x: 0, y: 0 });
+    setCineSource("");
+    setCineReady(false);
+    setPreciseMode(false);
     setSeriesOpen(false);
 
     void (async () => {
@@ -202,6 +243,7 @@ export function MobileDicomViewer({
         if (!cancelled) {
           setSeries(loadedSeries);
           if (prepared) {
+            setPreparedManifest(prepared);
             setPreparedFrames(manifestFrameMap(prepared));
           } else {
             void getPreparedXAManifest(studyUID, {
@@ -210,6 +252,7 @@ export function MobileDicomViewer({
             })
               .then((ready) => {
                 if (!cancelled && ready) {
+                  setPreparedManifest(ready);
                   setPreparedFrames(manifestFrameMap(ready));
                 }
               })
@@ -236,33 +279,43 @@ export function MobileDicomViewer({
   }, [dicomWebRoot, studyUID]);
 
   useEffect(() => {
-    if (!selectedSeries || preparedFrames.size === 0) return;
     let cancelled = false;
-    let nextIndex = 0;
-    const urls = selectedSeries.frames.flatMap((frame) => {
-      const url = preparedFrames.get(
-        preparedFrameKey(frame.instanceUID, frame.frameIndex + 1)
-      );
-      return url ? [url] : [];
-    });
-    const worker = async () => {
-      while (!cancelled) {
-        const url = urls[nextIndex];
-        nextIndex += 1;
-        if (!url) return;
-        await loadRenderedFrame(url).catch(() => undefined);
-      }
-    };
-    void Promise.all(Array.from({ length: 6 }, () => worker()));
+    let localSource = "";
+    setPlaying(false);
+    setCineReady(false);
+    setCineSource("");
+    setPreciseMode(false);
+    if (!selectedCineURL) return;
+    void resolvePreparedCineSource(selectedCineURL)
+      .then(({ source, local }) => {
+        if (cancelled) {
+          if (local) URL.revokeObjectURL(source);
+          return;
+        }
+        if (local) localSource = source;
+        setCineSource(source);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setError(
+            reason instanceof Error ? reason.message : "Не удалось открыть cine XA"
+          );
+        }
+      });
     return () => {
       cancelled = true;
+      if (localSource) URL.revokeObjectURL(localSource);
     };
-  }, [loadRenderedFrame, preparedFrames, selectedSeries]);
+  }, [selectedCineURL]);
 
   useEffect(() => {
-    if (!frameURL) return;
+    if (!frameURL || (selectedCineURL && !preciseMode)) {
+      setFrameSource("");
+      return;
+    }
     let cancelled = false;
     setError("");
+    setFrameReady(false);
     void loadRenderedFrame(frameURL)
       .then((source) => {
         if (!cancelled) setFrameSource(source);
@@ -280,9 +333,10 @@ export function MobileDicomViewer({
     return () => {
       cancelled = true;
     };
-  }, [frameURL, loadRenderedFrame]);
+  }, [frameURL, loadRenderedFrame, preciseMode, selectedCineURL]);
 
   useEffect(() => {
+    if (!seriesOpen) return;
     let cancelled = false;
     void (async () => {
       for (const item of series) {
@@ -309,10 +363,16 @@ export function MobileDicomViewer({
     return () => {
       cancelled = true;
     };
-  }, [loadRenderedFrame, preparedFrames, series]);
+  }, [loadRenderedFrame, preparedFrames, series, seriesOpen]);
 
   useEffect(() => {
-    if (!selectedSeries || playing || !frameReady) return;
+    const element = videoElement.current;
+    if (!element || !selectedCineURL) return;
+    element.playbackRate = Math.max(0.25, fps / selectedFPS);
+  }, [fps, selectedCineURL, selectedFPS]);
+
+  useEffect(() => {
+    if (!selectedSeries || playing || !preciseMode || !frameReady) return;
     const adjacent = [
       selectedSeries.frames[frameIndex + 1],
       selectedSeries.frames[frameIndex - 1]
@@ -332,6 +392,7 @@ export function MobileDicomViewer({
     frameReady,
     loadRenderedFrame,
     playing,
+    preciseMode,
     preparedFrames,
     selectedSeries
   ]);
@@ -345,7 +406,7 @@ export function MobileDicomViewer({
   );
 
   useEffect(() => {
-    if (!playing || frameCount < 2) return;
+    if (!playing || selectedCineURL || frameCount < 2) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const nextFrame = (frameIndex + 1) % frameCount;
@@ -384,6 +445,7 @@ export function MobileDicomViewer({
     loadRenderedFrame,
     playing,
     preparedFrames,
+    selectedCineURL,
     selectedSeries
   ]);
 
@@ -406,7 +468,7 @@ export function MobileDicomViewer({
           height: "100%",
           objectFit: "contain",
           transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
-          transformOrigin: `${zoomOrigin.x}% ${zoomOrigin.y}%`,
+          transformOrigin: "50% 50%",
           touchAction: "none",
           userSelect: "none",
           pointerEvents: "none"
@@ -416,93 +478,248 @@ export function MobileDicomViewer({
       frameSource,
       panOffset.x,
       panOffset.y,
-      zoom,
-      zoomOrigin.x,
-      zoomOrigin.y
+      zoom
     ]
   );
 
-  const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) =>
-    touches.length < 2
-      ? 0
-      : Math.hypot(
-          touches[0]!.pageX - touches[1]!.pageX,
-          touches[0]!.pageY - touches[1]!.pageY
-        );
+  const videoNode = useMemo(
+    () =>
+      createElement("video", {
+        ref: (element: HTMLVideoElement | null) => {
+          videoElement.current = element;
+        },
+        src: cineSource,
+        muted: true,
+        playsInline: true,
+        preload: "auto",
+        loop: true,
+        onLoadedData: () => {
+          setCineReady(true);
+          if (!preciseMode) setFrameReady(true);
+        },
+        onCanPlay: () => {
+          setCineReady(true);
+          if (!preciseMode) setFrameReady(true);
+        },
+        onPlay: () => setPlaying(true),
+        onPause: () => setPlaying(false),
+        onTimeUpdate: () => {
+          const element = videoElement.current;
+          if (!element || preciseMode || frameCount < 1) return;
+          setFrameIndex(
+            Math.max(
+              0,
+              Math.min(
+                frameCount - 1,
+                Math.round(element.currentTime * selectedFPS)
+              )
+            )
+          );
+        },
+        onError: () => {
+          setPlaying(false);
+          setError("Не удалось воспроизвести подготовленную XA-серию");
+        },
+        style: {
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoom})`,
+          transformOrigin: "50% 50%",
+          touchAction: "none",
+          userSelect: "none",
+          pointerEvents: "none",
+          opacity: preciseMode ? 0 : 1
+        }
+      }),
+    [
+      cineSource,
+      frameCount,
+      panOffset.x,
+      panOffset.y,
+      preciseMode,
+      selectedFPS,
+      zoom
+    ]
+  );
+
+  gestureState.current = {
+    frameIndex,
+    frameCount,
+    zoom,
+    panOffset,
+    viewport: viewportSize,
+    playing
+  };
 
   const gestures = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !playing,
-        onMoveShouldSetPanResponder: () => !playing,
+        onStartShouldSetPanResponder: () => !gestureState.current.playing,
+        onMoveShouldSetPanResponder: () => !gestureState.current.playing,
         onPanResponderGrant: (event) => {
-          dragStartFrame.current = frameIndex;
-          panStart.current = panOffset;
+          const current = gestureState.current;
+          singleStartFrame.current = current.frameIndex;
+          panStart.current = current.panOffset;
           const touches = event.nativeEvent.touches;
           if (touches.length >= 2) {
+            setPreciseMode(true);
             pinchStartDistance.current = touchDistance(touches);
-            pinchStartZoom.current = zoom;
+            pinchStartZoom.current = current.zoom;
+            pinchStartPan.current = current.panOffset;
             const centerX = (touches[0]!.locationX + touches[1]!.locationX) / 2;
             const centerY = (touches[0]!.locationY + touches[1]!.locationY) / 2;
-            setZoomOrigin({
-              x: Math.max(0, Math.min(100, centerX / viewportSize.width * 100)),
-              y: Math.max(0, Math.min(100, centerY / viewportSize.height * 100))
-            });
+            pinchStartFocal.current = { x: centerX, y: centerY };
+          } else if (touches[0]) {
+            singleStartTouch.current = {
+              x: touches[0].pageX,
+              y: touches[0].pageY
+            };
+            setPreciseMode(true);
           }
         },
-        onPanResponderMove: (event, gesture) => {
-          if (playing) return;
+        onPanResponderMove: (event) => {
+          const current = gestureState.current;
+          if (current.playing) return;
           const touches = event.nativeEvent.touches;
           if (touches.length >= 2) {
+            if (pinchStartDistance.current <= 0) {
+              pinchStartDistance.current = touchDistance(touches);
+              pinchStartZoom.current = current.zoom;
+              pinchStartPan.current = current.panOffset;
+              pinchStartFocal.current = {
+                x: (touches[0]!.locationX + touches[1]!.locationX) / 2,
+                y: (touches[0]!.locationY + touches[1]!.locationY) / 2
+              };
+              return;
+            }
             const nextZoom = zoomFromPinch(
               pinchStartZoom.current,
               pinchStartDistance.current,
               touchDistance(touches)
             );
             setZoom(nextZoom);
-            if (nextZoom <= 1) setPanOffset({ x: 0, y: 0 });
+            setPanOffset(
+              panForFocalZoom(
+                pinchStartPan.current,
+                pinchStartZoom.current,
+                nextZoom,
+                pinchStartFocal.current,
+                current.viewport
+              )
+            );
             return;
           }
-          if (zoom > 1) {
-            const maxX = viewportSize.width * (zoom - 1) * 0.5;
-            const maxY = viewportSize.height * (zoom - 1) * 0.5;
-            setPanOffset({
-              x: Math.max(
-                -maxX,
-                Math.min(maxX, panStart.current.x + gesture.dx)
-              ),
-              y: Math.max(
-                -maxY,
-                Math.min(maxY, panStart.current.y + gesture.dy)
+          const touch = touches[0];
+          if (!touch) return;
+          if (pinchStartDistance.current > 0) {
+            pinchStartDistance.current = 0;
+            panStart.current = current.panOffset;
+            singleStartFrame.current = current.frameIndex;
+            singleStartTouch.current = { x: touch.pageX, y: touch.pageY };
+            return;
+          }
+          const deltaX = touch.pageX - singleStartTouch.current.x;
+          const deltaY = touch.pageY - singleStartTouch.current.y;
+          if (current.zoom > 1) {
+            setPanOffset(
+              clampImagePan(
+                {
+                  x: panStart.current.x + deltaX,
+                  y: panStart.current.y + deltaY
+                },
+                current.zoom,
+                current.viewport
               )
-            });
+            );
             return;
           }
           setFrameIndex(
             frameFromVerticalDrag(
-              dragStartFrame.current,
-              gesture.dy,
-              frameCount
+              singleStartFrame.current,
+              deltaY,
+              current.frameCount
             )
           );
-        }
+        },
+        onPanResponderRelease: () => {
+          pinchStartDistance.current = 0;
+        },
+        onPanResponderTerminate: () => {
+          pinchStartDistance.current = 0;
+        },
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true
       }),
-    [
-      frameCount,
-      frameIndex,
-      panOffset,
-      playing,
-      viewportSize.height,
-      viewportSize.width,
-      zoom
-    ]
+    []
   );
 
   const reset = () => {
     setPlaying(false);
+    videoElement.current?.pause();
     setZoom(1);
-    setZoomOrigin({ x: 50, y: 50 });
     setPanOffset({ x: 0, y: 0 });
+  };
+
+  const togglePlayback = () => {
+    if (!selectedCineURL) {
+      setPlaying((current) => !current);
+      return;
+    }
+    const element = videoElement.current;
+    if (!element) return;
+    if (playing) {
+      element.pause();
+      setFrameIndex(
+        Math.max(
+          0,
+          Math.min(frameCount - 1, Math.round(element.currentTime * selectedFPS))
+        )
+      );
+      setPreciseMode(true);
+      return;
+    }
+    setPreciseMode(false);
+    setFrameReady(cineReady);
+    element.playbackRate = Math.max(0.25, fps / selectedFPS);
+    void element.play().catch(() => {
+      setError("Браузер не разрешил запустить cine");
+    });
+  };
+
+  const captureFrame = async () => {
+    if (!frameURL) return;
+    videoElement.current?.pause();
+    setPlaying(false);
+    setPreciseMode(true);
+    try {
+      const blob = await loadRenderedFrameBlob(frameURL, {
+        studyUID,
+        persist: persistentCacheEnabled
+      });
+      const file = new File(
+        [blob],
+        `XA-${studyUID}-S${seriesIndex + 1}-F${frameIndex + 1}.jpg`,
+        { type: "image/jpeg" }
+      );
+      const shareData = { files: [file], title: "Кадр ангиографии" };
+      if (navigator.share && navigator.canShare?.(shareData)) {
+        await navigator.share(shareData);
+        return;
+      }
+      const source = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = source;
+      anchor.download = file.name;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(source), 1_000);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Не удалось сохранить кадр XA"
+      );
+    }
   };
 
   return (
@@ -525,6 +742,7 @@ export function MobileDicomViewer({
         }
         style={styles.viewport}
       >
+        {cineSource ? videoNode : null}
         {frameSource ? imageNode : null}
         {selectedFrame ? (
           <>
@@ -554,7 +772,7 @@ export function MobileDicomViewer({
       {metadataLoading || (!frameReady && !error) ? (
         <View style={styles.state}>
           <ActivityIndicator color={darkColors.primary} />
-          <Text style={styles.stateText}>Загружаем XA-кадры…</Text>
+          <Text style={styles.stateText}>Подготавливаем просмотр XA…</Text>
         </View>
       ) : null}
       {error ? (
@@ -591,7 +809,7 @@ export function MobileDicomViewer({
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={playing ? "Пауза" : "Воспроизвести cine"}
-                onPress={() => setPlaying((current) => !current)}
+                onPress={togglePlayback}
                 style={[styles.controlButton, styles.playButton]}
               >
                 <Icon
@@ -607,6 +825,14 @@ export function MobileDicomViewer({
                 style={styles.controlButton}
               >
                 <Icon name="refresh" size={19} color={darkColors.text} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Сохранить текущий кадр"
+                onPress={() => void captureFrame()}
+                style={styles.controlButton}
+              >
+                <Icon name="camera-outline" size={19} color={darkColors.text} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -650,10 +876,12 @@ export function MobileDicomViewer({
                         accessibilityLabel={`Открыть серию ${index + 1}`}
                         onPress={() => {
                           setPlaying(false);
+                          videoElement.current?.pause();
                           setSeriesIndex(index);
                           setFrameIndex(0);
                           setZoom(1);
                           setPanOffset({ x: 0, y: 0 });
+                          setPreciseMode(false);
                           setSeriesOpen(false);
                         }}
                         style={[

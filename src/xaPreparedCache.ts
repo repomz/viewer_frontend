@@ -12,6 +12,10 @@ export type PreparedXASeries = {
   series_uid: string;
   number: number;
   description?: string;
+  fps?: number;
+  cine_id?: string;
+  cine_path?: string;
+  cine_bytes?: number;
   frames: PreparedXAFrame[];
 };
 
@@ -49,6 +53,15 @@ export const preparedFrameURL = (path: string): string =>
 
 export const preparedArchiveURL = (manifest: PreparedXAManifest): string | null =>
   manifest.archive_path ? preparedFrameURL(manifest.archive_path) : null;
+
+export const preparedCineURL = (series: PreparedXASeries): string | null =>
+  series.cine_path ? preparedFrameURL(series.cine_path) : null;
+
+export const manifestCineURLs = (manifest: PreparedXAManifest): string[] =>
+  manifest.series.flatMap((series) => {
+    const url = preparedCineURL(series);
+    return url ? [url] : [];
+  });
 
 export const preparedFrameKey = (
   instanceUID: string,

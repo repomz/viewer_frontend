@@ -2,19 +2,21 @@ import { buildDicomSeries, type DicomMetadata } from "./dicomSeries";
 import { unzip } from "fflate";
 import {
   getPreparedXAManifest,
+  manifestCineURLs,
   manifestFrameURLs,
   preparedArchiveURL,
   preparedFrameURL,
   type PreparedXAManifest
 } from "./xaPreparedCache";
 
-const CACHE_NAME = "viewer-xa-frames-v2";
-const INDEX_KEY = "viewer.xa-cache-index.v2";
-const EXPECTED_KEY = "viewer.xa-cache-expected.v2";
+const CACHE_NAME = "viewer-xa-media-v3";
+const INDEX_KEY = "viewer.xa-cache-index.v3";
+const EXPECTED_KEY = "viewer.xa-cache-expected.v3";
 
 type CacheEntry = {
   studyUID: string;
   bytes: number;
+  kind?: "frame" | "cine";
 };
 
 type CacheIndex = Record<string, CacheEntry>;
@@ -135,9 +137,84 @@ function emit(): void {
 
 function recordFrame(url: string, studyUID: string, bytes: number): void {
   const index = readRecord<CacheIndex>(INDEX_KEY);
-  index[url] = { studyUID, bytes };
+  index[url] = { studyUID, bytes, kind: "frame" };
   writeRecord(INDEX_KEY, index);
   emit();
+}
+
+function recordCines(
+  cines: { url: string; studyUID: string; bytes: number }[]
+): void {
+  const index = readRecord<CacheIndex>(INDEX_KEY);
+  cines.forEach((cine) => {
+    index[cine.url] = { ...cine, kind: "cine" };
+  });
+  writeRecord(INDEX_KEY, index);
+  emit();
+}
+
+async function persistPreparedCines(
+  studyUID: string,
+  urls: string[],
+  signal: AbortSignal
+): Promise<void> {
+  const stored: { url: string; studyUID: string; bytes: number }[] = [];
+  const cache = hasCacheAPI()
+    ? await window.caches.open(CACHE_NAME).catch(() => null)
+    : null;
+  let nextIndex = 0;
+  const worker = async () => {
+    while (!signal.aborted) {
+      const url = urls[nextIndex++];
+      if (!url) return;
+      if (cache) {
+        const existing = await cache.match(url);
+        if (existing) {
+          const blob = await existing.blob();
+          stored.push({ url, studyUID, bytes: blob.size });
+          continue;
+        }
+      }
+      const response = await fetch(url, {
+        headers: { Accept: "video/mp4" },
+        signal
+      });
+      if (!response.ok) {
+        throw new Error(`Cine XA вернул HTTP ${response.status}`);
+      }
+      const blob = await response.clone().blob();
+      let persisted = false;
+      if (cache) {
+        persisted = await cache
+          .put(url, response)
+          .then(() => true)
+          .catch(() => false);
+      }
+      if (!persisted) await writeIndexedFrame(url, blob);
+      stored.push({ url, studyUID, bytes: blob.size });
+    }
+  };
+  await Promise.all(Array.from({ length: 3 }, () => worker()));
+  if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+  recordCines(stored);
+}
+
+export async function resolvePreparedCineSource(url: string): Promise<{
+  source: string;
+  local: boolean;
+}> {
+  if (hasCacheAPI()) {
+    const cache = await window.caches.open(CACHE_NAME).catch(() => null);
+    const cached = cache ? await cache.match(url) : undefined;
+    if (cached) {
+      return { source: URL.createObjectURL(await cached.blob()), local: true };
+    }
+  }
+  const indexed = await readIndexedFrame(url).catch(() => undefined);
+  if (indexed) {
+    return { source: URL.createObjectURL(indexed), local: true };
+  }
+  return { source: url, local: false };
 }
 
 function recordFrames(
@@ -397,6 +474,19 @@ export async function downloadStudyForOffline(
     writeRecord(EXPECTED_KEY, expected);
     emit();
 
+    const cineURLs = preparedManifest ? manifestCineURLs(preparedManifest) : [];
+    if (
+      preparedManifest &&
+      cineURLs.length > 0 &&
+      cineURLs.length === preparedManifest.series.length
+    ) {
+      expected[studyUID] = cineURLs.length;
+      writeRecord(EXPECTED_KEY, expected);
+      emit();
+      await persistPreparedCines(studyUID, cineURLs, controller.signal);
+      return true;
+    }
+
     if (preparedManifest?.archive_path) {
       try {
         if (
@@ -457,11 +547,14 @@ export async function clearDicomCache(): Promise<void> {
   if (!supported()) return;
   if (hasCacheAPI()) {
     await window.caches.delete(CACHE_NAME).catch(() => false);
+    await window.caches.delete("viewer-xa-frames-v2").catch(() => false);
     await window.caches.delete("viewer-xa-frames-v1").catch(() => false);
   }
   await clearIndexedFrames().catch(() => undefined);
   window.localStorage.removeItem(INDEX_KEY);
   window.localStorage.removeItem(EXPECTED_KEY);
+  window.localStorage.removeItem("viewer.xa-cache-index.v2");
+  window.localStorage.removeItem("viewer.xa-cache-expected.v2");
   window.localStorage.removeItem("viewer.xa-cache-index.v1");
   window.localStorage.removeItem("viewer.xa-cache-expected.v1");
   if (hasIndexedDB()) {

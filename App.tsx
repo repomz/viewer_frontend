@@ -2156,7 +2156,7 @@ function AngiographyScreen({
                   ? cached.complete
                     ? formatStorageSize(cached.bytes)
                     : cached.downloading
-                      ? `загрузка ${cached.cachedFrames}/${cached.expectedFrames || "…"}`
+                      ? `загрузка ${cached.cachedFrames}/${cached.expectedFrames || "…"} серий`
                       : cached.bytes
                         ? `${formatStorageSize(cached.bytes)} · не полностью`
                         : ""
@@ -3623,8 +3623,9 @@ function SettingsScreen({
           <View>
             <Text style={styles.settingsTitle}>Ангиографии на устройстве</Text>
             <Text style={styles.settingsDescription}>
-              Сервер заранее готовит XA, а после входа приложение параллельно
-              сохраняет готовые кадры. Повторный просмотр открывается локально.
+              Сервер заранее готовит cine каждой XA-серии, а приложение
+              сохраняет их локально. Точные кадры подгружаются при паузе и
+              ручной прокрутке.
             </Text>
           </View>
           <Pressable
@@ -3648,7 +3649,7 @@ function SettingsScreen({
               <Text style={styles.requestMetaText}>
                 {autoDownloadAngiography
                   ? "Новые исследования будут сохранены автоматически"
-                  : "Кадры загружаются только во время просмотра"}
+                  : "Cine загружается во время просмотра"}
               </Text>
             </View>
             <View
