@@ -7,8 +7,10 @@ import {
   useState
 } from "react";
 import {
+  Animated,
   ActivityIndicator,
   Image as RNImage,
+  Modal,
   PanResponder,
   Pressable,
   ScrollView,
@@ -72,11 +74,13 @@ const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) =>
 export function MobileDicomViewer({
   studyUID,
   dicomWebRoot = "/dicom-web",
-  persistentCacheEnabled = false
+  persistentCacheEnabled = false,
+  desktop = false
 }: {
   studyUID: string;
   dicomWebRoot?: string;
   persistentCacheEnabled?: boolean;
+  desktop?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   const renderedCache = useRef(new Map<string, Promise<string>>());
@@ -98,11 +102,11 @@ export function MobileDicomViewer({
   });
   const videoElement = useRef<HTMLVideoElement | null>(null);
   const cineFallbackUsed = useRef(false);
+  const seriesSheetY = useRef(new Animated.Value(0)).current;
   const [series, setSeries] = useState<DicomSeries[]>([]);
   const [seriesIndex, setSeriesIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [fps, setFps] = useState(12);
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
@@ -119,6 +123,14 @@ export function MobileDicomViewer({
     {}
   );
   const [error, setError] = useState("");
+  const [captures, setCaptures] = useState<
+    { id: string; url: string; blob: Blob; filename: string }[]
+  >([]);
+  const [activeCapture, setActiveCapture] = useState<
+    { id: string; url: string; blob: Blob; filename: string } | null
+  >(null);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [captureZoom, setCaptureZoom] = useState(1);
   const [preparedFrames, setPreparedFrames] = useState<Map<string, string>>(
     () => new Map()
   );
@@ -132,7 +144,7 @@ export function MobileDicomViewer({
   const selectedCineURL = selectedPreparedSeries
     ? preparedCineURL(selectedPreparedSeries)
     : null;
-  const selectedFPS = selectedPreparedSeries?.fps || fps;
+  const selectedFPS = selectedPreparedSeries?.fps || 12;
   const frameURL = selectedFrame
     ? preparedFrames.get(
         preparedFrameKey(selectedFrame.instanceUID, selectedFrame.frameIndex + 1)
@@ -194,6 +206,8 @@ export function MobileDicomViewer({
     setCineReady(false);
     setPreciseMode(false);
     setSeriesOpen(false);
+    setCaptures([]);
+    setActiveCapture(null);
 
     void (async () => {
       try {
@@ -312,12 +326,10 @@ export function MobileDicomViewer({
 
   useEffect(() => {
     if (!frameURL || (selectedCineURL && !preciseMode)) {
-      setFrameSource("");
       return;
     }
     let cancelled = false;
     setError("");
-    setFrameReady(false);
     void loadRenderedFrame(frameURL)
       .then((source) => {
         if (!cancelled) setFrameSource(source);
@@ -338,7 +350,29 @@ export function MobileDicomViewer({
   }, [frameURL, loadRenderedFrame, preciseMode, selectedCineURL]);
 
   useEffect(() => {
-    if (!seriesOpen) return;
+    if (!selectedSeries?.frames.length) return;
+    let cancelled = false;
+    let nextIndex = 0;
+    const frames = selectedSeries.frames;
+    const worker = async () => {
+      while (!cancelled) {
+        const frame = frames[nextIndex++];
+        if (!frame) return;
+        const url =
+          preparedFrames.get(
+            preparedFrameKey(frame.instanceUID, frame.frameIndex + 1)
+          ) ?? renderedFrameURL(frame);
+        await loadRenderedFrame(url).catch(() => undefined);
+      }
+    };
+    void Promise.all(Array.from({ length: 6 }, () => worker()));
+    return () => {
+      cancelled = true;
+    };
+  }, [loadRenderedFrame, preparedFrames, selectedSeries]);
+
+  useEffect(() => {
+    if (!seriesOpen && !desktop) return;
     let cancelled = false;
     void (async () => {
       for (const item of series) {
@@ -365,13 +399,13 @@ export function MobileDicomViewer({
     return () => {
       cancelled = true;
     };
-  }, [loadRenderedFrame, preparedFrames, series, seriesOpen]);
+  }, [desktop, loadRenderedFrame, preparedFrames, series, seriesOpen]);
 
   useEffect(() => {
     const element = videoElement.current;
     if (!element || !selectedCineURL) return;
-    element.playbackRate = Math.max(0.25, fps / selectedFPS);
-  }, [fps, selectedCineURL, selectedFPS]);
+    element.playbackRate = 1;
+  }, [selectedCineURL]);
 
   useEffect(() => {
     if (!selectedSeries || playing || !preciseMode || !frameReady) return;
@@ -425,7 +459,7 @@ export function MobileDicomViewer({
     void loadRenderedFrame(nextURL)
       .then(() => {
         if (cancelled) return;
-        const delay = Math.max(0, Math.round(1000 / fps) - (Date.now() - startedAt));
+        const delay = Math.max(0, Math.round(1000 / 12) - (Date.now() - startedAt));
         timer = setTimeout(() => {
           if (!cancelled) setFrameIndex(nextFrame);
         }, delay);
@@ -441,7 +475,6 @@ export function MobileDicomViewer({
       if (timer) clearTimeout(timer);
     };
   }, [
-    fps,
     frameCount,
     frameIndex,
     loadRenderedFrame,
@@ -544,12 +577,13 @@ export function MobileDicomViewer({
           touchAction: "none",
           userSelect: "none",
           pointerEvents: "none",
-          opacity: preciseMode ? 0 : 1
+          opacity: preciseMode && frameSource ? 0 : 1
         }
       }),
     [
       cineSource,
       frameCount,
+      frameSource,
       panOffset.x,
       panOffset.y,
       preciseMode,
@@ -670,6 +704,35 @@ export function MobileDicomViewer({
     []
   );
 
+  const seriesSheetGesture = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          gesture.dy > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+        onPanResponderMove: (_event, gesture) => {
+          seriesSheetY.setValue(Math.max(0, gesture.dy));
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dy > 80 || gesture.vy > 0.75) {
+            Animated.timing(seriesSheetY, {
+              toValue: 430,
+              duration: 180,
+              useNativeDriver: true
+            }).start(() => {
+              setSeriesOpen(false);
+              seriesSheetY.setValue(0);
+            });
+            return;
+          }
+          Animated.spring(seriesSheetY, {
+            toValue: 0,
+            useNativeDriver: true
+          }).start();
+        }
+      }),
+    [seriesSheetY]
+  );
+
   const reset = () => {
     setPlaying(false);
     videoElement.current?.pause();
@@ -697,7 +760,7 @@ export function MobileDicomViewer({
     }
     setPreciseMode(false);
     setFrameReady(cineReady);
-    element.playbackRate = Math.max(0.25, fps / selectedFPS);
+    element.playbackRate = 1;
     void element.play().catch(() => {
       setError("Браузер не разрешил запустить cine");
     });
@@ -713,22 +776,55 @@ export function MobileDicomViewer({
         studyUID,
         persist: persistentCacheEnabled
       });
-      const file = new File(
-        [blob],
-        `XA-${studyUID}-S${seriesIndex + 1}-F${frameIndex + 1}.jpg`,
-        { type: "image/jpeg" }
-      );
-      const shareData = { files: [file], title: "Кадр ангиографии" };
-      if (navigator.share && navigator.canShare?.(shareData)) {
-        await navigator.share(shareData);
-        return;
-      }
       const source = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = source;
-      anchor.download = file.name;
-      anchor.click();
-      window.setTimeout(() => URL.revokeObjectURL(source), 1_000);
+      const image = new Image();
+      image.src = source;
+      await image.decode();
+      const width = Math.max(1, Math.round(viewportSize.width));
+      const height = Math.max(1, Math.round(viewportSize.height));
+      const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(width * pixelRatio);
+      canvas.height = Math.round(height * pixelRatio);
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Не удалось подготовить захват");
+      context.scale(pixelRatio, pixelRatio);
+      context.fillStyle = "#05080B";
+      context.fillRect(0, 0, width, height);
+      const contain = Math.min(width / image.width, height / image.height);
+      const displayWidth = image.width * contain;
+      const displayHeight = image.height * contain;
+      context.translate(
+        width / 2 + panOffset.x,
+        height / 2 + panOffset.y
+      );
+      context.scale(zoom, zoom);
+      context.drawImage(
+        image,
+        -displayWidth / 2,
+        -displayHeight / 2,
+        displayWidth,
+        displayHeight
+      );
+      URL.revokeObjectURL(source);
+      const capturedBlob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob(
+          (value) => value ? resolve(value) : reject(new Error("Не удалось создать JPEG")),
+          "image/jpeg",
+          0.95
+        )
+      );
+      const filename = `XA-${studyUID}-S${seriesIndex + 1}-F${frameIndex + 1}.jpg`;
+      const capture = {
+        id: `${Date.now()}-${frameIndex}`,
+        url: URL.createObjectURL(capturedBlob),
+        blob: capturedBlob,
+        filename
+      };
+      blobURLs.current.add(capture.url);
+      setCaptures((current) => [capture, ...current]);
+      setCaptureZoom(1);
+      setActiveCapture(capture);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Не удалось сохранить кадр XA"
@@ -736,16 +832,80 @@ export function MobileDicomViewer({
     }
   };
 
+  const shareCapture = async (
+    capture: { blob: Blob; filename: string }
+  ) => {
+    const file = new File([capture.blob], capture.filename, {
+      type: "image/jpeg"
+    });
+    const shareData = { files: [file], title: "Кадр ангиографии" };
+    if (navigator.share && navigator.canShare?.(shareData)) {
+      await navigator.share(shareData);
+      return;
+    }
+    const source = URL.createObjectURL(capture.blob);
+    const anchor = document.createElement("a");
+    anchor.href = source;
+    anchor.download = capture.filename;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(source), 1_000);
+  };
+
   return (
     <View
       style={[
         styles.root,
+        desktop && styles.rootDesktop,
         {
-          paddingTop: insets.top + 58,
-          paddingBottom: insets.bottom + 82
+          paddingTop: desktop ? 0 : insets.top + 58,
+          paddingBottom: desktop ? 74 : insets.bottom + 82
         }
       ]}
     >
+      {desktop && series.length ? (
+        <View style={styles.desktopSeriesRail}>
+          <Text style={styles.desktopSeriesTitle}>Серии · {series.length}</Text>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.desktopSeriesContent}
+          >
+            {series.map((item, index) => (
+              <Pressable
+                key={item.uid}
+                accessibilityRole="button"
+                accessibilityLabel={`Открыть серию ${index + 1}`}
+                onPress={() => {
+                  setPlaying(false);
+                  videoElement.current?.pause();
+                  setSeriesIndex(index);
+                  setFrameIndex(0);
+                  setZoom(1);
+                  setPanOffset({ x: 0, y: 0 });
+                  setPreciseMode(false);
+                }}
+                style={[
+                  styles.desktopSeriesTile,
+                  index === seriesIndex && styles.seriesTileActive
+                ]}
+              >
+                {seriesPreviews[item.uid] ? (
+                  <RNImage
+                    source={{ uri: seriesPreviews[item.uid] }}
+                    resizeMode="cover"
+                    style={styles.seriesPreview}
+                  />
+                ) : (
+                  <View style={styles.previewPlaceholder}>
+                    <ActivityIndicator color={darkColors.textMuted} size="small" />
+                  </View>
+                )}
+                <Text style={styles.seriesNumber}>{index + 1}</Text>
+                <Text style={styles.seriesFrames}>{item.frames.length}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
       <View
         {...gestures.panHandlers}
         onLayout={(event) =>
@@ -783,7 +943,7 @@ export function MobileDicomViewer({
         ) : null}
       </View>
 
-      {metadataLoading || (!frameReady && !error) ? (
+      {metadataLoading || (!cineReady && !frameSource && !error) ? (
         <View style={styles.state}>
           <ActivityIndicator color={darkColors.primary} />
           <Text style={styles.stateText}>Подготавливаем просмотр XA…</Text>
@@ -802,11 +962,12 @@ export function MobileDicomViewer({
           <View
             style={[
               styles.controls,
+              desktop && styles.controlsDesktop,
               { bottom: Math.max(8, insets.bottom + 8) }
             ]}
           >
             <View style={styles.controlRow}>
-              <Pressable
+              {!desktop ? <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Открыть серии"
                 onPress={() => {
@@ -819,7 +980,7 @@ export function MobileDicomViewer({
                 ]}
               >
                 <Icon name="layers-outline" size={20} color={darkColors.text} />
-              </Pressable>
+              </Pressable> : null}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel={playing ? "Пауза" : "Воспроизвести cine"}
@@ -850,15 +1011,16 @@ export function MobileDicomViewer({
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Изменить скорость cine"
-                onPress={() =>
-                  setFps((current) =>
-                    current === 6 ? 12 : current === 12 ? 18 : 6
-                  )
-                }
-                style={styles.speedButton}
+                accessibilityLabel="Открыть сохранённые кадры"
+                onPress={() => setGalleryOpen(true)}
+                style={styles.controlButton}
               >
-                <Text style={styles.speedText}>{fps} fps</Text>
+                <Icon name="images-outline" size={19} color={darkColors.text} />
+                {captures.length ? (
+                  <View style={styles.captureBadge}>
+                    <Text style={styles.captureBadgeText}>{captures.length}</Text>
+                  </View>
+                ) : null}
               </Pressable>
             </View>
           </View>
@@ -870,10 +1032,14 @@ export function MobileDicomViewer({
                 onPress={() => setSeriesOpen(false)}
                 style={styles.seriesBackdrop}
               />
-              <View
+              <Animated.View
+                {...seriesSheetGesture.panHandlers}
                 style={[
                   styles.seriesSheet,
-                  { paddingBottom: insets.bottom }
+                  {
+                    paddingBottom: insets.bottom,
+                    transform: [{ translateY: seriesSheetY }]
+                  }
                 ]}
               >
                 <View style={styles.sheetHandle} />
@@ -925,11 +1091,113 @@ export function MobileDicomViewer({
                     );
                   })}
                 </ScrollView>
-              </View>
+              </Animated.View>
             </>
           ) : null}
         </>
       ) : null}
+
+      <Modal
+        visible={Boolean(activeCapture)}
+        transparent={false}
+        animationType="fade"
+        onRequestClose={() => setActiveCapture(null)}
+      >
+        <View style={styles.captureViewer}>
+          {activeCapture ? (
+            <RNImage
+              source={{ uri: activeCapture.url }}
+              resizeMode="contain"
+              style={[
+                styles.captureImage,
+                { transform: [{ scale: captureZoom }] }
+              ]}
+            />
+          ) : null}
+          <View style={[styles.captureTopBar, { top: insets.top + 10 }]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Закрыть захват"
+              onPress={() => setActiveCapture(null)}
+              style={styles.captureAction}
+            >
+              <Icon name="close" size={22} color={darkColors.text} />
+            </Pressable>
+            <Text style={styles.captureTitle}>Захваченный кадр</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Отправить захваченный кадр"
+              onPress={() => activeCapture && void shareCapture(activeCapture)}
+              style={styles.captureAction}
+            >
+              <Icon name="share-outline" size={21} color={darkColors.text} />
+            </Pressable>
+          </View>
+          <View style={[styles.captureZoomBar, { bottom: insets.bottom + 14 }]}>
+            <Pressable
+              accessibilityLabel="Уменьшить захват"
+              onPress={() => setCaptureZoom((value) => Math.max(1, value - 0.5))}
+              style={styles.captureAction}
+            >
+              <Icon name="remove" size={22} color={darkColors.text} />
+            </Pressable>
+            <Text style={styles.captureZoomText}>{captureZoom.toFixed(1)}×</Text>
+            <Pressable
+              accessibilityLabel="Увеличить захват"
+              onPress={() => setCaptureZoom((value) => Math.min(5, value + 0.5))}
+              style={styles.captureAction}
+            >
+              <Icon name="add" size={22} color={darkColors.text} />
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={galleryOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setGalleryOpen(false)}
+      >
+        <View style={styles.galleryBackdrop}>
+          <View style={[styles.gallerySheet, { paddingBottom: insets.bottom + 12 }]}>
+            <View style={styles.galleryHeader}>
+              <Text style={styles.galleryTitle}>Захваты кадров</Text>
+              <Pressable
+                accessibilityLabel="Закрыть галерею"
+                onPress={() => setGalleryOpen(false)}
+                style={styles.captureAction}
+              >
+                <Icon name="close" size={21} color={darkColors.text} />
+              </Pressable>
+            </View>
+            {captures.length ? (
+              <ScrollView contentContainerStyle={styles.galleryGrid}>
+                {captures.map((capture) => (
+                  <Pressable
+                    key={capture.id}
+                    accessibilityLabel={`Открыть ${capture.filename}`}
+                    onPress={() => {
+                      setGalleryOpen(false);
+                      setCaptureZoom(1);
+                      setActiveCapture(capture);
+                    }}
+                    style={styles.galleryTile}
+                  >
+                    <RNImage
+                      source={{ uri: capture.url }}
+                      resizeMode="cover"
+                      style={styles.galleryImage}
+                    />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : (
+              <Text style={styles.galleryEmpty}>Захватов пока нет</Text>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -940,6 +1208,39 @@ const styles = StyleSheet.create({
     paddingTop: 62,
     paddingBottom: 104,
     backgroundColor: "#05080B"
+  },
+  rootDesktop: {
+    minHeight: 0,
+    flexDirection: "row",
+    borderRadius: 18,
+    overflow: "hidden"
+  },
+  desktopSeriesRail: {
+    width: 168,
+    minWidth: 168,
+    padding: 10,
+    paddingBottom: 76,
+    borderRightWidth: 1,
+    borderRightColor: darkColors.borderSoft,
+    backgroundColor: "#12161B"
+  },
+  desktopSeriesTitle: {
+    ...typography.label,
+    color: darkColors.text,
+    marginBottom: 9
+  },
+  desktopSeriesContent: {
+    gap: 9,
+    paddingBottom: 14
+  },
+  desktopSeriesTile: {
+    width: "100%",
+    aspectRatio: 1.35,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "transparent",
+    borderRadius: 10,
+    backgroundColor: darkColors.surface
   },
   viewport: {
     flex: 1,
@@ -1009,6 +1310,9 @@ const styles = StyleSheet.create({
     borderColor: darkColors.borderSoft,
     backgroundColor: "rgba(30,33,39,0.94)"
   },
+  controlsDesktop: {
+    left: 180
+  },
   controlRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1044,6 +1348,24 @@ const styles = StyleSheet.create({
     backgroundColor: darkColors.surface
   },
   speedText: { ...typography.meta, color: darkColors.text },
+  captureBadge: {
+    position: "absolute",
+    top: 3,
+    right: 3,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 3,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: darkColors.primary
+  },
+  captureBadgeText: {
+    fontSize: 9,
+    lineHeight: 11,
+    fontWeight: "900",
+    color: "#031018"
+  },
   seriesBackdrop: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 20,
@@ -1115,5 +1437,103 @@ const styles = StyleSheet.create({
     ...typography.meta,
     color: "rgba(255,255,255,0.72)",
     fontWeight: "800"
+  },
+  captureViewer: {
+    flex: 1,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#05080B"
+  },
+  captureImage: {
+    width: "100%",
+    height: "100%"
+  },
+  captureTopBar: {
+    position: "absolute",
+    left: 12,
+    right: 12,
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,33,39,0.92)"
+  },
+  captureTitle: {
+    ...typography.label,
+    color: darkColors.text
+  },
+  captureAction: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: darkColors.surface
+  },
+  captureZoomBar: {
+    position: "absolute",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 7,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,33,39,0.94)"
+  },
+  captureZoomText: {
+    minWidth: 44,
+    textAlign: "center",
+    ...typography.label,
+    color: darkColors.text
+  },
+  galleryBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(5,8,11,0.7)"
+  },
+  gallerySheet: {
+    maxHeight: "72%",
+    minHeight: 280,
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: "#1E2127"
+  },
+  galleryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12
+  },
+  galleryTitle: {
+    ...typography.title,
+    color: darkColors.text
+  },
+  galleryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    paddingBottom: 20
+  },
+  galleryTile: {
+    width: "31%",
+    aspectRatio: 1,
+    overflow: "hidden",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: darkColors.borderSoft
+  },
+  galleryImage: {
+    width: "100%",
+    height: "100%"
+  },
+  galleryEmpty: {
+    ...typography.body,
+    color: darkColors.textMuted,
+    textAlign: "center",
+    marginTop: 50
   }
 });

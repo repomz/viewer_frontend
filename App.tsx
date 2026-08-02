@@ -104,7 +104,7 @@ if (Platform.OS !== "web") {
   void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 }
 
-type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "settings";
+type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "logs" | "settings";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "all" | "1" | "2" | "3" | "4" | "5";
 type StudyCategory =
@@ -148,6 +148,16 @@ const tabs: { id: Tab; label: string; shortLabel: string; icon: IconName }[] = [
     label: "Отчёты",
     shortLabel: "Отчёты",
     icon: "document-text-outline"
+  }
+];
+
+const desktopTabs = [
+  ...tabs,
+  {
+    id: "logs" as const,
+    label: "Логи",
+    shortLabel: "Логи",
+    icon: "warning-outline" as IconName
   }
 ];
 
@@ -457,6 +467,7 @@ export default function App() {
   const compact = width < layout.mobileBreakpoint;
   const [authenticated, setAuthenticated] = useState(false);
   const [appReady, setAppReady] = useState(false);
+  const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false);
   const [enterRequested, setEnterRequested] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("studies");
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
@@ -649,6 +660,11 @@ export default function App() {
   }, [updateAgentHealth, updateServerHealth]);
 
   useEffect(() => {
+    const timer = setTimeout(() => setLaunchDelayElapsed(true), 3_000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     if (preloadStarted.current) return;
     preloadStarted.current = true;
     void Promise.allSettled([
@@ -773,8 +789,21 @@ export default function App() {
       if (theme) theme.content = background;
       return;
     }
-    void SplashScreen.hideAsync().catch(() => undefined);
   }, [activeTab, authenticated]);
+
+  useEffect(() => {
+    if (!appReady || !launchDelayElapsed) return;
+    if (Platform.OS === "web") {
+      const preboot = document.getElementById("viewer-preboot");
+      if (preboot) {
+        preboot.style.transition = "opacity 240ms ease";
+        preboot.style.opacity = "0";
+        window.setTimeout(() => preboot.remove(), 260);
+      }
+      return;
+    }
+    void SplashScreen.hideAsync().catch(() => undefined);
+  }, [appReady, launchDelayElapsed]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -945,12 +974,12 @@ export default function App() {
         recordRequest(created);
         setCommandOpen(false);
         setToast({
-          message: "Задание передано больничному агенту",
+          message: "Запрос отправлен",
           tone: "success"
         });
         return true;
-      } catch (error) {
-        setToast({ message: errorMessage(error), tone: "danger" });
+      } catch {
+        setToast({ message: "Запрос не отправлен", tone: "danger" });
         return false;
       }
     },
@@ -1027,6 +1056,11 @@ export default function App() {
   const primaryAgentHealth =
     agentHealthById[settings.agentId] ??
     ({ online: false, status: "unknown" } satisfies AgentHealth);
+  const reportRequestPending = requests.some(
+    (request) =>
+      request.command === "get_report" &&
+      !terminalStatuses.has(request.status)
+  );
 
   const switchTab = useCallback((direction: -1 | 1) => {
     const current = tabs.findIndex((tab) => tab.id === activeTab);
@@ -1176,8 +1210,18 @@ export default function App() {
                   onRequest={() =>
                     void submitCommand("get_report", { period: 1 })
                   }
+                  requesting={reportRequestPending}
                   onDelete={(report) => void removeReport(report)}
                   onForward={(report) => void shareReport(report)}
+                />
+              ) : null}
+              {activeTab === "logs" && !compact ? (
+                <LogsScreen
+                  requests={requests.filter(
+                    (request) =>
+                      request.status === "error" || Boolean(request.errors)
+                  )}
+                  onDelete={(request) => void removeRequest(request)}
                 />
               ) : null}
               {activeTab === "settings" ? (
@@ -1478,7 +1522,7 @@ function TopBar({
   onMenu: () => void;
   onTabChange: (tab: Tab) => void;
 }) {
-  const active = tabs.find((item) => item.id === activeTab) ?? tabs[0]!;
+  const active = desktopTabs.find((item) => item.id === activeTab) ?? tabs[0]!;
   const dark = activeTab === "angiography";
   const statusColor = (agentId: number) => {
     const agent = agentHealthById[agentId];
@@ -1555,7 +1599,7 @@ function TopBar({
         </Text>
       </View>
       <View style={styles.desktopTabBar}>
-        {tabs.map((tab) => {
+        {desktopTabs.map((tab) => {
           const selected = activeTab === tab.id;
           return (
             <Pressable
@@ -1891,10 +1935,11 @@ function StudyRow({
   onPress: () => void;
   hasXA: boolean;
 }) {
+  const operation = cleanClinicalText(study.name_operation, true);
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${study.patient}, ${study.name_operation}`}
+      accessibilityLabel={`${study.patient}, ${operation}`}
       onPress={onPress}
       style={({ pressed }) => [
         styles.studyRow,
@@ -1913,7 +1958,7 @@ function StudyRow({
           </Text>
         </View>
         <Text numberOfLines={1} style={styles.studyOperation}>
-          {study.name_operation}
+          {operation}
         </Text>
       </View>
       <View style={styles.studyTrailing}>
@@ -1924,6 +1969,36 @@ function StudyRow({
       </View>
     </Pressable>
   );
+}
+
+export function cleanClinicalText(value: string, operation = false): string {
+  const withoutRoom = operation
+    ? value.replace(
+        /^\s*операционная\s*(?:№\s*)?2\s*[.·,:;\-–—]*\s*/i,
+        ""
+      )
+    : value;
+  return withoutRoom
+    .replace(
+      /внутрисосудист(?:ое|ый)\s+(?:ультразвуковое\s+исследование|ультразвук|исследование)/gi,
+      "ВСУЗИ"
+    )
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+export function plannedRecommendation(value: string): string {
+  const beforeMaterials = value.replace(/расходные\s+материалы[\s\S]*$/i, "");
+  const items = beforeMaterials
+    .split(/-\s+|\n+/)
+    .map((item) => cleanClinicalText(item).trim())
+    .filter((item) => /в\s+плановом\s+порядке/i.test(item));
+  if (items.length) return items.join("\n");
+  return beforeMaterials
+    .split(/(?<=[.!?])\s*/)
+    .map((item) => cleanClinicalText(item).trim())
+    .filter((item) => /в\s+плановом\s+порядке/i.test(item))
+    .join("\n");
 }
 
 function protocolSections(description: string): {
@@ -1958,24 +2033,29 @@ function protocolSections(description: string): {
 
 function ProtocolDescription({ description }: { description: string }) {
   const sections = protocolSections(description);
+  const recommendation = plannedRecommendation(sections.recommendation);
   return (
     <View style={styles.protocolContent}>
       {sections.conclusion ? (
         <View style={styles.protocolConclusion}>
           <Text style={styles.protocolConclusionLabel}>ЗАКЛЮЧЕНИЕ</Text>
-          <Text style={styles.protocolConclusionText}>{sections.conclusion}</Text>
+          <Text style={styles.protocolConclusionText}>
+            {cleanClinicalText(sections.conclusion)}
+          </Text>
         </View>
       ) : null}
       {sections.course ? (
         <View style={styles.protocolCourse}>
           <Text style={styles.detailLabel}>ХОД ОПЕРАЦИИ</Text>
-          <Text style={styles.detailDescription}>{sections.course}</Text>
+          <Text style={styles.detailDescription}>
+            {cleanClinicalText(sections.course)}
+          </Text>
         </View>
       ) : null}
-      {sections.recommendation ? (
+      {recommendation ? (
         <View style={styles.protocolCourse}>
           <Text style={styles.detailLabel}>РЕКОМЕНДАЦИИ</Text>
-          <Text style={styles.detailDescription}>{sections.recommendation}</Text>
+          <Text style={styles.detailDescription}>{recommendation}</Text>
         </View>
       ) : null}
       {!sections.conclusion && !sections.course ? (
@@ -1986,8 +2066,6 @@ function ProtocolDescription({ description }: { description: string }) {
 }
 
 function StudyDetails({ study }: { study: Study }) {
-  const type = study.study_type.toUpperCase();
-
   return (
     <View style={styles.detailsCard}>
       <View style={styles.detailsHero}>
@@ -2001,7 +2079,6 @@ function StudyDetails({ study }: { study: Study }) {
             {study.study_id}
           </Text>
         </View>
-        <Badge label={type || "ПРОТОКОЛ"} />
       </View>
 
       <View style={styles.detailGrid}>
@@ -2019,7 +2096,9 @@ function StudyDetails({ study }: { study: Study }) {
 
       <View style={styles.detailSection}>
         <Text style={styles.detailLabel}>ОПЕРАЦИЯ</Text>
-        <Text style={styles.detailHeading}>{study.name_operation}</Text>
+        <Text style={styles.detailHeading}>
+          {cleanClinicalText(study.name_operation, true)}
+        </Text>
       </View>
 
       <View style={styles.protocolSection}>
@@ -2059,34 +2138,30 @@ function AngiographyScreen({
   const insets = useSafeAreaInsets();
   const [selected, setSelected] = useState<Study | null>(studies[0] ?? null);
   const [mobileViewer, setMobileViewer] = useState(false);
-  const [studyFilter, setStudyFilter] = useState<"all" | "xa" | "ct" | "week">(
-    "all"
-  );
+  const [studyFilter, setStudyFilter] = useState<"xa" | "ct">("xa");
   useEffect(() => {
     if (!selected && studies[0]) setSelected(studies[0]);
   }, [selected, studies]);
 
   const choose = (study: Study) => {
-    if (!compact) return;
     setSelected(study);
-    setMobileViewer(true);
+    if (compact && study.study_type.toLowerCase() === "xa") {
+      setMobileViewer(true);
+    }
   };
+  const visibleStudies = useMemo(
+    () =>
+      studies.filter(
+        (study) => study.study_type.toLowerCase() === studyFilter
+      ),
+    [studies, studyFilter]
+  );
 
-  const now = new Date();
-  const monday = new Date(now);
-  const day = (now.getDay() + 6) % 7;
-  monday.setHours(0, 0, 0, 0);
-  monday.setDate(now.getDate() - day);
-  const visibleStudies = studies.filter((study) => {
-    const modality = study.study_type.toLowerCase();
-    if (studyFilter === "xa" || studyFilter === "ct") {
-      return modality === studyFilter;
+  useEffect(() => {
+    if (!visibleStudies.some((study) => study.id === selected?.id)) {
+      setSelected(visibleStudies[0] ?? null);
     }
-    if (studyFilter === "week") {
-      return new Date(study.time_beginning).getTime() >= monday.getTime();
-    }
-    return true;
-  });
+  }, [selected?.id, visibleStudies]);
 
   return (
     <View style={styles.angioScreen}>
@@ -2102,8 +2177,6 @@ function AngiographyScreen({
             ]}
           >
             {([
-              ["all", "Все"],
-              ["week", "Неделя"],
               ["xa", "XA"],
               ["ct", "CT"]
             ] as const).map(([value, label]) => (
@@ -2173,9 +2246,7 @@ function AngiographyScreen({
                     onPress={() => choose(study)}
                     style={[
                       styles.angioRow,
-                      compact &&
-                        selected?.id === study.id &&
-                        styles.angioRowSelected
+                      selected?.id === study.id && styles.angioRowSelected
                     ]}
                   >
                     <Text style={styles.angioIndex}>
@@ -2216,6 +2287,29 @@ function AngiographyScreen({
                 </Text>
               ) : null}
             </ScrollView>
+            {!compact ? (
+              <View style={styles.angioDesktopViewer}>
+                {studyFilter === "xa" && selected ? (
+                  <MobileDicomViewer
+                    key={selected.study_id}
+                    studyUID={selected.study_id}
+                    desktop
+                  />
+                ) : selected ? (
+                  <View style={styles.angioCTPlaceholder}>
+                    <Icon name="server-outline" size={36} color={darkColors.primary} />
+                    <Text style={styles.angioCTTitle}>{selected.patient}</Text>
+                    <Text style={styles.angioCTText}>
+                      CT находится в удалённом PACS и доступно для просмотра через RadiAnt.
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.angioCTPlaceholder}>
+                    <Text style={styles.angioCTText}>Выберите исследование</Text>
+                  </View>
+                )}
+              </View>
+            ) : null}
           </View>
         </>
       ) : (
@@ -2567,6 +2661,7 @@ function ReportsScreen({
   onRetry,
   onRefresh,
   onRequest,
+  requesting,
   onDelete,
   onForward
 }: {
@@ -2577,6 +2672,7 @@ function ReportsScreen({
   onRetry: () => void;
   onRefresh: () => void;
   onRequest: () => void;
+  requesting: boolean;
   onDelete: (report: ReportDocument) => void;
   onForward: (report: ReportDocument) => void;
 }) {
@@ -2606,14 +2702,25 @@ function ReportsScreen({
           <Text style={styles.compactScreenTitle}>Отчёты дежурств</Text>
           <Text style={styles.compactScreenMeta}>Смахните влево для действий</Text>
         </View>
-        <IconButton
-          icon="refresh"
-          label="Обновить отчёты"
-          onPress={onRefresh}
-        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={requesting ? "Отчёт формируется" : "Запросить отчёт"}
+          disabled={requesting}
+          onPress={onRequest}
+          style={[
+            styles.reportRequestButton,
+            requesting && styles.reportRequestButtonPending
+          ]}
+        >
+          {requesting ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Icon name="add" size={22} color={colors.primary} />
+          )}
+        </Pressable>
       </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
-      {loading ? (
+      {loading && !reports.length ? (
         <LoadingState label="Загружаем отчёты…" />
       ) : reports.length ? (
         <View
@@ -2689,6 +2796,73 @@ function ReportsScreen({
   );
 }
 
+function LogsScreen({
+  requests,
+  onDelete
+}: {
+  requests: UserRequest[];
+  onDelete: (request: UserRequest) => void;
+}) {
+  return (
+    <View style={styles.logsScreen}>
+      <View style={styles.compactScreenToolbar}>
+        <View style={styles.compactScreenHeading}>
+          <Text style={styles.compactScreenTitle}>Ошибки агента</Text>
+          <Text style={styles.compactScreenMeta}>
+            Подробности неудачно завершившихся запросов
+          </Text>
+        </View>
+      </View>
+      <ScrollView
+        style={styles.flexScroll}
+        contentContainerStyle={styles.logsContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {requests.length ? requests.map((request) => {
+          const payload = parseObject(request.payload);
+          const logText = request.errors ||
+            String(parseObject(request.result).error ?? "Агент завершил запрос с ошибкой");
+          return (
+            <View key={request.id} style={styles.logCard}>
+              <View style={styles.logHeader}>
+                <View style={styles.logHeaderCopy}>
+                  <Text style={styles.logCommand}>
+                    {commandLabels[request.command] ?? request.command}
+                  </Text>
+                  <Text style={styles.logMeta}>
+                    {formatDate(request.updated_at, true)} · Агент {request.agent_id}
+                  </Text>
+                </View>
+                <IconButton
+                  icon="trash-outline"
+                  label="Удалить запись лога"
+                  onPress={() => onDelete(request)}
+                />
+              </View>
+              <Text style={styles.logPayloadLabel}>ЗАПРОС</Text>
+              <View style={styles.logPayloadBox}>
+                <Text selectable style={styles.logCode}>
+                  {JSON.stringify(payload, null, 2)}
+                </Text>
+              </View>
+              <Text style={styles.logPayloadLabel}>ЛОГ ОШИБКИ</Text>
+              <View style={styles.logErrorBox}>
+                <Text selectable style={styles.logCode}>{logText}</Text>
+              </View>
+            </View>
+          );
+        }) : (
+          <EmptyState
+            icon="checkmark-circle-outline"
+            title="Ошибок агента нет"
+            description="Здесь появятся только запросы, завершившиеся ошибкой."
+          />
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
 function ReportRow({
   report,
   selected,
@@ -2726,7 +2900,17 @@ function ReportRow({
         </Text>
       </View>
       {compact ? (
-        <Icon name="chevron-forward" size={17} color={colors.textDim} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Удалить отчёт"
+          onPress={(event) => {
+            event.stopPropagation();
+            onDelete();
+          }}
+          style={styles.reportTrashButton}
+        >
+          <Icon name="trash-outline" size={18} color={colors.danger} />
+        </Pressable>
       ) : (
         <View style={styles.reportRowActions}>
           <IconButton icon="share-outline" label="Переслать отчёт" onPress={onForward} />
@@ -4608,14 +4792,40 @@ const styles = StyleSheet.create({
   angioWorkspace: { flex: 1, flexDirection: "row", gap: 12, minHeight: 0 },
   angioWorkspaceCompact: { flexDirection: "column" },
   angioList: {
-    width: "100%",
+    width: "26%",
     minWidth: 0,
-    maxWidth: 880,
-    flexGrow: 1,
+    maxWidth: 360,
+    flexGrow: 0,
     backgroundColor: "transparent"
   },
   angioListCompact: { width: "100%", minWidth: 0, maxWidth: "100%" },
   angioListContent: { gap: 6, paddingBottom: 8 },
+  angioDesktopViewer: {
+    flex: 1,
+    minWidth: 0,
+    overflow: "hidden",
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: darkColors.borderSoft,
+    backgroundColor: "#05080B"
+  },
+  angioCTPlaceholder: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    padding: 40
+  },
+  angioCTTitle: {
+    ...typography.title,
+    color: darkColors.text
+  },
+  angioCTText: {
+    ...typography.body,
+    maxWidth: 440,
+    color: darkColors.textMuted,
+    textAlign: "center"
+  },
   angioRow: {
     minHeight: 56,
     flexDirection: "row",
@@ -4779,6 +4989,20 @@ const styles = StyleSheet.create({
     paddingBottom: 8
   },
   compactScreenToolbarMobile: { minHeight: 48, paddingBottom: 6 },
+  reportRequestButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  reportRequestButtonPending: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft
+  },
   compactScreenHeading: { flex: 1, minWidth: 0 },
   compactScreenTitle: { ...typography.title, fontSize: 17, color: colors.text },
   compactScreenMeta: { ...typography.meta, color: colors.textDim, marginTop: 2 },
@@ -4924,6 +5148,67 @@ const styles = StyleSheet.create({
   reportRowDate: { ...typography.label, color: colors.text },
   reportRowMeta: { ...typography.meta, color: colors.textDim, marginTop: 3 },
   reportRowActions: { flexDirection: "row", alignItems: "center", gap: 5 },
+  reportTrashButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.dangerSoft
+  },
+  logsScreen: {
+    flex: 1,
+    minHeight: 0,
+    paddingHorizontal: 18,
+    paddingBottom: 12
+  },
+  logsContent: {
+    gap: 12,
+    paddingBottom: 24
+  },
+  logCard: {
+    gap: 8,
+    padding: 16,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  logHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  logHeaderCopy: { flex: 1, minWidth: 0 },
+  logCommand: { ...typography.title, color: colors.text },
+  logMeta: { ...typography.meta, color: colors.textMuted, marginTop: 3 },
+  logPayloadLabel: {
+    marginTop: 4,
+    color: colors.textDim,
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "800",
+    letterSpacing: 1
+  },
+  logPayloadBox: {
+    padding: 12,
+    borderRadius: radii.md,
+    backgroundColor: "#EEF2F5"
+  },
+  logErrorBox: {
+    padding: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: "rgba(216,64,64,0.2)",
+    backgroundColor: colors.dangerSoft
+  },
+  logCode: {
+    color: colors.text,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 12,
+    lineHeight: 18
+  },
   reportDetailPane: {
     flex: 1,
     minWidth: 0,

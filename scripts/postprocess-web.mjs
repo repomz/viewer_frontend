@@ -130,6 +130,6 @@ html = html.replace(/<link rel="icon"[^>]*>/i, "");
 html = html.replace("</head>", `${splashHead}\n  </head>`);
 html = html.replace(
   '<div id="root"></div>',
-  '<div id="root"><div id="viewer-preboot"><div id="viewer-preboot-spinner"></div></div></div>'
+  '<div id="viewer-preboot"><div id="viewer-preboot-spinner"></div></div><div id="root"></div>'
 );
 writeFileSync(indexPath, html);
