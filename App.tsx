@@ -1359,6 +1359,7 @@ function LoginScreen({
   revealForm: boolean;
   onEnter: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [backgroundReady, setBackgroundReady] = useState(false);
@@ -1382,7 +1383,7 @@ function LoginScreen({
   }, [formOffset, formOpacity, revealForm]);
 
   return (
-    <SafeAreaView style={styles.loginSafe} edges={["top", "bottom"]}>
+    <View style={styles.loginSafe}>
       <StatusBar style="light" backgroundColor="#050C15" />
       <View style={[styles.loginLayout, compact && styles.loginLayoutCompact]}>
         <Image
@@ -1408,6 +1409,10 @@ function LoginScreen({
           style={[
             styles.loginPanel,
             compact && styles.loginPanelCompact,
+            compact && {
+              paddingTop: Math.max(18, insets.top + 10),
+              paddingBottom: Math.max(18, insets.bottom + 10)
+            },
             !backgroundReady && styles.loginPanelHidden
           ]}
         >
@@ -1506,7 +1511,7 @@ function LoginScreen({
           </Animated.View>
         </View>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -4196,7 +4201,7 @@ const styles = StyleSheet.create({
   },
   loginBackgroundShade: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(5,12,21,0.32)"
+    backgroundColor: "rgba(5,12,21,0.24)"
   },
   loginLaunchLoader: {
     ...StyleSheet.absoluteFillObject,
