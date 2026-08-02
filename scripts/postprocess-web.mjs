@@ -18,10 +18,9 @@ const indexPath = resolve(dist, "index.html");
 mkdirSync(dist, { recursive: true });
 
 for (const filename of [
-  "favicon-xa-v3.png",
-  "apple-touch-icon-v3.png",
-  "pwa-icon-512-v3.png",
-  "splash-xa-v3.png",
+  "favicon-xa-v4.png",
+  "apple-touch-icon-v4.png",
+  "pwa-icon-512-v4.png",
   "angiography-splash.webp"
 ]) {
   copyFileSync(resolve(assets, filename), resolve(dist, filename));
@@ -41,7 +40,7 @@ writeFileSync(
       theme_color: "#07131F",
       icons: [
         {
-          src: "/pwa-icon-512-v3.png",
+          src: "/pwa-icon-512-v4.png",
           sizes: "512x512",
           type: "image/png",
           purpose: "any maskable"
@@ -59,9 +58,9 @@ const embeddedSplash = readFileSync(
 
 const splashHead = `
     <link rel="preload" as="image" href="/angiography-splash.webp" fetchpriority="high" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-xa-v3.png?v=3" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v3.png?v=3" />
-    <link rel="manifest" href="/manifest.webmanifest?v=3" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-xa-v4.png?v=4" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v4.png?v=4" />
+    <link rel="manifest" href="/manifest.webmanifest?v=4" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style id="viewer-launch-screen">

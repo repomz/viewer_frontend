@@ -4,7 +4,7 @@
     "slug": "viewer-clinical",
     "version": "0.1.0",
     "orientation": "portrait",
-    "icon": "./assets/viewer-xa-icon-v3.png",
+    "icon": "./assets/viewer-vessels-icon-v4.png",
     "userInterfaceStyle": "light",
     "backgroundColor": "#F3F6F8",
     "primaryColor": "#0B84B3",
@@ -26,11 +26,11 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "icon": "./assets/viewer-xa-icon-v3.png"
+      "icon": "./assets/viewer-vessels-icon-v4.png"
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/splash-xa-v3.png",
+        "foregroundImage": "./assets/viewer-vessels-icon-v4.png",
         "backgroundColor": "#07131F"
       }
     },
@@ -41,7 +41,7 @@
       "themeColor": "#07131F",
       "backgroundColor": "#07131F",
       "display": "standalone",
-      "favicon": "./assets/favicon-xa-v3.png"
+      "favicon": "./assets/favicon-xa-v4.png"
     },
     "experiments": {
       "typedRoutes": false
