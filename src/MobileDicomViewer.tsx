@@ -35,7 +35,10 @@ import {
 } from "./dicomGestures";
 import {
   loadRenderedFrameBlob,
-  resolvePreparedCineSource
+  loadXACaptures,
+  resolvePreparedCineSource,
+  saveXACapture,
+  type StoredXACapture
 } from "./dicomOfflineCache";
 import {
   getPreparedXAManifest,
@@ -71,6 +74,8 @@ const touchDistance = (touches: readonly { pageX: number; pageY: number }[]) =>
         touches[0]!.pageY - touches[1]!.pageY
       );
 
+type ViewerCapture = StoredXACapture & { url: string };
+
 export function MobileDicomViewer({
   studyUID,
   dicomWebRoot = "/dicom-web",
@@ -103,6 +108,9 @@ export function MobileDicomViewer({
   const videoElement = useRef<HTMLVideoElement | null>(null);
   const cineFallbackUsed = useRef(false);
   const seriesSheetY = useRef(new Animated.Value(0)).current;
+  const capturePinchDistance = useRef(0);
+  const capturePinchZoom = useRef(1);
+  const capturePanStart = useRef({ x: 0, y: 0 });
   const [series, setSeries] = useState<DicomSeries[]>([]);
   const [seriesIndex, setSeriesIndex] = useState(0);
   const [frameIndex, setFrameIndex] = useState(0);
@@ -123,14 +131,11 @@ export function MobileDicomViewer({
     {}
   );
   const [error, setError] = useState("");
-  const [captures, setCaptures] = useState<
-    { id: string; url: string; blob: Blob; filename: string }[]
-  >([]);
-  const [activeCapture, setActiveCapture] = useState<
-    { id: string; url: string; blob: Blob; filename: string } | null
-  >(null);
+  const [captures, setCaptures] = useState<ViewerCapture[]>([]);
+  const [activeCapture, setActiveCapture] = useState<ViewerCapture | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [captureZoom, setCaptureZoom] = useState(1);
+  const [capturePan, setCapturePan] = useState({ x: 0, y: 0 });
   const [preparedFrames, setPreparedFrames] = useState<Map<string, string>>(
     () => new Map()
   );
@@ -208,6 +213,18 @@ export function MobileDicomViewer({
     setSeriesOpen(false);
     setCaptures([]);
     setActiveCapture(null);
+
+    void loadXACaptures(studyUID)
+      .then((stored) => {
+        if (cancelled) return;
+        const restored = stored.map((capture) => {
+          const url = URL.createObjectURL(capture.blob);
+          blobURLs.current.add(url);
+          return { ...capture, url };
+        });
+        setCaptures(restored);
+      })
+      .catch(() => undefined);
 
     void (async () => {
       try {
@@ -499,6 +516,8 @@ export function MobileDicomViewer({
           setPanOffset({ x: 0, y: 0 });
         },
         style: {
+          position: "absolute",
+          inset: 0,
           width: "100%",
           height: "100%",
           objectFit: "contain",
@@ -506,13 +525,15 @@ export function MobileDicomViewer({
           transformOrigin: "50% 50%",
           touchAction: "none",
           userSelect: "none",
-          pointerEvents: "none"
+          pointerEvents: "none",
+          opacity: preciseMode ? 1 : 0
         }
       }),
     [
       frameSource,
       panOffset.x,
       panOffset.y,
+      preciseMode,
       zoom
     ]
   );
@@ -819,11 +840,15 @@ export function MobileDicomViewer({
         id: `${Date.now()}-${frameIndex}`,
         url: URL.createObjectURL(capturedBlob),
         blob: capturedBlob,
-        filename
+        filename,
+        studyUID,
+        createdAt: new Date().toISOString()
       };
       blobURLs.current.add(capture.url);
+      await saveXACapture(capture);
       setCaptures((current) => [capture, ...current]);
       setCaptureZoom(1);
+      setCapturePan({ x: 0, y: 0 });
       setActiveCapture(capture);
     } catch (reason) {
       setError(
@@ -839,8 +864,13 @@ export function MobileDicomViewer({
       type: "image/jpeg"
     });
     const shareData = { files: [file], title: "Кадр ангиографии" };
-    if (navigator.share && navigator.canShare?.(shareData)) {
-      await navigator.share(shareData);
+    if (navigator.share && (!navigator.canShare || navigator.canShare(shareData))) {
+      try {
+        await navigator.share(shareData);
+      } catch (reason) {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        throw reason;
+      }
       return;
     }
     const source = URL.createObjectURL(capture.blob);
@@ -850,6 +880,53 @@ export function MobileDicomViewer({
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(source), 1_000);
   };
+
+  const captureGestures = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderGrant: (event) => {
+          const touches = event.nativeEvent.touches;
+          capturePinchDistance.current = touchDistance(touches);
+          capturePinchZoom.current = captureZoom;
+          capturePanStart.current = capturePan;
+        },
+        onPanResponderMove: (event, gesture) => {
+          const touches = event.nativeEvent.touches;
+          if (touches.length >= 2) {
+            const distance = touchDistance(touches);
+            if (capturePinchDistance.current <= 0) {
+              capturePinchDistance.current = distance;
+              capturePinchZoom.current = captureZoom;
+              return;
+            }
+            setCaptureZoom(
+              Math.max(
+                1,
+                Math.min(
+                  5,
+                  capturePinchZoom.current *
+                    (distance / capturePinchDistance.current)
+                )
+              )
+            );
+            return;
+          }
+          if (captureZoom > 1) {
+            setCapturePan({
+              x: capturePanStart.current.x + gesture.dx,
+              y: capturePanStart.current.y + gesture.dy
+            });
+          }
+        },
+        onPanResponderRelease: () => {
+          capturePinchDistance.current = 0;
+          if (captureZoom <= 1) setCapturePan({ x: 0, y: 0 });
+        }
+      }),
+    [capturePan, captureZoom]
+  );
 
   return (
     <View
@@ -1104,50 +1181,47 @@ export function MobileDicomViewer({
         onRequestClose={() => setActiveCapture(null)}
       >
         <View style={styles.captureViewer}>
-          {activeCapture ? (
-            <RNImage
-              source={{ uri: activeCapture.url }}
-              resizeMode="contain"
-              style={[
-                styles.captureImage,
-                { transform: [{ scale: captureZoom }] }
-              ]}
-            />
-          ) : null}
+          <View {...captureGestures.panHandlers} style={styles.captureCanvas}>
+            {activeCapture ? (
+              <RNImage
+                source={{ uri: activeCapture.url }}
+                resizeMode="contain"
+                style={[
+                  styles.captureImage,
+                  {
+                    transform: [
+                      { translateX: capturePan.x },
+                      { translateY: capturePan.y },
+                      { scale: captureZoom }
+                    ]
+                  }
+                ]}
+              />
+            ) : null}
+          </View>
           <View style={[styles.captureTopBar, { top: insets.top + 10 }]}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel="Закрыть захват"
-              onPress={() => setActiveCapture(null)}
+              accessibilityLabel="Назад к ангиографии"
+              onPress={() => {
+                setCaptureZoom(1);
+                setCapturePan({ x: 0, y: 0 });
+                setActiveCapture(null);
+              }}
               style={styles.captureAction}
             >
-              <Icon name="close" size={22} color={darkColors.text} />
+              <Icon name="chevron-back" size={24} color={darkColors.text} />
             </Pressable>
-            <Text style={styles.captureTitle}>Захваченный кадр</Text>
+          </View>
+          <View style={[styles.captureShareBar, { bottom: insets.bottom + 14 }]}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Отправить захваченный кадр"
               onPress={() => activeCapture && void shareCapture(activeCapture)}
-              style={styles.captureAction}
+              style={styles.captureShareButton}
             >
               <Icon name="share-outline" size={21} color={darkColors.text} />
-            </Pressable>
-          </View>
-          <View style={[styles.captureZoomBar, { bottom: insets.bottom + 14 }]}>
-            <Pressable
-              accessibilityLabel="Уменьшить захват"
-              onPress={() => setCaptureZoom((value) => Math.max(1, value - 0.5))}
-              style={styles.captureAction}
-            >
-              <Icon name="remove" size={22} color={darkColors.text} />
-            </Pressable>
-            <Text style={styles.captureZoomText}>{captureZoom.toFixed(1)}×</Text>
-            <Pressable
-              accessibilityLabel="Увеличить захват"
-              onPress={() => setCaptureZoom((value) => Math.min(5, value + 0.5))}
-              style={styles.captureAction}
-            >
-              <Icon name="add" size={22} color={darkColors.text} />
+              <Text style={styles.captureShareText}>Отправить</Text>
             </Pressable>
           </View>
         </View>
@@ -1180,6 +1254,7 @@ export function MobileDicomViewer({
                     onPress={() => {
                       setGalleryOpen(false);
                       setCaptureZoom(1);
+                      setCapturePan({ x: 0, y: 0 });
                       setActiveCapture(capture);
                     }}
                     style={styles.galleryTile}
@@ -1216,8 +1291,8 @@ const styles = StyleSheet.create({
     overflow: "hidden"
   },
   desktopSeriesRail: {
-    width: 168,
-    minWidth: 168,
+    width: 148,
+    minWidth: 148,
     padding: 10,
     paddingBottom: 76,
     borderRightWidth: 1,
@@ -1311,7 +1386,7 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(30,33,39,0.94)"
   },
   controlsDesktop: {
-    left: 180
+    left: 160
   },
   controlRow: {
     flexDirection: "row",
@@ -1449,21 +1524,17 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%"
   },
+  captureCanvas: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: "hidden",
+    alignItems: "center",
+    justifyContent: "center"
+  },
   captureTopBar: {
     position: "absolute",
     left: 12,
-    right: 12,
-    minHeight: 54,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 8,
-    borderRadius: 20,
-    backgroundColor: "rgba(30,33,39,0.92)"
-  },
-  captureTitle: {
-    ...typography.label,
-    color: darkColors.text
+    width: 46,
+    height: 46
   },
   captureAction: {
     width: 42,
@@ -1473,18 +1544,25 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: darkColors.surface
   },
-  captureZoomBar: {
+  captureShareBar: {
     position: "absolute",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  captureShareButton: {
+    minWidth: 150,
+    height: 50,
+    paddingHorizontal: 22,
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    padding: 7,
-    borderRadius: 20,
-    backgroundColor: "rgba(30,33,39,0.94)"
+    justifyContent: "center",
+    gap: 9,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: darkColors.primary,
+    backgroundColor: "rgba(30,33,39,0.96)"
   },
-  captureZoomText: {
-    minWidth: 44,
-    textAlign: "center",
+  captureShareText: {
     ...typography.label,
     color: darkColors.text
   },

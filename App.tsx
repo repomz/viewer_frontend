@@ -32,6 +32,7 @@ import {
   checkHealth,
   createUserRequest,
   deleteAllUserRequests,
+  deletePACSStudy,
   deleteReport,
   deleteStudy,
   deleteUserRequest,
@@ -57,6 +58,7 @@ import {
 import {
   cancelDicomDownloads,
   clearDicomCache,
+  deleteStudyFromDevice,
   downloadStudyForOffline,
   formatStorageSize,
   getDicomCacheSnapshot,
@@ -514,8 +516,7 @@ export default function App() {
   const [dicomCache, setDicomCache] = useState<DicomCacheSnapshot>(
     getDicomCacheSnapshot
   );
-  const autoDownloadAllowed =
-    authenticated && compact && settings.autoDownloadAngiography;
+  const autoDownloadAllowed = authenticated && compact;
   autoDownloadAllowedRef.current = autoDownloadAllowed;
 
   const loadStudies = useCallback(async () => {
@@ -1001,7 +1002,7 @@ export default function App() {
           ? selectedAgentIds
           : [fallbackAgent],
         userId: next.userId.trim() || defaultSettings.userId,
-        autoDownloadAngiography: next.autoDownloadAngiography
+        autoDownloadAngiography: true
       };
       setSettings(normalized);
       saveSettings(normalized);
@@ -1019,6 +1020,29 @@ export default function App() {
       setStudies((current) => current.filter((item) => item.id !== study.id));
       setSelectedStudy(null);
       setToast({ message: "Протокол удалён", tone: "success" });
+    } catch (error) {
+      setToast({ message: errorMessage(error), tone: "danger" });
+    }
+  }, []);
+
+  const removeLocalAngiography = useCallback(async (study: Study) => {
+    try {
+      await deleteStudyFromDevice(study.study_id);
+      setDicomCache(getDicomCacheSnapshot());
+      setToast({ message: "XA удалена с устройства", tone: "success" });
+    } catch (error) {
+      setToast({ message: errorMessage(error), tone: "danger" });
+    }
+  }, []);
+
+  const removePACSAngiography = useCallback(async (study: Study) => {
+    try {
+      await deletePACSStudy(study.study_id);
+      await deleteStudy(study.id);
+      await deleteStudyFromDevice(study.study_id);
+      setXaStudies((current) => current.filter((item) => item.id !== study.id));
+      setDicomCache(getDicomCacheSnapshot());
+      setToast({ message: "Исследование удалено из PACS", tone: "success" });
     } catch (error) {
       setToast({ message: errorMessage(error), tone: "danger" });
     }
@@ -1162,10 +1186,12 @@ export default function App() {
                   loading={xaLoading}
                   error={xaError}
                   persistentCacheEnabled={
-                    compact && settings.autoDownloadAngiography
+                    compact
                   }
                   dicomCache={dicomCache}
                   onRetry={() => void loadXAStudies()}
+                  onDeleteLocal={removeLocalAngiography}
+                  onDeletePACS={removePACSAngiography}
                 />
               ) : null}
               {activeTab === "requests" ? (
@@ -1935,7 +1961,7 @@ function StudyRow({
   onPress: () => void;
   hasXA: boolean;
 }) {
-  const operation = cleanClinicalText(study.name_operation, true);
+  const operation = shortOperationName(study.name_operation);
   return (
     <Pressable
       accessibilityRole="button"
@@ -1985,6 +2011,56 @@ export function cleanClinicalText(value: string, operation = false): string {
     )
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+export function shortOperationName(value: string): string {
+  const replacements: [RegExp, string][] = [
+    [/коронарошунтограф[А-Яа-яЁёA-Za-z]*/gi, "КАГ+шунтогр"],
+    [/коронарограф[А-Яа-яЁёA-Za-z]*/gi, "КАГ"],
+    [/церебральн[А-Яа-яЁёA-Za-z]*\s+(?:пан)?ангиограф[А-Яа-яЁёA-Za-z]*/gi, "ЦАГ"],
+    [/(?:пан)?ангиограф[А-Яа-яЁёA-Za-z]*/gi, "АГ"],
+    [/тромб(?:о)?(?:аспирац|экстракц)[А-Яа-яЁёA-Za-z]*/gi, "ТА"],
+    [/(?:механическ[А-Яа-яЁёA-Za-z]*\s+)?реканализац[А-Яа-яЁёA-Za-z]*/gi, "МР"],
+    [/стентирован[А-Яа-яЁёA-Za-z]*/gi, "стент"],
+    [/анги(?:о|л)?пласт[А-Яа-яЁёA-Za-z]*/gi, "БАП"],
+    [/бифуркационн[А-Яа-яЁёA-Za-z]*/gi, "биф"],
+    [/(?:внутриаортальн[А-Яа-яЁёA-Za-z]*\s+)?контрпульсатор[А-Яа-яЁёA-Za-z]*/gi, "ВАБК"],
+    [/(?:электро)?кардиостимулятор[А-Яа-яЁёA-Za-z]*/gi, "ЭКС"],
+    [/ствол[А-Яа-яЁёA-Za-z]*\s+лев[А-Яа-яЁёA-Za-z]*\s+коронарн[А-Яа-яЁёA-Za-z]*(?:\s+артери[А-Яа-яЁёA-Za-z]*)?/gi, "стЛКА"],
+    [/передн[А-Яа-яЁёA-Za-z]*\s+нисходящ[А-Яа-яЁёA-Za-z]*(?:\s+артери[А-Яа-яЁёA-Za-z]*)?/gi, "ПНА"],
+    [/огибающ[А-Яа-яЁёA-Za-z]*(?:\s+артери[А-Яа-яЁёA-Za-z]*)?/gi, "ОА"],
+    [/вет[А-Яа-яЁёA-Za-z]*\s+тупого\s+края/gi, "ВТК"],
+    [/прав[А-Яа-яЁёA-Za-z]*\s+коронарн[А-Яа-яЁёA-Za-z]*(?:\s+артери[А-Яа-яЁёA-Za-z]*)?/gi, "ПКА"],
+    [/лев[А-Яа-яЁёA-Za-z]*\s+коронарн[А-Яа-яЁёA-Za-z]*(?:\s+артери[А-Яа-яЁёA-Za-z]*)?/gi, "ЛКА"],
+    [/диагональн[А-Яа-яЁёA-Za-z]*(?:\s+ветв[А-Яа-яЁёA-Za-z]*)?/gi, "ДА"],
+    [/задн[А-Яа-яЁёA-Za-z]*\s+нисходящ[А-Яа-яЁёA-Za-z]*(?:\s+артери[А-Яа-яЁёA-Za-z]*)?/gi, "ЗНА"],
+    [/заднебоков[А-Яа-яЁёA-Za-z]*(?:\s+ветв[А-Яа-яЁёA-Za-z]*)?/gi, "ЗБВ"],
+    [/базилярн[А-Яа-яЁёA-Za-z]*\s+артери[А-Яа-яЁёA-Za-z]*/gi, "БА"],
+    [/средн[А-Яа-яЁёA-Za-z]*\s+мозгов[А-Яа-яЁёA-Za-z]*\s+артери[А-Яа-яЁёA-Za-z]*/gi, "СМА"],
+    [/задн[А-Яа-яЁёA-Za-z]*\s+мозгов[А-Яа-яЁёA-Za-z]*\s+артери[А-Яа-яЁёA-Za-z]*/gi, "ЗМА"],
+    [/проксимальн[А-Яа-яЁёA-Za-z]*\s+сегмент[А-Яа-яЁёA-Za-z]*/gi, "пр/3"],
+    [/средн[А-Яа-яЁёA-Za-z]*\s+сегмент[А-Яа-яЁёA-Za-z]*/gi, "ср/3"],
+    [/дистальн[А-Яа-яЁёA-Za-z]*\s+сегмент[А-Яа-яЁёA-Za-z]*/gi, "д/3"]
+  ];
+  let operation = cleanClinicalText(value, true);
+  replacements.forEach(([pattern, replacement]) => {
+    operation = operation.replace(pattern, replacement);
+  });
+  operation = operation
+    .replace(/в\s+условиях/gi, "")
+    .replace(/бассейн[А-Яа-яЁёA-Za-z]*/gi, "")
+    .replace(/попытк[А-Яа-яЁёA-Za-z]*|\btry\b/gi, "поп.")
+    .replace(/справа/gi, "прав.")
+    .replace(/слева/gi, "лев.")
+    .replace(/(?:локальн|эндоваскулярн|трансартериальн|тотальн|селективн|транслюминальн|первичн)[А-Яа-яЁёA-Za-z]*/gi, "")
+    .replace(/(?:баллонн|механическ|артери|окклюзи|установк)[А-Яа-яЁёA-Za-z]*/gi, "")
+    .replace(/ТА\s*\/\s*ТА/gi, "ТА")
+    .replace(/\s+([,.;:])/g, "$1")
+    .replace(/([,;:])(?=[^\s\d])/g, "$1 ")
+    .replace(/\s{2,}/g, " ")
+    .trim()
+    .replace(/^[,;\s]+|[,;\s]+$/g, "");
+  return operation.length > 100 ? `${operation.slice(0, 97).trim()}...` : operation;
 }
 
 export function plannedRecommendation(value: string): string {
@@ -2044,21 +2120,13 @@ function ProtocolDescription({ description }: { description: string }) {
           </Text>
         </View>
       ) : null}
-      {sections.course ? (
-        <View style={styles.protocolCourse}>
-          <Text style={styles.detailLabel}>ХОД ОПЕРАЦИИ</Text>
-          <Text style={styles.detailDescription}>
-            {cleanClinicalText(sections.course)}
-          </Text>
-        </View>
-      ) : null}
       {recommendation ? (
         <View style={styles.protocolCourse}>
           <Text style={styles.detailLabel}>РЕКОМЕНДАЦИИ</Text>
           <Text style={styles.detailDescription}>{recommendation}</Text>
         </View>
       ) : null}
-      {!sections.conclusion && !sections.course ? (
+      {!sections.conclusion && !recommendation ? (
         <Text style={styles.detailDescription}>Описание пока не добавлено.</Text>
       ) : null}
     </View>
@@ -2125,7 +2193,9 @@ function AngiographyScreen({
   error,
   persistentCacheEnabled,
   dicomCache,
-  onRetry
+  onRetry,
+  onDeleteLocal,
+  onDeletePACS
 }: {
   compact: boolean;
   studies: Study[];
@@ -2134,11 +2204,14 @@ function AngiographyScreen({
   persistentCacheEnabled: boolean;
   dicomCache: DicomCacheSnapshot;
   onRetry: () => void;
+  onDeleteLocal: (study: Study) => Promise<void>;
+  onDeletePACS: (study: Study) => Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
   const [selected, setSelected] = useState<Study | null>(studies[0] ?? null);
   const [mobileViewer, setMobileViewer] = useState(false);
   const [studyFilter, setStudyFilter] = useState<"xa" | "ct">("xa");
+  const [actionStudy, setActionStudy] = useState<Study | null>(null);
   useEffect(() => {
     if (!selected && studies[0]) setSelected(studies[0]);
   }, [selected, studies]);
@@ -2273,11 +2346,36 @@ function AngiographyScreen({
                         color={colors.success}
                       />
                     </View>
-                    <Icon
-                      name={compact ? "chevron-forward" : "server-outline"}
-                      size={17}
-                      color={darkColors.textDim}
-                    />
+                    {compact ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Действия с ${study.patient}`}
+                        hitSlop={10}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          setActionStudy(study);
+                        }}
+                        style={styles.angioRowAction}
+                      >
+                        <Icon name="ellipsis-horizontal" size={20} color={darkColors.textMuted} />
+                      </Pressable>
+                    ) : (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Удалить ${study.patient} из PACS`}
+                        hitSlop={10}
+                        onPress={(event) => {
+                          event.stopPropagation();
+                          confirmDeleteAll(
+                            `Удалить исследование ${study.patient} из PACS?`,
+                            () => void onDeletePACS(study)
+                          );
+                        }}
+                        style={styles.angioRowAction}
+                      >
+                        <Icon name="trash-outline" size={18} color={colors.danger} />
+                      </Pressable>
+                    )}
                   </Pressable>
                 );
               })}
@@ -2366,17 +2464,53 @@ function AngiographyScreen({
                       {selected.study_type.toUpperCase()}
                     </Text>
                   </View>
-                  <View style={styles.mobileViewerModality}>
-                    <Text style={styles.mobileViewerModalityText}>
-                      {selected.study_type.toUpperCase()}
-                    </Text>
-                  </View>
                 </View>
               </>
             ) : null}
           </SafeAreaView>
         </Modal>
       ) : null}
+
+      <Sheet
+        visible={compact && Boolean(actionStudy)}
+        title={actionStudy?.patient || "Ангиография"}
+        onClose={() => setActionStudy(null)}
+      >
+        <View style={styles.angioActionSheet}>
+          <Pressable
+            onPress={() => {
+              const study = actionStudy;
+              setActionStudy(null);
+              if (!study) return;
+              confirmDeleteAll(
+                `Удалить сохранённые файлы ${study.patient} только с этого устройства?`,
+                () => void onDeleteLocal(study)
+              );
+            }}
+            style={styles.angioActionButton}
+          >
+            <Icon name="phone-portrait-outline" size={21} color={colors.text} />
+            <Text style={styles.angioActionText}>Удалить локально</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              const study = actionStudy;
+              setActionStudy(null);
+              if (!study) return;
+              confirmDeleteAll(
+                `Безвозвратно удалить исследование ${study.patient} из PACS?`,
+                () => void onDeletePACS(study)
+              );
+            }}
+            style={[styles.angioActionButton, styles.angioActionDanger]}
+          >
+            <Icon name="trash-outline" size={21} color={colors.danger} />
+            <Text style={[styles.angioActionText, styles.angioActionDangerText]}>
+              Удалить из PACS
+            </Text>
+          </Pressable>
+        </View>
+      </Sheet>
     </View>
   );
 }
@@ -3669,9 +3803,6 @@ function SettingsScreen({
   );
   const [newAgentId, setNewAgentId] = useState("");
   const [userId, setUserId] = useState(settings.userId);
-  const [autoDownloadAngiography, setAutoDownloadAngiography] = useState(
-    settings.autoDownloadAngiography
-  );
 
   const addAgent = () => {
     const id = Number.parseInt(newAgentId, 10);
@@ -3797,7 +3928,7 @@ function SettingsScreen({
                 agentIds,
                 selectedAgentIds,
                 userId,
-                autoDownloadAngiography
+                autoDownloadAngiography: true
               })
             }
           />
@@ -3808,48 +3939,10 @@ function SettingsScreen({
             <Text style={styles.settingsTitle}>Ангиографии на устройстве</Text>
             <Text style={styles.settingsDescription}>
               Сервер заранее готовит cine каждой XA-серии, а приложение
-              сохраняет их локально. Точные кадры подгружаются при паузе и
-              ручной прокрутке.
+              автоматически сохраняет их локально. Точные кадры выбранной
+              серии подготавливаются в фоне для паузы и ручной прокрутки.
             </Text>
           </View>
-          <Pressable
-            accessibilityRole="switch"
-            accessibilityState={{ checked: autoDownloadAngiography }}
-            onPress={() => {
-              const enabled = !autoDownloadAngiography;
-              setAutoDownloadAngiography(enabled);
-              onSave({
-                ...settings,
-                autoDownloadAngiography: enabled
-              });
-            }}
-            style={({ pressed }) => [
-              styles.cacheToggleRow,
-              pressed && styles.pressed
-            ]}
-          >
-            <View style={styles.cacheToggleCopy}>
-              <Text style={styles.agentRowTitle}>Автозагрузка XA</Text>
-              <Text style={styles.requestMetaText}>
-                {autoDownloadAngiography
-                  ? "Новые исследования будут сохранены автоматически"
-                  : "Cine загружается во время просмотра"}
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.cacheSwitch,
-                autoDownloadAngiography && styles.cacheSwitchActive
-              ]}
-            >
-              <View
-                style={[
-                  styles.cacheSwitchThumb,
-                  autoDownloadAngiography && styles.cacheSwitchThumbActive
-                ]}
-              />
-            </View>
-          </Pressable>
           <View style={styles.cacheUsage}>
             <View>
               <Text style={styles.requestMetaText}>Занято на устройстве</Text>
@@ -3873,12 +3966,12 @@ function SettingsScreen({
           ) : null}
           {dicomCache.totalBytes > 0 ? (
             <Button
-              label="Очистить сохранённые XA"
+              label="Очистить сохранённые XA и захваты"
               variant="secondary"
               icon="trash-outline"
               onPress={() =>
                 confirmDeleteAll(
-                  "Удалить сохранённые XA-кадры с этого устройства?",
+                  "Удалить сохранённые XA и захваты кадров с этого устройства?",
                   onClearCache
                 )
               }
@@ -4792,23 +4885,47 @@ const styles = StyleSheet.create({
   angioWorkspace: { flex: 1, flexDirection: "row", gap: 12, minHeight: 0 },
   angioWorkspaceCompact: { flexDirection: "column" },
   angioList: {
-    width: "26%",
-    minWidth: 0,
-    maxWidth: 360,
-    flexGrow: 0,
-    backgroundColor: "transparent"
-  },
-  angioListCompact: { width: "100%", minWidth: 0, maxWidth: "100%" },
-  angioListContent: { gap: 6, paddingBottom: 8 },
-  angioDesktopViewer: {
     flex: 1,
     minWidth: 0,
+    backgroundColor: "transparent"
+  },
+  angioListCompact: { flex: 1, width: "100%", minWidth: 0, maxWidth: "100%" },
+  angioListContent: { gap: 6, paddingBottom: 8 },
+  angioDesktopViewer: {
+    width: "58%",
+    maxWidth: 900,
+    minWidth: 560,
+    maxHeight: "100%",
+    aspectRatio: 1.28,
+    alignSelf: "center",
+    flexGrow: 0,
+    flexShrink: 1,
     overflow: "hidden",
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: darkColors.borderSoft,
     backgroundColor: "#05080B"
   },
+  angioRowAction: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  angioActionSheet: { gap: 10, paddingBottom: 8 },
+  angioActionButton: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSoft
+  },
+  angioActionText: { ...typography.body, fontWeight: "600", color: colors.text },
+  angioActionDanger: { backgroundColor: colors.dangerSoft },
+  angioActionDangerText: { color: colors.danger },
   angioCTPlaceholder: {
     flex: 1,
     alignItems: "center",
@@ -4953,22 +5070,6 @@ const styles = StyleSheet.create({
   },
   mobileViewerPatient: { ...typography.label, color: darkColors.text },
   mobileViewerMeta: { fontSize: 10, color: darkColors.textDim, marginTop: 1 },
-  mobileViewerModality: {
-    minWidth: 44,
-    height: 44,
-    paddingHorizontal: 9,
-    borderRadius: 17,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(53,194,255,0.16)",
-    borderWidth: 1,
-    borderColor: "rgba(53,194,255,0.4)"
-  },
-  mobileViewerModalityText: {
-    color: darkColors.primary,
-    fontSize: 11,
-    fontWeight: "800"
-  },
   infoBanner: {
     flexDirection: "row",
     gap: 10,

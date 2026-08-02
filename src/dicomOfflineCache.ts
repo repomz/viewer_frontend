@@ -12,6 +12,7 @@ import {
 const CACHE_NAME = "viewer-xa-media-v3";
 const INDEX_KEY = "viewer.xa-cache-index.v3";
 const EXPECTED_KEY = "viewer.xa-cache-expected.v3";
+const CAPTURE_INDEX_KEY = "viewer.xa-captures-index.v1";
 
 type CacheEntry = {
   studyUID: string;
@@ -21,6 +22,23 @@ type CacheEntry = {
 
 type CacheIndex = Record<string, CacheEntry>;
 type ExpectedFrames = Record<string, number>;
+type CaptureIndex = Record<
+  string,
+  {
+    studyUID: string;
+    bytes: number;
+    filename: string;
+    createdAt: string;
+  }
+>;
+
+export type StoredXACapture = {
+  id: string;
+  studyUID: string;
+  filename: string;
+  createdAt: string;
+  blob: Blob;
+};
 
 export type StudyCacheInfo = {
   bytes: number;
@@ -114,6 +132,84 @@ async function clearIndexedFrames(): Promise<void> {
     transaction.onerror = () => reject(transaction.error);
   });
   database.close();
+}
+
+function openCaptureDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (!hasIndexedDB()) {
+      reject(new Error("IndexedDB недоступен"));
+      return;
+    }
+    const request = window.indexedDB.open("viewer-xa-captures-v1", 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains("captures")) {
+        request.result.createObjectStore("captures", { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function saveXACapture(
+  capture: StoredXACapture
+): Promise<void> {
+  const database = await openCaptureDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction("captures", "readwrite");
+    transaction.objectStore("captures").put(capture);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+  const index = readRecord<CaptureIndex>(CAPTURE_INDEX_KEY);
+  index[capture.id] = {
+    studyUID: capture.studyUID,
+    bytes: capture.blob.size,
+    filename: capture.filename,
+    createdAt: capture.createdAt
+  };
+  writeRecord(CAPTURE_INDEX_KEY, index);
+  emit();
+}
+
+export async function loadXACaptures(
+  studyUID: string
+): Promise<StoredXACapture[]> {
+  if (!hasIndexedDB()) return [];
+  const database = await openCaptureDatabase();
+  const captures = await new Promise<StoredXACapture[]>((resolve, reject) => {
+    const transaction = database.transaction("captures", "readonly");
+    const request = transaction.objectStore("captures").getAll();
+    request.onsuccess = () =>
+      resolve(
+        (request.result as StoredXACapture[])
+          .filter((capture) => capture.studyUID === studyUID)
+          .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      );
+    request.onerror = () => reject(request.error);
+  });
+  database.close();
+  return captures;
+}
+
+async function deleteXACaptures(studyUID?: string): Promise<void> {
+  if (!hasIndexedDB()) return;
+  const database = await openCaptureDatabase();
+  const index = readRecord<CaptureIndex>(CAPTURE_INDEX_KEY);
+  const ids = Object.entries(index)
+    .filter(([, entry]) => !studyUID || entry.studyUID === studyUID)
+    .map(([id]) => id);
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction("captures", "readwrite");
+    const store = transaction.objectStore("captures");
+    ids.forEach((id) => store.delete(id));
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  database.close();
+  ids.forEach((id) => delete index[id]);
+  writeRecord(CAPTURE_INDEX_KEY, index);
 }
 
 function readRecord<T extends Record<string, unknown>>(key: string): T {
@@ -346,6 +442,12 @@ export function getDicomCacheSnapshot(): DicomCacheSnapshot {
     studies[studyUID] = current;
   });
 
+  Object.values(readRecord<CaptureIndex>(CAPTURE_INDEX_KEY)).forEach(
+    (capture) => {
+      if (capture && Number.isFinite(capture.bytes)) totalBytes += capture.bytes;
+    }
+  );
+
   return { supported: supported(), totalBytes, studies };
 }
 
@@ -543,6 +645,36 @@ export function cancelDicomDownloads(): void {
   downloadControllers.forEach((controller) => controller.abort());
 }
 
+export async function deleteStudyFromDevice(studyUID: string): Promise<void> {
+  if (!supported()) return;
+  const index = readRecord<CacheIndex>(INDEX_KEY);
+  const urls = Object.entries(index)
+    .filter(([, entry]) => entry.studyUID === studyUID)
+    .map(([url]) => url);
+  if (hasCacheAPI()) {
+    const cache = await window.caches.open(CACHE_NAME).catch(() => null);
+    if (cache) await Promise.all(urls.map((url) => cache.delete(url)));
+  }
+  if (hasIndexedDB()) {
+    const database = await openFrameDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("frames", "readwrite");
+      const store = transaction.objectStore("frames");
+      urls.forEach((url) => store.delete(url));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  }
+  urls.forEach((url) => delete index[url]);
+  writeRecord(INDEX_KEY, index);
+  const expected = readRecord<ExpectedFrames>(EXPECTED_KEY);
+  delete expected[studyUID];
+  writeRecord(EXPECTED_KEY, expected);
+  await deleteXACaptures(studyUID).catch(() => undefined);
+  emit();
+}
+
 export async function clearDicomCache(): Promise<void> {
   if (!supported()) return;
   if (hasCacheAPI()) {
@@ -551,8 +683,10 @@ export async function clearDicomCache(): Promise<void> {
     await window.caches.delete("viewer-xa-frames-v1").catch(() => false);
   }
   await clearIndexedFrames().catch(() => undefined);
+  await deleteXACaptures().catch(() => undefined);
   window.localStorage.removeItem(INDEX_KEY);
   window.localStorage.removeItem(EXPECTED_KEY);
+  window.localStorage.removeItem(CAPTURE_INDEX_KEY);
   window.localStorage.removeItem("viewer.xa-cache-index.v2");
   window.localStorage.removeItem("viewer.xa-cache-expected.v2");
   window.localStorage.removeItem("viewer.xa-cache-index.v1");
