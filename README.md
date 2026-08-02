@@ -78,10 +78,16 @@ docker run --rm -p 5173:8080 \
 
 Workflow `.github/workflows/docker-publish.yml` автоматически собирает
 `linux/amd64` и `linux/arm64` и публикует теги при push в `main`, создании тега
-`v*` или ручном запуске. В GitHub необходимо добавить repository secrets:
+`v*` или ручном запуске. Образ всегда публикуется как
+`ghcr.io/repomz/viewer_frontend`; для дополнительного зеркала в Docker Hub
+используются repository secrets:
 
 - `DOCKERHUB_USERNAME` — `idrisovmarat`;
 - `DOCKERHUB_TOKEN` — access token Docker Hub с правом записи.
+
+Без `DOCKERHUB_TOKEN` workflow остаётся успешным: Docker Hub пропускается, а
+готовый образ публикуется в GHCR. Secrets добавляются в `Settings → Secrets
+and variables → Actions` репозитория GitHub.
 
 Опциональная repository variable `EXPO_PUBLIC_OHIF_URL` изменяет адрес OHIF,
 встраиваемый в web bundle.
