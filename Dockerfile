@@ -10,8 +10,6 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile=false
 
 FROM dependencies AS build
-ARG EXPO_PUBLIC_OHIF_URL=http://135.106.130.37:3000
-ENV EXPO_PUBLIC_OHIF_URL=$EXPO_PUBLIC_OHIF_URL
 ENV NODE_ENV=production
 COPY . .
 RUN pnpm run typecheck && pnpm run build
@@ -33,4 +31,4 @@ USER 101
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
-CMD ["/bin/sh", "-c", "envsubst '$BACKEND_URL $OHIF_URL' < /etc/nginx/frontend.conf.template > /tmp/default.conf && exec nginx -c /tmp/default.conf -g 'daemon off;'"]
+CMD ["/bin/sh", "-c", "envsubst '$BACKEND_URL $PACS_URL $PACS_AUTHORIZATION' < /etc/nginx/frontend.conf.template > /tmp/default.conf && exec nginx -c /tmp/default.conf -g 'daemon off;'"]

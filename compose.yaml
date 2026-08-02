@@ -7,12 +7,12 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        EXPO_PUBLIC_OHIF_URL: ${EXPO_PUBLIC_OHIF_URL:-http://135.106.130.37:3000}
         VERSION: ${IMAGE_VERSION:-0.1.0}
         VCS_REF: ${VCS_REF:-unknown}
     environment:
       BACKEND_URL: ${BACKEND_URL:-http://135.106.130.37:8080}
-      OHIF_URL: ${OHIF_URL:-http://135.106.130.37:3000}
+      PACS_URL: ${PACS_URL:-http://135.106.130.37:8042}
+      PACS_AUTHORIZATION: ${PACS_AUTHORIZATION:-Basic bWFwZHI6Y2hhbmdlc3Ryb25ncGFzc3dvcmQ=}
     ports:
       - "${FRONTEND_PORT:-5173}:8080"
     restart: unless-stopped

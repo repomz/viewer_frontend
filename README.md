@@ -34,27 +34,20 @@ docker compose up --build --wait
 Приложение откроется на [http://localhost:5173](http://localhost:5173).
 
 По умолчанию proxy подключается к действующему backend
-`http://135.106.130.37:8080`, а DICOMweb и desktop OHIF — к
-`http://135.106.130.37:3000`. Эти значения можно изменить в `.env`:
+`http://135.106.130.37:8080`, а DICOMweb — напрямую к Orthanc PACS на
+`http://135.106.130.37:8042`. Эти значения можно изменить в `.env`:
 
 ```dotenv
 BACKEND_URL=http://SERVER:8080
-OHIF_URL=http://SERVER:3000
-EXPO_PUBLIC_OHIF_URL=http://SERVER:3000
+PACS_URL=http://SERVER:8042
+PACS_AUTHORIZATION=Basic BASE64_USER_PASSWORD
 FRONTEND_PORT=5173
 ```
 
-После изменения `EXPO_PUBLIC_OHIF_URL` образ нужно пересобрать, потому что этот
-адрес встраивается в web bundle:
-
-```bash
-docker compose up -d --build
-```
-
-`BACKEND_URL` и `OHIF_URL` применяются при старте контейнера и пересборки не
-требуют. Мобильный просмотр XA использует собственный cine-интерфейс и
-покадровый DICOMweb Rendered через same-origin `/dicom-web`; OHIF остаётся
-desktop-просмотрщиком.
+`BACKEND_URL`, `PACS_URL` и `PACS_AUTHORIZATION` применяются при старте
+контейнера и пересборки не требуют. Просмотр XA использует собственный
+cine-интерфейс и покадровый DICOMweb Rendered через same-origin `/dicom-web`.
+Orthanc остаётся PACS, отдельный OHIF-контейнер не используется.
 
 ## Docker Hub
 
@@ -72,7 +65,8 @@ docker.io/idrisovmarat/viewer_frontend:latest
 docker pull idrisovmarat/viewer_frontend:0.1.0
 docker run --rm -p 5173:8080 \
   -e BACKEND_URL=http://135.106.130.37:8080 \
-  -e OHIF_URL=http://135.106.130.37:3000 \
+  -e PACS_URL=http://135.106.130.37:8042 \
+  -e 'PACS_AUTHORIZATION=Basic bWFwZHI6Y2hhbmdlc3Ryb25ncGFzc3dvcmQ=' \
   idrisovmarat/viewer_frontend:0.1.0
 ```
 
@@ -88,9 +82,6 @@ Workflow `.github/workflows/docker-publish.yml` автоматически со�
 Без `DOCKERHUB_TOKEN` workflow остаётся успешным: Docker Hub пропускается, а
 готовый образ публикуется в GHCR. Secrets добавляются в `Settings → Secrets
 and variables → Actions` репозитория GitHub.
-
-Опциональная repository variable `EXPO_PUBLIC_OHIF_URL` изменяет адрес OHIF,
-встраиваемый в web bundle.
 
 ## Локальная разработка
 

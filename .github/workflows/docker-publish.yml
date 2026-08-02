@@ -19,7 +19,6 @@ concurrency:
 env:
   GHCR_IMAGE: ghcr.io/repomz/viewer_frontend
   DOCKERHUB_IMAGE: idrisovmarat/viewer_frontend
-  DEFAULT_OHIF_URL: http://135.106.130.37:3000
 
 jobs:
   publish:
@@ -72,7 +71,6 @@ jobs:
           tags: ${{ steps.ghcr-meta.outputs.tags }}
           labels: ${{ steps.ghcr-meta.outputs.labels }}
           build-args: |
-            EXPO_PUBLIC_OHIF_URL=${{ vars.EXPO_PUBLIC_OHIF_URL || env.DEFAULT_OHIF_URL }}
             VERSION=${{ steps.ghcr-meta.outputs.version }}
             VCS_REF=${{ github.sha }}
           cache-from: type=gha
@@ -102,7 +100,6 @@ jobs:
           tags: ${{ steps.dockerhub-meta.outputs.tags }}
           labels: ${{ steps.dockerhub-meta.outputs.labels }}
           build-args: |
-            EXPO_PUBLIC_OHIF_URL=${{ vars.EXPO_PUBLIC_OHIF_URL || env.DEFAULT_OHIF_URL }}
             VERSION=${{ steps.dockerhub-meta.outputs.version }}
             VCS_REF=${{ github.sha }}
           cache-from: type=gha

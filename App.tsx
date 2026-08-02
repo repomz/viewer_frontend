@@ -7,7 +7,6 @@ import {
   Alert,
   Image,
   Keyboard,
-  Linking,
   Modal,
   PanResponder,
   Platform,
@@ -661,7 +660,7 @@ export default function App() {
   }, [updateAgentHealth, updateServerHealth]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setLaunchDelayElapsed(true), 3_000);
+    const timer = setTimeout(() => setLaunchDelayElapsed(true), 1_000);
     return () => clearTimeout(timer);
   }, []);
 
@@ -793,7 +792,7 @@ export default function App() {
   }, [activeTab, authenticated]);
 
   useEffect(() => {
-    if (!appReady || !launchDelayElapsed) return;
+    if (!launchDelayElapsed) return;
     if (Platform.OS === "web") {
       const preboot = document.getElementById("viewer-preboot");
       if (preboot) {
@@ -804,7 +803,7 @@ export default function App() {
       return;
     }
     void SplashScreen.hideAsync().catch(() => undefined);
-  }, [appReady, launchDelayElapsed]);
+  }, [launchDelayElapsed]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -1116,6 +1115,7 @@ export default function App() {
           compact={compact}
           ready={appReady}
           entering={enterRequested && !appReady}
+          revealForm={launchDelayElapsed}
           onEnter={() => {
             if (appReady) setAuthenticated(true);
             else setEnterRequested(true);
@@ -1350,16 +1350,36 @@ function LoginScreen({
   compact,
   ready,
   entering,
+  revealForm,
   onEnter
 }: {
   compact: boolean;
   ready: boolean;
   entering: boolean;
+  revealForm: boolean;
   onEnter: () => void;
 }) {
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [backgroundReady, setBackgroundReady] = useState(false);
+  const formOpacity = useRef(new Animated.Value(0)).current;
+  const formOffset = useRef(new Animated.Value(14)).current;
+
+  useEffect(() => {
+    if (!revealForm) return;
+    Animated.parallel([
+      Animated.timing(formOpacity, {
+        toValue: 1,
+        duration: 650,
+        useNativeDriver: Platform.OS !== "web"
+      }),
+      Animated.timing(formOffset, {
+        toValue: 0,
+        duration: 650,
+        useNativeDriver: Platform.OS !== "web"
+      })
+    ]).start();
+  }, [formOffset, formOpacity, revealForm]);
 
   return (
     <SafeAreaView style={styles.loginSafe} edges={["top", "bottom"]}>
@@ -1400,7 +1420,13 @@ function LoginScreen({
               <Text style={styles.loginBrandCaption}>CLINICAL WORKSPACE</Text>
             </View>
           </View>
-          <View style={styles.loginForm}>
+          <Animated.View
+            pointerEvents={revealForm ? "auto" : "none"}
+            style={[
+              styles.loginForm,
+              { opacity: formOpacity, transform: [{ translateY: formOffset }] }
+            ]}
+          >
             <View style={styles.loginHeadingRow}>
               <Text style={styles.loginTitle}>Вход</Text>
               <Pressable
@@ -1477,7 +1503,7 @@ function LoginScreen({
               Авторизация будет подключена позднее. Сейчас вход выполняется без
               проверки данных.
             </Text>
-          </View>
+          </Animated.View>
         </View>
       </View>
     </SafeAreaView>
@@ -3695,23 +3721,6 @@ function MobileMenu({
                 styles.drawerItem,
                 pressed && styles.pressed
               ]}
-              onPress={() => {
-                onClose();
-                void Linking.openURL(
-                  process.env.EXPO_PUBLIC_OHIF_URL ??
-                    "http://135.106.130.37:3000"
-                );
-              }}
-            >
-              <Icon name="desktop-outline" color={colors.textMuted} />
-              <Text style={styles.drawerItemText}>OHIF Viewer</Text>
-              <Icon name="open-outline" size={17} color={colors.textDim} />
-            </Pressable>
-            <Pressable
-              style={({ pressed }) => [
-                styles.drawerItem,
-                pressed && styles.pressed
-              ]}
               onPress={onSettings}
             >
               <Icon name="options-outline" color={colors.textMuted} />
@@ -3797,22 +3806,11 @@ function SettingsScreen({
   onCheck: () => void;
   onClearCache: () => void;
 }) {
-  const [agentIds, setAgentIds] = useState(settings.agentIds);
+  const [agentIds] = useState(settings.agentIds);
   const [selectedAgentIds, setSelectedAgentIds] = useState(
     settings.selectedAgentIds
   );
-  const [newAgentId, setNewAgentId] = useState("");
   const [userId, setUserId] = useState(settings.userId);
-
-  const addAgent = () => {
-    const id = Number.parseInt(newAgentId, 10);
-    if (!Number.isInteger(id) || id <= 0 || agentIds.includes(id)) return;
-    setAgentIds((current) => [...current, id]);
-    setSelectedAgentIds((current) =>
-      current.length < 2 ? [...current, id] : current
-    );
-    setNewAgentId("");
-  };
 
   const toggleAgent = (id: number) => {
     setSelectedAgentIds((current) => {
@@ -3895,23 +3893,6 @@ function SettingsScreen({
                 </Pressable>
               );
             })}
-          </View>
-          <View style={styles.addAgentRow}>
-            <Field
-              label="Добавить Agent ID"
-              value={newAgentId}
-              onChangeText={setNewAgentId}
-              keyboardType="number-pad"
-              placeholder="Например, 3"
-              style={styles.agentIdField}
-            />
-            <Button
-              label="Добавить"
-              variant="secondary"
-              compact
-              onPress={addAgent}
-              disabled={!newAgentId.trim()}
-            />
           </View>
           <Field
             label="Идентификатор пользователя"
@@ -5473,12 +5454,6 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   cacheUsageMeta: { ...typography.meta, color: colors.primary },
-  addAgentRow: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8
-  },
-  agentIdField: { flex: 1, minWidth: 0 },
   securityCard: {
     maxWidth: 874,
     flexDirection: "row",
