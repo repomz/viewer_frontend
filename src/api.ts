@@ -195,6 +195,23 @@ export async function getReports(agentId?: number): Promise<ReportDocument[]> {
     : [];
 }
 
+export async function generateReport(input: {
+  agentId: number;
+  days?: number;
+  dateFrom?: string;
+  dateTo?: string;
+}): Promise<ReportDocument> {
+  return request<ReportDocument>("/reports/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_id: input.agentId,
+      ...(input.days ? { days: input.days } : {}),
+      ...(input.dateFrom ? { date_from: input.dateFrom } : {}),
+      ...(input.dateTo ? { date_to: input.dateTo } : {})
+    })
+  }, 30_000);
+}
+
 export async function getOperationPlan(
   weekStart?: string
 ): Promise<OperationPlan> {

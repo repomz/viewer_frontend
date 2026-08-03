@@ -1,6 +1,7 @@
 import {
   checkHealth,
   deletePACSStudy,
+  generateReport,
   getAgentHeartbeatTimes,
   getOperationPlan,
   getStudies
@@ -97,6 +98,33 @@ describe("Viewer API client", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/pacs/studies/1.2.840.1",
       expect.objectContaining({ method: "DELETE", signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("generates a report on backend for a calendar period", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ filename: "report.json" }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await generateReport({
+      agentId: 2,
+      dateFrom: "2026-07-27",
+      dateTo: "2026-08-02"
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/reports/generate",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          agent_id: 2,
+          date_from: "2026-07-27",
+          date_to: "2026-08-02"
+        })
+      })
     );
   });
 });

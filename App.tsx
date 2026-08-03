@@ -37,6 +37,7 @@ import {
   deleteUserRequest,
   getAgentHeartbeatTimes,
   getAgents,
+  generateReport,
   getOperationPlan,
   getReports,
   getStudies,
@@ -108,7 +109,7 @@ if (Platform.OS !== "web") {
 
 type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "logs" | "settings";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
-type DayFilter = "all" | "1" | "2" | "3" | "4" | "5";
+type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudyCategory =
   | "all"
   | "КАГ"
@@ -163,13 +164,14 @@ const desktopTabs = [
   }
 ];
 
-const dayFilters: { id: DayFilter; label: string }[] = [
-  { id: "all", label: "Все" },
+const dayFilters: { id: NonNullable<DayFilter>; label: string }[] = [
   { id: "1", label: "Пн" },
   { id: "2", label: "Вт" },
   { id: "3", label: "Ср" },
   { id: "4", label: "Чт" },
-  { id: "5", label: "Пт" }
+  { id: "5", label: "Пт" },
+  { id: "6", label: "Сб" },
+  { id: "7", label: "Вс" }
 ];
 
 const studyCategories: StudyCategory[] = [
@@ -185,7 +187,6 @@ const studyCategories: StudyCategory[] = [
 ];
 
 const commandLabels: Record<AgentCommand, string> = {
-  get_report: "Получить отчёт",
   sync_studies: "Проверить новые протоколы",
   find_study: "Найти протокол",
   import_study: "Загрузить выбранный протокол",
@@ -252,6 +253,13 @@ function formatDate(value?: string, withTime = false): string {
     year: "numeric",
     ...(withTime ? { hour: "2-digit", minute: "2-digit" } : {})
   }).format(date);
+}
+
+function localDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function operationPlanWeekStart(offsetWeeks = 0): string {
@@ -473,7 +481,7 @@ export default function App() {
   const [studiesLoading, setStudiesLoading] = useState(true);
   const [studiesError, setStudiesError] = useState("");
   const [search, setSearch] = useState("");
-  const [dayFilter, setDayFilter] = useState<DayFilter>("all");
+  const [dayFilter, setDayFilter] = useState<DayFilter>(null);
   const [category, setCategory] = useState<StudyCategory>("all");
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
@@ -484,6 +492,7 @@ export default function App() {
   const [reports, setReports] = useState<ReportDocument[]>([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsError, setReportsError] = useState("");
+  const [reportGenerating, setReportGenerating] = useState(false);
   const [health, setHealth] = useState<ApiHealth | null>(null);
   const [agentHealthById, setAgentHealthById] = useState<
     Record<number, AgentHealth>
@@ -831,7 +840,6 @@ export default function App() {
 
   useEffect(() => {
     if (!authenticated) return;
-    const reportRefreshTimers: ReturnType<typeof setTimeout>[] = [];
     const newlyCompleted = requests.filter(
       (request) =>
         request.status === "completed" &&
@@ -845,16 +853,7 @@ export default function App() {
       void loadStudies();
       void loadXAStudies();
     }
-    if (newlyCompleted.some((request) => request.command === "get_report")) {
-      [0, 1_500, 4_000, 8_000].forEach((delay) => {
-        reportRefreshTimers.push(
-          setTimeout(() => void loadReports(), delay)
-        );
-      });
-    }
-    return () =>
-      reportRefreshTimers.forEach((timer) => clearTimeout(timer));
-  }, [authenticated, loadReports, loadStudies, loadXAStudies, requests]);
+  }, [authenticated, loadStudies, loadXAStudies, requests]);
 
   useEffect(
     () =>
@@ -939,7 +938,8 @@ export default function App() {
     return protocolStudies.filter((study) => {
       const date = new Date(study.time_beginning);
       const weekday = Number.isNaN(date.getTime()) ? 0 : date.getDay();
-      if (dayFilter !== "all" && weekday !== Number(dayFilter)) return false;
+      const isoWeekday = weekday === 0 ? 7 : weekday;
+      if (dayFilter && isoWeekday !== Number(dayFilter)) return false;
       if (category !== "all" && studyCategory(study) !== category) return false;
       if (!query) return true;
       return [
@@ -1074,15 +1074,28 @@ export default function App() {
     }
   }, []);
 
+  const createReport = useCallback(async (period: {
+    days?: number;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Promise<boolean> => {
+    setReportGenerating(true);
+    try {
+      await generateReport({ agentId: settings.agentId, ...period });
+      await loadReports();
+      setToast({ message: "Отчёт сформирован", tone: "success" });
+      return true;
+    } catch (error) {
+      setToast({ message: errorMessage(error), tone: "danger" });
+      return false;
+    } finally {
+      setReportGenerating(false);
+    }
+  }, [loadReports, settings.agentId]);
+
   const primaryAgentHealth =
     agentHealthById[settings.agentId] ??
     ({ online: false, status: "unknown" } satisfies AgentHealth);
-  const reportRequestPending = requests.some(
-    (request) =>
-      request.command === "get_report" &&
-      !terminalStatuses.has(request.status)
-  );
-
   const switchTab = useCallback((direction: -1 | 1) => {
     const current = tabs.findIndex((tab) => tab.id === activeTab);
     const next = current + direction;
@@ -1168,7 +1181,9 @@ export default function App() {
                   category={category}
                   selected={selectedStudy}
                   onSearch={setSearch}
-                  onDayFilter={setDayFilter}
+                  onDayFilter={(value) =>
+                    setDayFilter((current) => current === value ? null : value)
+                  }
                   onFilter={() => setFilterOpen(true)}
                   onSelect={setSelectedStudy}
                   onRetry={() => void loadStudies()}
@@ -1230,10 +1245,8 @@ export default function App() {
                   error={reportsError}
                   onRetry={() => void loadReports()}
                   onRefresh={() => void loadReports()}
-                  onRequest={() =>
-                    void submitCommand("get_report", { period: 1 })
-                  }
-                  requesting={reportRequestPending}
+                  onGenerate={createReport}
+                  generating={reportGenerating}
                   onDelete={(report) => void removeReport(report)}
                   onForward={(report) => void shareReport(report)}
                 />
@@ -1829,7 +1842,7 @@ function StudiesScreen({
   category: StudyCategory;
   selected: Study | null;
   onSearch: (value: string) => void;
-  onDayFilter: (value: DayFilter) => void;
+  onDayFilter: (value: NonNullable<DayFilter>) => void;
   onFilter: () => void;
   onSelect: (study: Study | null) => void;
   onRetry: () => void;
@@ -1869,21 +1882,6 @@ function StudiesScreen({
               onPress={() => onDayFilter(item.id)}
             />
           ))}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Фильтр по типу операции"
-            onPress={onFilter}
-            style={[
-              styles.filterChipButton,
-              category !== "all" && styles.filterChipButtonActive
-            ]}
-          >
-            <Icon
-              name="options-outline"
-              size={17}
-              color={category !== "all" ? colors.primary : colors.textMuted}
-            />
-          </Pressable>
         </ScrollView>
       </View>
 
@@ -2833,8 +2831,8 @@ function ReportsScreen({
   error,
   onRetry,
   onRefresh,
-  onRequest,
-  requesting,
+  onGenerate,
+  generating,
   onDelete,
   onForward
 }: {
@@ -2844,8 +2842,12 @@ function ReportsScreen({
   error: string;
   onRetry: () => void;
   onRefresh: () => void;
-  onRequest: () => void;
-  requesting: boolean;
+  onGenerate: (period: {
+    days?: number;
+    dateFrom?: string;
+    dateTo?: string;
+  }) => Promise<boolean>;
+  generating: boolean;
   onDelete: (report: ReportDocument) => void;
   onForward: (report: ReportDocument) => void;
 }) {
@@ -2853,6 +2855,7 @@ function ReportsScreen({
     reports[0] ?? null
   );
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [periodOpen, setPeriodOpen] = useState(false);
 
   useEffect(() => {
     if (!selected && reports[0]) setSelected(reports[0]);
@@ -2872,20 +2875,20 @@ function ReportsScreen({
         ]}
       >
         <View style={styles.compactScreenHeading}>
-          <Text style={styles.compactScreenTitle}>Отчёты дежурств</Text>
+          <Text style={styles.compactScreenTitle}>Отчёты</Text>
           <Text style={styles.compactScreenMeta}>{reports.length} записей</Text>
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={requesting ? "Отчёт формируется" : "Запросить отчёт"}
-          disabled={requesting}
-          onPress={onRequest}
+          accessibilityLabel={generating ? "Отчёт формируется" : "Сформировать отчёт"}
+          disabled={generating}
+          onPress={() => setPeriodOpen(true)}
           style={[
             styles.reportRequestButton,
-            requesting && styles.reportRequestButtonPending
+            generating && styles.reportRequestButtonPending
           ]}
         >
-          {requesting ? (
+          {generating ? (
             <ActivityIndicator size="small" color={colors.primary} />
           ) : (
             <Icon name="add" size={22} color={colors.primary} />
@@ -2943,8 +2946,8 @@ function ReportsScreen({
         <EmptyState
           icon="document-text-outline"
           title="Отчётов пока нет"
-          description="Запросите формирование отчёта у больничного агента."
-          action={<Button label="Запросить отчёт" onPress={onRequest} />}
+          description="Сформируйте отчёт из протоколов операций и операционного плана."
+          action={<Button label="Сформировать отчёт" onPress={() => setPeriodOpen(true)} />}
         />
       )}
       {compact ? (
@@ -2961,7 +2964,172 @@ function ReportsScreen({
           ) : null}
         </Sheet>
       ) : null}
+      <ReportPeriodSheet
+        visible={periodOpen}
+        compact={compact}
+        generating={generating}
+        onClose={() => setPeriodOpen(false)}
+        onGenerate={async (period) => {
+          const created = await onGenerate(period);
+          if (created) setPeriodOpen(false);
+          return created;
+        }}
+      />
     </View>
+  );
+}
+
+function ReportPeriodSheet({
+  visible,
+  compact,
+  generating,
+  onClose,
+  onGenerate
+}: {
+  visible: boolean;
+  compact: boolean;
+  generating: boolean;
+  onClose: () => void;
+  onGenerate: (period: {
+    days?: number;
+    dateFrom?: string;
+    dateTo?: string;
+  }) => Promise<boolean>;
+}) {
+  const [mode, setMode] = useState<"days" | "calendar">("days");
+  const [days, setDays] = useState(1);
+  const [month, setMonth] = useState(() => {
+    const current = new Date();
+    return new Date(current.getFullYear(), current.getMonth(), 1, 12);
+  });
+  const [dateFrom, setDateFrom] = useState<string | null>(null);
+  const [dateTo, setDateTo] = useState<string | null>(null);
+  const monthLabel = new Intl.DateTimeFormat("ru-RU", {
+    month: "long",
+    year: "numeric"
+  }).format(month);
+  const firstOffset = (month.getDay() + 6) % 7;
+  const daysInMonth = new Date(
+    month.getFullYear(),
+    month.getMonth() + 1,
+    0
+  ).getDate();
+  const cells = Array.from({ length: 42 }, (_, index) => {
+    const day = index - firstOffset + 1;
+    if (day < 1 || day > daysInMonth) return null;
+    return new Date(month.getFullYear(), month.getMonth(), day, 12);
+  });
+  const chooseDate = (date: Date) => {
+    const value = localDateKey(date);
+    if (!dateFrom || dateTo || value < dateFrom) {
+      setDateFrom(value);
+      setDateTo(null);
+      return;
+    }
+    setDateTo(value);
+  };
+  const submit = () => {
+    if (mode === "days") {
+      void onGenerate({ days });
+      return;
+    }
+    if (dateFrom && dateTo) {
+      void onGenerate({ dateFrom, dateTo });
+    }
+  };
+
+  return (
+    <Sheet
+      visible={visible}
+      title="Период отчёта"
+      onClose={onClose}
+      wide
+      fullScreen={compact}
+    >
+      <ScrollView
+        contentContainerStyle={styles.reportPeriodContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.reportPeriodModes}>
+          <Chip label="1–7 дней" selected={mode === "days"} onPress={() => setMode("days")} />
+          <Chip label="По календарю" selected={mode === "calendar"} onPress={() => setMode("calendar")} />
+        </View>
+        {mode === "days" ? (
+          <View>
+            <Text style={styles.reportPeriodHint}>Завершённые дежурства до 08:00 сегодня</Text>
+            <View style={styles.reportDayChoices}>
+              {Array.from({ length: 7 }, (_, index) => index + 1).map((value) => (
+                <Pressable
+                  key={value}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: days === value }}
+                  onPress={() => setDays(value)}
+                  style={[styles.reportDayChoice, days === value && styles.reportDayChoiceActive]}
+                >
+                  <Text style={[styles.reportDayChoiceText, days === value && styles.reportDayChoiceTextActive]}>
+                    {value}
+                  </Text>
+                  <Text style={[styles.reportDayChoiceUnit, days === value && styles.reportDayChoiceTextActive]}>
+                    {value === 1 ? "день" : value < 5 ? "дня" : "дней"}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.reportCalendar}>
+            <View style={styles.reportCalendarHeader}>
+              <IconButton
+                icon="chevron-back"
+                label="Предыдущий месяц"
+                onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() - 1, 1, 12))}
+              />
+              <Text style={styles.reportCalendarTitle}>{monthLabel}</Text>
+              <IconButton
+                icon="chevron-forward"
+                label="Следующий месяц"
+                onPress={() => setMonth((current) => new Date(current.getFullYear(), current.getMonth() + 1, 1, 12))}
+              />
+            </View>
+            <View style={styles.reportCalendarGrid}>
+              {["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map((label) => (
+                <Text key={label} style={styles.reportCalendarWeekday}>{label}</Text>
+              ))}
+              {cells.map((date, index) => {
+                const value = date ? localDateKey(date) : "";
+                const selected = Boolean(value && (value === dateFrom || value === dateTo));
+                const inRange = Boolean(value && dateFrom && dateTo && value > dateFrom && value < dateTo);
+                return (
+                  <View key={index} style={[styles.reportCalendarCell, inRange && styles.reportCalendarCellInRange]}>
+                    {date ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={formatDate(value)}
+                        onPress={() => chooseDate(date)}
+                        style={[styles.reportCalendarDate, selected && styles.reportCalendarDateSelected]}
+                      >
+                        <Text style={[styles.reportCalendarDateText, selected && styles.reportCalendarDateTextSelected]}>{date.getDate()}</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+            <Text style={styles.reportPeriodHint}>
+              {dateFrom
+                ? `${formatDate(dateFrom)} — ${dateTo ? formatDate(dateTo) : "выберите дату окончания"}`
+                : "Выберите дату начала и окончания"}
+            </Text>
+          </View>
+        )}
+        <Button
+          label={generating ? "Формируем…" : "Сформировать отчёт"}
+          icon={generating ? undefined : "document-text-outline"}
+          disabled={generating || (mode === "calendar" && (!dateFrom || !dateTo))}
+          onPress={submit}
+        />
+      </ScrollView>
+    </Sheet>
   );
 }
 
@@ -5069,6 +5237,91 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
     backgroundColor: colors.primarySoft
   },
+  reportPeriodContent: {
+    padding: 18,
+    gap: 20
+  },
+  reportPeriodModes: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  reportPeriodHint: {
+    ...typography.meta,
+    color: colors.textMuted,
+    marginBottom: 12
+  },
+  reportDayChoices: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8
+  },
+  reportDayChoice: {
+    width: 66,
+    minHeight: 66,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  reportDayChoiceActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft
+  },
+  reportDayChoiceText: {
+    ...typography.title,
+    color: colors.text
+  },
+  reportDayChoiceUnit: {
+    ...typography.meta,
+    color: colors.textMuted,
+    marginTop: 2
+  },
+  reportDayChoiceTextActive: { color: colors.primary },
+  reportCalendar: {
+    gap: 10
+  },
+  reportCalendarHeader: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  reportCalendarTitle: {
+    ...typography.title,
+    color: colors.text,
+    textTransform: "capitalize"
+  },
+  reportCalendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap"
+  },
+  reportCalendarWeekday: {
+    width: "14.2857%",
+    paddingVertical: 7,
+    textAlign: "center",
+    ...typography.meta,
+    color: colors.textDim
+  },
+  reportCalendarCell: {
+    width: "14.2857%",
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  reportCalendarCellInRange: { backgroundColor: colors.primarySoft },
+  reportCalendarDate: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  reportCalendarDateSelected: { backgroundColor: colors.primary },
+  reportCalendarDateText: { ...typography.label, color: colors.text },
+  reportCalendarDateTextSelected: { color: "#fff" },
   compactScreenHeading: { flex: 1, minWidth: 0 },
   compactScreenTitle: { ...typography.title, fontSize: 17, color: colors.text },
   compactScreenMeta: { ...typography.meta, color: colors.textDim, marginTop: 2 },

@@ -42,7 +42,6 @@ export type UserRequest = {
 };
 
 export type AgentCommand =
-  | "get_report"
   | "sync_studies"
   | "find_study"
   | "import_study"
