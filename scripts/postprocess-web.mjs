@@ -86,39 +86,6 @@ const splashHead = `
         inset: 0;
         background: rgba(5, 12, 21, .24);
       }
-      #viewer-preboot-brand {
-        position: absolute;
-        z-index: 1;
-        top: max(24px, env(safe-area-inset-top));
-        left: max(24px, env(safe-area-inset-left));
-        display: flex;
-        align-items: center;
-        gap: 11px;
-        color: #fafdff;
-      }
-      #viewer-preboot-mark {
-        width: 40px;
-        height: 40px;
-        display: grid;
-        place-items: center;
-        border: 1px solid rgba(53, 194, 255, .28);
-        border-radius: 14px;
-        background: rgba(53, 194, 255, .14);
-        color: #35c2ff;
-        font: 800 18px/1 -apple-system, BlinkMacSystemFont, sans-serif;
-      }
-      #viewer-preboot-name {
-        display: block;
-        font: 800 15px/18px -apple-system, BlinkMacSystemFont, sans-serif;
-        letter-spacing: 2px;
-      }
-      #viewer-preboot-caption {
-        display: block;
-        margin-top: 2px;
-        color: #35c2ff;
-        font: 700 8px/11px -apple-system, BlinkMacSystemFont, sans-serif;
-        letter-spacing: 1.8px;
-      }
       @media (display-mode: standalone) {
         #mobile-navigation {
           position: fixed !important;
@@ -153,6 +120,6 @@ html = html.replace(/<link rel="icon"[^>]*>/i, "");
 html = html.replace("</head>", `${splashHead}\n  </head>`);
 html = html.replace(
   '<div id="root"></div>',
-  '<div id="viewer-preboot"><div id="viewer-preboot-brand"><span id="viewer-preboot-mark">⌁</span><span><span id="viewer-preboot-name">VIEWER</span><span id="viewer-preboot-caption">CLINICAL WORKSPACE</span></span></div></div><div id="root"></div>'
+  '<div id="viewer-preboot"></div><div id="root"></div>'
 );
 writeFileSync(indexPath, html);

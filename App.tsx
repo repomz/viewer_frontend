@@ -1363,24 +1363,24 @@ function LoginScreen({
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [backgroundReady, setBackgroundReady] = useState(false);
-  const formOpacity = useRef(new Animated.Value(0)).current;
-  const formOffset = useRef(new Animated.Value(14)).current;
+  const panelOpacity = useRef(new Animated.Value(0)).current;
+  const panelOffset = useRef(new Animated.Value(14)).current;
 
   useEffect(() => {
-    if (!revealForm) return;
+    if (!revealForm || !backgroundReady) return;
     Animated.parallel([
-      Animated.timing(formOpacity, {
+      Animated.timing(panelOpacity, {
         toValue: 1,
         duration: 650,
         useNativeDriver: Platform.OS !== "web"
       }),
-      Animated.timing(formOffset, {
+      Animated.timing(panelOffset, {
         toValue: 0,
         duration: 650,
         useNativeDriver: Platform.OS !== "web"
       })
     ]).start();
-  }, [formOffset, formOpacity, revealForm]);
+  }, [backgroundReady, panelOffset, panelOpacity, revealForm]);
 
   return (
     <View style={styles.loginSafe}>
@@ -1405,7 +1405,8 @@ function LoginScreen({
             <ActivityIndicator size="small" color={darkColors.primary} />
           </View>
         ) : null}
-        <View
+        <Animated.View
+          pointerEvents={revealForm && backgroundReady ? "auto" : "none"}
           style={[
             styles.loginPanel,
             compact && styles.loginPanelCompact,
@@ -1413,7 +1414,10 @@ function LoginScreen({
               paddingTop: Math.max(18, insets.top + 10),
               paddingBottom: Math.max(18, insets.bottom + 10)
             },
-            !backgroundReady && styles.loginPanelHidden
+            {
+              opacity: panelOpacity,
+              transform: [{ translateY: panelOffset }]
+            }
           ]}
         >
           <View style={styles.loginBrand}>
@@ -1425,13 +1429,7 @@ function LoginScreen({
               <Text style={styles.loginBrandCaption}>CLINICAL WORKSPACE</Text>
             </View>
           </View>
-          <Animated.View
-            pointerEvents={revealForm ? "auto" : "none"}
-            style={[
-              styles.loginForm,
-              { opacity: formOpacity, transform: [{ translateY: formOffset }] }
-            ]}
-          >
+          <View style={styles.loginForm}>
             <View style={styles.loginHeadingRow}>
               <Text style={styles.loginTitle}>Вход</Text>
               <Pressable
@@ -1508,8 +1506,8 @@ function LoginScreen({
               Авторизация будет подключена позднее. Сейчас вход выполняется без
               проверки данных.
             </Text>
-          </Animated.View>
-        </View>
+          </View>
+        </Animated.View>
       </View>
     </View>
   );
@@ -4209,7 +4207,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
-  loginPanelHidden: { opacity: 0 },
   loginPanel: {
     width: "44%",
     minWidth: 430,
