@@ -34,6 +34,7 @@ import {
   zoomFromPinch
 } from "./dicomGestures";
 import {
+  cachePreparedXAManifest,
   getCachedPreparedXAManifest,
   loadRenderedFrameBlob,
   loadXACaptures,
@@ -249,7 +250,7 @@ export function MobileDicomViewer({
             signal: controller.signal
           })
         ]);
-        const prepared =
+        let prepared =
           preparedResult.status === "fulfilled" ? preparedResult.value : null;
         let loadedSeries: DicomSeries[] = [];
         if (
@@ -268,6 +269,7 @@ export function MobileDicomViewer({
             signal: controller.signal
           });
           if (ready) {
+            prepared = ready;
             loadedSeries = manifestDicomSeries(ready, root);
             if (!cancelled) setPreparedFrames(manifestFrameMap(ready));
           }
@@ -286,6 +288,7 @@ export function MobileDicomViewer({
         if (!cancelled) {
           setSeries(loadedSeries);
           if (prepared) {
+            if (persistentCacheEnabled) cachePreparedXAManifest(prepared);
             setPreparedManifest(prepared);
             setPreparedFrames(manifestFrameMap(prepared));
           } else {
@@ -295,6 +298,7 @@ export function MobileDicomViewer({
             })
               .then((ready) => {
                 if (!cancelled && ready) {
+                  if (persistentCacheEnabled) cachePreparedXAManifest(ready);
                   setPreparedManifest(ready);
                   setPreparedFrames(manifestFrameMap(ready));
                 }

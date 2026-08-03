@@ -60,6 +60,7 @@ import {
   deleteStudyFromDevice,
   downloadStudyForOffline,
   formatStorageSize,
+  getCachedPreparedXAManifest,
   getDicomCacheSnapshot,
   subscribeDicomCache,
   type DicomCacheSnapshot
@@ -893,7 +894,8 @@ export default function App() {
     const studiesToDownload = xaStudies.filter(
       (study) =>
         study.study_type.toLocaleLowerCase() === "xa" &&
-        !cachedStudies[study.study_id]?.complete
+        (!cachedStudies[study.study_id]?.complete ||
+          !getCachedPreparedXAManifest(study.study_id))
     );
     if (!studiesToDownload.length) return;
     autoDownloadRunning.current = true;

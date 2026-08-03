@@ -238,7 +238,7 @@ export function getCachedPreparedXAManifest(
     : null;
 }
 
-function recordPreparedManifest(manifest: PreparedXAManifest): void {
+export function cachePreparedXAManifest(manifest: PreparedXAManifest): void {
   const manifests = readRecord<PreparedManifestIndex>(MANIFEST_KEY);
   manifests[manifest.study_uid] = manifest;
   writeRecord(MANIFEST_KEY, manifests);
@@ -543,7 +543,7 @@ export async function downloadStudyForOffline(
 ): Promise<boolean> {
   if (!supported() || activeDownloads.has(studyUID)) return false;
   const existing = getDicomCacheSnapshot().studies[studyUID];
-  if (existing?.complete) return true;
+  if (existing?.complete && getCachedPreparedXAManifest(studyUID)) return true;
 
   activeDownloads.add(studyUID);
   const controller = new AbortController();
@@ -603,7 +603,7 @@ export async function downloadStudyForOffline(
       writeRecord(EXPECTED_KEY, expected);
       emit();
       await persistPreparedCines(studyUID, cineURLs, controller.signal);
-      recordPreparedManifest(preparedManifest);
+      cachePreparedXAManifest(preparedManifest);
       return true;
     }
 
@@ -616,7 +616,7 @@ export async function downloadStudyForOffline(
             controller.signal
           )
         ) {
-          recordPreparedManifest(preparedManifest);
+          cachePreparedXAManifest(preparedManifest);
           return true;
         }
       } catch (reason) {
@@ -644,7 +644,7 @@ export async function downloadStudyForOffline(
     await Promise.all(
       Array.from({ length: preparedOnServer ? 6 : 2 }, () => worker())
     );
-    if (preparedManifest) recordPreparedManifest(preparedManifest);
+    if (preparedManifest) cachePreparedXAManifest(preparedManifest);
     return true;
   } catch (reason) {
     if (!controller.signal.aborted) {
