@@ -34,6 +34,7 @@ import {
   zoomFromPinch
 } from "./dicomGestures";
 import {
+  getCachedPreparedXAManifest,
   loadRenderedFrameBlob,
   loadXACaptures,
   resolvePreparedCineSource,
@@ -194,14 +195,23 @@ export function MobileDicomViewer({
     blobURLs.current.forEach((url) => URL.revokeObjectURL(url));
     blobURLs.current.clear();
     renderedCache.current.clear();
-    setMetadataLoading(true);
+    const cachedPrepared = persistentCacheEnabled
+      ? getCachedPreparedXAManifest(studyUID)
+      : null;
+    setMetadataLoading(!cachedPrepared);
     setFrameReady(false);
     setFrameSource("");
     setSeriesPreviews({});
     setError("");
-    setSeries([]);
-    setPreparedManifest(null);
-    setPreparedFrames(new Map());
+    setSeries(
+      cachedPrepared
+        ? manifestDicomSeries(cachedPrepared, dicomWebRoot.replace(/\/$/, ""))
+        : []
+    );
+    setPreparedManifest(cachedPrepared);
+    setPreparedFrames(
+      cachedPrepared ? manifestFrameMap(cachedPrepared) : new Map()
+    );
     setSeriesIndex(0);
     setFrameIndex(0);
     setPlaying(false);
@@ -229,6 +239,7 @@ export function MobileDicomViewer({
     void (async () => {
       try {
         const root = dicomWebRoot.replace(/\/$/, "");
+        if (cachedPrepared) return;
         const [metadataResult, preparedResult] = await Promise.allSettled([
           fetch(`${root}/studies/${encodeURIComponent(studyUID)}/metadata`, {
             headers: { Accept: "application/dicom+json" },
@@ -308,7 +319,7 @@ export function MobileDicomViewer({
       cancelled = true;
       controller.abort();
     };
-  }, [dicomWebRoot, studyUID]);
+  }, [dicomWebRoot, persistentCacheEnabled, studyUID]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1020,7 +1031,8 @@ export function MobileDicomViewer({
         ) : null}
       </View>
 
-      {metadataLoading || (!cineReady && !frameSource && !error) ? (
+      {metadataLoading ||
+      (!preparedManifest && !cineReady && !frameSource && !error) ? (
         <View style={styles.state}>
           <ActivityIndicator color={darkColors.primary} />
           <Text style={styles.stateText}>Подготавливаем просмотр XA…</Text>

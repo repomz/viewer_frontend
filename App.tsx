@@ -201,13 +201,9 @@ const commandLabels: Record<AgentCommand, string> = {
 };
 
 export const agentCommandOptions: AgentCommand[] = [
-  "sync_studies",
   "find_study",
   "find_xa",
   "find_ct",
-  "get_xa",
-  "get_ct",
-  "get_report",
   "xa_polling_on",
   "xa_polling_off",
   "ct_polling_on",
@@ -583,13 +579,13 @@ export default function App() {
     setReportsError("");
     setReportsLoading(true);
     try {
-      setReports(await getReports());
+      setReports(await getReports(settings.agentId));
     } catch (error) {
       setReportsError(errorMessage(error));
     } finally {
       setReportsLoading(false);
     }
-  }, []);
+  }, [settings.agentId]);
 
   const loadPlan = useCallback(async (weekOffset: 0 | 1) => {
     setPlanError("");
@@ -2010,6 +2006,7 @@ function StudyRow({
         <View style={styles.studyTitleLine}>
           <Text numberOfLines={1} style={styles.studyPatient}>
             {study.patient}
+            {study.age ? ` · ${study.age} лет` : ""}
           </Text>
         </View>
         <Text numberOfLines={1} style={styles.studyOperation}>
@@ -2170,10 +2167,12 @@ function StudyDetails({ study }: { study: Study }) {
           <Icon name="reader-outline" size={24} color={colors.primary} />
         </View>
         <View style={styles.detailsHeroCopy}>
-          <Text style={styles.detailsPatient}>{study.patient}</Text>
+          <Text style={styles.detailsPatient}>
+            {study.patient}
+            {study.age ? ` · ${study.age} лет` : ""}
+          </Text>
           <Text style={styles.detailsSubtitle}>
-            {study.age ? `${study.age} лет` : "Возраст не указан"} · ID{" "}
-            {study.study_id}
+            ID {study.study_id}
           </Text>
         </View>
       </View>
@@ -2300,19 +2299,6 @@ function AngiographyScreen({
                 </Text>
               </Pressable>
             ))}
-            <View
-              style={[
-                styles.angioAutoStatus,
-                compact && styles.angioAutoStatusCompact
-              ]}
-            >
-              <Icon name="cloud-done-outline" size={16} color={colors.success} />
-              <Text style={styles.angioAutoStatusText}>
-                {compact
-                  ? "Автодоставка Yandex → PACS"
-                  : "Yandex → PACS автоматически"}
-              </Text>
-            </View>
           </View>
           <View
             style={[
@@ -2645,6 +2631,7 @@ function RequestCard({
   onRefresh: () => void;
 }) {
   const [resultOpen, setResultOpen] = useState(false);
+  const automaticImportStarted = useRef(false);
   const meta = statusMeta(request.status);
   const payload = parseObject(request.payload);
   const result = parseObject(request.result);
@@ -2654,6 +2641,26 @@ function RequestCard({
   const subject =
     String(payload.patient ?? payload.patient_name ?? payload.study_uid ?? "") ||
     "Без дополнительных параметров";
+
+  useEffect(() => {
+    if (
+      automaticImportStarted.current ||
+      request.status !== "completed" ||
+      !["find_xa", "find_ct"].includes(request.command) ||
+      pacsStudies.length !== 1
+    ) {
+      return;
+    }
+    const onlyStudy = pacsStudies[0]!;
+    const uid = String(
+      onlyStudy.uid ?? onlyStudy.study_uid ?? onlyStudy.StudyInstanceUID ?? ""
+    );
+    if (!uid || studies.some((study) => study.study_id === uid)) return;
+    automaticImportStarted.current = true;
+    void onSubmit(request.command === "find_ct" ? "get_ct" : "get_xa", {
+      study_uid: uid
+    });
+  }, [onSubmit, pacsStudies, request.command, request.status, studies]);
 
   return (
     <View style={styles.requestCard}>
@@ -2782,7 +2789,9 @@ function RequestCard({
                 <View style={styles.resultHeader}>
                   <View style={styles.resultHeaderCopy}>
                     <Text style={styles.resultPatient}>
-                      {String(study.patient ?? "Пациент не указан")}
+                      {String(
+                        study.patient ?? study.name ?? "Пациент не указан"
+                      )}
                     </Text>
                     <Text style={styles.resultOperation}>
                       {String(
@@ -3042,8 +3051,7 @@ function ReportRow({
   onForward: () => void;
 }) {
   const data = reportData(report);
-  const total =
-    Number(data.emergency_total ?? 0) + Number(data.planned_count ?? 0);
+  const total = Number(data.emergency_total ?? 0);
   return (
     <Pressable
       accessibilityRole="button"
@@ -3059,7 +3067,7 @@ function ReportRow({
           {data.date ?? formatDate(report.generated_at)}
         </Text>
         <Text style={styles.reportRowMeta}>
-          {data.period_days ?? 1} сут. · {total} операций
+          {data.period_days ?? 1} сут. · {total} экстренных операций
         </Text>
       </View>
       {compact ? (
@@ -4022,20 +4030,13 @@ function CommandSheet({
     payload: Record<string, unknown>
   ) => Promise<boolean>;
 }) {
-  const [command, setCommand] = useState<AgentCommand>("sync_studies");
+  const [command, setCommand] = useState<AgentCommand>("find_study");
   const [patient, setPatient] = useState("");
-  const [studyUID, setStudyUID] = useState("");
-  const [period, setPeriod] = useState("1");
   const [searchPeriod, setSearchPeriod] = useState("today");
   const [submitting, setSubmitting] = useState(false);
   const needsPatient = ["find_study", "find_xa", "find_ct"].includes(command);
-  const needsUID = ["get_xa", "get_ct"].includes(command);
   const needsPacsPeriod = ["find_xa", "find_ct"].includes(command);
-  const isReport = command === "get_report";
-  const valid =
-    (!needsPatient || patient.trim().length >= 2) &&
-    (!needsUID || Boolean(studyUID.trim())) &&
-    (!isReport || (Number(period) >= 1 && Number(period) <= 4));
+  const valid = !needsPatient || patient.trim().length >= 2;
 
   const submit = async () => {
     if (!valid) return;
@@ -4045,21 +4046,21 @@ function CommandSheet({
           patient: patient.trim(),
           ...(needsPacsPeriod ? { period: searchPeriod } : {})
         }
-      : needsUID
-        ? { study_uid: studyUID.trim() }
-        : isReport
-          ? { period: Number(period) }
-          : {};
+      : {};
     const ok = await onSubmit(command, payload);
     setSubmitting(false);
     if (ok) {
       setPatient("");
-      setStudyUID("");
     }
   };
 
   return (
-    <Sheet visible={visible} title="Новое задание агенту" onClose={onClose}>
+    <Sheet
+      visible={visible}
+      title="Новое задание агенту"
+      onClose={onClose}
+      fullScreen
+    >
       <ScrollView contentContainerStyle={styles.commandContent}>
         <View style={styles.commandDestination}>
           <Icon name="hardware-chip-outline" color={colors.primary} />
@@ -4139,24 +4140,6 @@ function CommandSheet({
               ))}
             </View>
           </View>
-        ) : null}
-        {needsUID ? (
-          <Field
-            label="Study Instance UID"
-            value={studyUID}
-            onChangeText={setStudyUID}
-            placeholder="1.2.840…"
-            autoCapitalize="none"
-          />
-        ) : null}
-        {isReport ? (
-          <Field
-            label="Период, суток"
-            value={period}
-            onChangeText={setPeriod}
-            keyboardType="number-pad"
-            hint="Допустимое значение от 1 до 4."
-          />
         ) : null}
         <View style={styles.commandActions}>
           <Button label="Отмена" variant="ghost" onPress={onClose} />
@@ -5883,7 +5866,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 0,
+    bottom: 6,
     zIndex: 50,
     elevation: 20,
     backgroundColor: colors.canvas,

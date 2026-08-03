@@ -184,9 +184,15 @@ export async function deleteAllStudies(): Promise<void> {
   await request("/studies", { method: "DELETE" });
 }
 
-export async function getReports(): Promise<ReportDocument[]> {
-  const response = await request<ReportDocument[]>("/reports?limit=30");
-  return Array.isArray(response) ? response : [];
+export async function getReports(agentId?: number): Promise<ReportDocument[]> {
+  const params = new URLSearchParams({ limit: "30" });
+  if (agentId) params.set("agent_id", String(agentId));
+  const response = await request<ReportDocument[]>(`/reports?${params.toString()}`);
+  return Array.isArray(response)
+    ? response.filter(
+        (report) => !agentId || Number(report.agent_id) === agentId
+      )
+    : [];
 }
 
 export async function getOperationPlan(

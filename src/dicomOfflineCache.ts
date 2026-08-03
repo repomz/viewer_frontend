@@ -12,6 +12,7 @@ import {
 const CACHE_NAME = "viewer-xa-media-v3";
 const INDEX_KEY = "viewer.xa-cache-index.v3";
 const EXPECTED_KEY = "viewer.xa-cache-expected.v3";
+const MANIFEST_KEY = "viewer.xa-cache-manifests.v1";
 const CAPTURE_INDEX_KEY = "viewer.xa-captures-index.v1";
 
 type CacheEntry = {
@@ -22,6 +23,7 @@ type CacheEntry = {
 
 type CacheIndex = Record<string, CacheEntry>;
 type ExpectedFrames = Record<string, number>;
+type PreparedManifestIndex = Record<string, PreparedXAManifest>;
 type CaptureIndex = Record<
   string,
   {
@@ -225,6 +227,21 @@ function readRecord<T extends Record<string, unknown>>(key: string): T {
 function writeRecord(key: string, value: Record<string, unknown>): void {
   if (!supported()) return;
   window.localStorage.setItem(key, JSON.stringify(value));
+}
+
+export function getCachedPreparedXAManifest(
+  studyUID: string
+): PreparedXAManifest | null {
+  const manifest = readRecord<PreparedManifestIndex>(MANIFEST_KEY)[studyUID];
+  return manifest?.status === "ready" && manifest.study_uid === studyUID
+    ? manifest
+    : null;
+}
+
+function recordPreparedManifest(manifest: PreparedXAManifest): void {
+  const manifests = readRecord<PreparedManifestIndex>(MANIFEST_KEY);
+  manifests[manifest.study_uid] = manifest;
+  writeRecord(MANIFEST_KEY, manifests);
 }
 
 function emit(): void {
@@ -586,6 +603,7 @@ export async function downloadStudyForOffline(
       writeRecord(EXPECTED_KEY, expected);
       emit();
       await persistPreparedCines(studyUID, cineURLs, controller.signal);
+      recordPreparedManifest(preparedManifest);
       return true;
     }
 
@@ -598,6 +616,7 @@ export async function downloadStudyForOffline(
             controller.signal
           )
         ) {
+          recordPreparedManifest(preparedManifest);
           return true;
         }
       } catch (reason) {
@@ -625,6 +644,7 @@ export async function downloadStudyForOffline(
     await Promise.all(
       Array.from({ length: preparedOnServer ? 6 : 2 }, () => worker())
     );
+    if (preparedManifest) recordPreparedManifest(preparedManifest);
     return true;
   } catch (reason) {
     if (!controller.signal.aborted) {
@@ -648,6 +668,9 @@ export function cancelDicomDownloads(): void {
 export async function deleteStudyFromDevice(studyUID: string): Promise<void> {
   if (!supported()) return;
   const index = readRecord<CacheIndex>(INDEX_KEY);
+  const manifests = readRecord<PreparedManifestIndex>(MANIFEST_KEY);
+  delete manifests[studyUID];
+  writeRecord(MANIFEST_KEY, manifests);
   const urls = Object.entries(index)
     .filter(([, entry]) => entry.studyUID === studyUID)
     .map(([url]) => url);
@@ -687,6 +710,7 @@ export async function clearDicomCache(): Promise<void> {
   window.localStorage.removeItem(INDEX_KEY);
   window.localStorage.removeItem(EXPECTED_KEY);
   window.localStorage.removeItem(CAPTURE_INDEX_KEY);
+  window.localStorage.removeItem(MANIFEST_KEY);
   window.localStorage.removeItem("viewer.xa-cache-index.v2");
   window.localStorage.removeItem("viewer.xa-cache-expected.v2");
   window.localStorage.removeItem("viewer.xa-cache-index.v1");

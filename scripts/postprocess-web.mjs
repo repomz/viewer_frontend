@@ -91,7 +91,7 @@ const splashHead = `
           position: fixed !important;
           left: 0 !important;
           right: 0 !important;
-          bottom: 0 !important;
+          bottom: max(6px, env(safe-area-inset-bottom, 0px)) !important;
         }
       }
     </style>`;
