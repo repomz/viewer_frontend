@@ -1,11 +1,13 @@
 import type {
   AgentCommand,
+  OperationStatistics,
   OperationPlan,
   PlanDay,
   PlanEntry,
   ReportDocument,
   Study,
-  UserRequest
+  UserRequest,
+  VMPStatisticsConfig
 } from "./types";
 
 const API_ROOT = "/api";
@@ -238,6 +240,23 @@ export async function saveOperationPlanDay(
   return request<PlanDay>(`/operation-plan/${encodeURIComponent(date)}`, {
     method: "PUT",
     body: JSON.stringify({ entries })
+  });
+}
+
+export async function getOperationStatistics(): Promise<OperationStatistics> {
+  return request<OperationStatistics>("/statistics/operations");
+}
+
+export async function saveVMPStatisticsConfig(
+  config: VMPStatisticsConfig
+): Promise<OperationStatistics> {
+  return request<OperationStatistics>("/statistics/vmp", {
+    method: "PUT",
+    body: JSON.stringify({
+      operation_types: config.operationTypes,
+      included_study_ids: config.includedStudyIds,
+      excluded_study_ids: config.excludedStudyIds
+    })
   });
 }
 

@@ -3,8 +3,10 @@ import {
   deletePACSStudy,
   generateReport,
   getAgentHeartbeatTimes,
+  getOperationStatistics,
   getOperationPlan,
-  getStudies
+  getStudies,
+  saveVMPStatisticsConfig
 } from "./api";
 
 describe("Viewer API client", () => {
@@ -123,6 +125,44 @@ describe("Viewer API client", () => {
           agent_id: 2,
           date_from: "2026-07-27",
           date_to: "2026-08-02"
+        })
+      })
+    );
+  });
+
+  it("loads and updates VMP statistics rules", async () => {
+    const payload = {
+      operation_types: [{ id: "каг", label: "КАГ", total: 2 }],
+      surgeons: [],
+      vmp_operation_types: ["каг"],
+      vmp_patients: [],
+      included_study_ids: [],
+      excluded_study_ids: []
+    };
+    const response = () => new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+    const fetchMock = jest
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(response())
+      .mockResolvedValueOnce(response());
+
+    await expect(getOperationStatistics()).resolves.toEqual(payload);
+    await saveVMPStatisticsConfig({
+      operationTypes: ["каг"],
+      includedStudyIds: ["study-1"],
+      excludedStudyIds: []
+    });
+
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "/api/statistics/vmp",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          operation_types: ["каг"],
+          included_study_ids: ["study-1"],
+          excluded_study_ids: []
         })
       })
     );

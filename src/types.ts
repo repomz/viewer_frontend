@@ -130,3 +130,41 @@ export type OperationPlan = {
   week_start: string;
   days: PlanDay[];
 };
+
+export type StatisticsOperationType = {
+  id: string;
+  label: string;
+  total: number;
+};
+
+export type SurgeonStatistics = {
+  surgeon: string;
+  counts: Record<string, number>;
+  vmp: number;
+  total: number;
+};
+
+export type VMPPatient = {
+  study_id: string;
+  patient: string;
+  operation: string;
+  operation_type: string;
+  surgeon: string;
+  date: string;
+  source: "type" | "patient";
+};
+
+export type OperationStatistics = {
+  operation_types: StatisticsOperationType[];
+  surgeons: SurgeonStatistics[];
+  vmp_operation_types: string[];
+  vmp_patients: VMPPatient[];
+  included_study_ids: string[];
+  excluded_study_ids: string[];
+};
+
+export type VMPStatisticsConfig = {
+  operationTypes: string[];
+  includedStudyIds: string[];
+  excludedStudyIds: string[];
+};

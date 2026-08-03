@@ -38,12 +38,14 @@ import {
   getAgentHeartbeatTimes,
   getAgents,
   generateReport,
+  getOperationStatistics,
   getOperationPlan,
   getReports,
   getStudies,
   getUserRequests,
   getUserRequest,
   saveOperationPlanDay,
+  saveVMPStatisticsConfig,
   searchStudies
 } from "./src/api";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
@@ -79,13 +81,15 @@ import type {
   AgentHealth,
   ApiHealth,
   AppSettings,
-  OperationsReport,
+  OperationStatistics,
   OperationPlan,
+  OperationsReport,
   PlanEntry,
   ReportDocument,
   ReportOperation,
   Study,
-  UserRequest
+  UserRequest,
+  VMPStatisticsConfig
 } from "./src/types";
 import {
   Badge,
@@ -107,7 +111,7 @@ if (Platform.OS !== "web") {
   void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 }
 
-type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "logs" | "settings";
+type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "statistics" | "logs" | "settings";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudyCategory =
@@ -156,6 +160,12 @@ const tabs: { id: Tab; label: string; shortLabel: string; icon: IconName }[] = [
 
 const desktopTabs = [
   ...tabs,
+  {
+    id: "statistics" as const,
+    label: "Статистика",
+    shortLabel: "Статистика",
+    icon: "stats-chart-outline" as IconName
+  },
   {
     id: "logs" as const,
     label: "Логи",
@@ -385,6 +395,35 @@ async function shareReport(report: ReportDocument): Promise<void> {
   });
 }
 
+async function shareStudyProtocol(study: Study): Promise<void> {
+  const message = [
+    `${study.patient}${study.age ? ` ${study.age}` : ""}`,
+    cleanClinicalText(study.name_operation, true),
+    formatDate(study.time_beginning, true),
+    study.surgeon ? `Хирург: ${study.surgeon}` : "",
+    "",
+    cleanClinicalText(study.descr_operation || "")
+  ].filter(Boolean).join("\n");
+  const title = `Протокол операции — ${study.patient}`;
+  if (Platform.OS === "web") {
+    if (typeof navigator !== "undefined" && "share" in navigator) {
+      try {
+        await navigator.share({ title, text: message });
+        return;
+      } catch {
+        // Closing the native share dialog falls back to a messenger link.
+      }
+    }
+    window.open(
+      `https://t.me/share/url?url=&text=${encodeURIComponent(message)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
+    return;
+  }
+  await Share.share({ title, message });
+}
+
 function confirmDeleteAll(message: string, action: () => void) {
   if (Platform.OS === "web") {
     if (globalThis.confirm(message)) action();
@@ -503,6 +542,10 @@ export default function App() {
   const [planWeekOffset, setPlanWeekOffset] = useState<0 | 1>(0);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState("");
+  const [statistics, setStatistics] = useState<OperationStatistics | null>(null);
+  const [statisticsLoading, setStatisticsLoading] = useState(false);
+  const [statisticsError, setStatisticsError] = useState("");
+  const [requestedXAStudyUID, setRequestedXAStudyUID] = useState<string | null>(null);
   const processedCompletions = useRef(
     new Set(
       requests
@@ -606,6 +649,32 @@ export default function App() {
       setPlanError(errorMessage(error));
     } finally {
       setPlanLoading(false);
+    }
+  }, []);
+
+  const loadStatistics = useCallback(async () => {
+    setStatisticsError("");
+    setStatisticsLoading(true);
+    try {
+      setStatistics(await getOperationStatistics());
+    } catch (error) {
+      setStatisticsError(errorMessage(error));
+    } finally {
+      setStatisticsLoading(false);
+    }
+  }, []);
+
+  const updateVMPStatistics = useCallback(async (config: VMPStatisticsConfig) => {
+    setStatisticsLoading(true);
+    try {
+      setStatistics(await saveVMPStatisticsConfig(config));
+      setToast({ message: "Статистика ВМП обновлена", tone: "success" });
+      return true;
+    } catch (error) {
+      setToast({ message: errorMessage(error), tone: "danger" });
+      return false;
+    } finally {
+      setStatisticsLoading(false);
     }
   }, []);
 
@@ -732,13 +801,18 @@ export default function App() {
     if (activeTab === "plan") {
       void loadPlan(planWeekOffset);
     }
+    if (activeTab === "statistics" && !compact) {
+      void loadStatistics();
+    }
   }, [
     activeTab,
     authenticated,
     loadPlan,
     loadReports,
+    loadStatistics,
     loadXAStudies,
-    planWeekOffset
+    planWeekOffset,
+    compact
   ]);
 
   useEffect(() => {
@@ -1074,6 +1148,17 @@ export default function App() {
     }
   }, []);
 
+  const openStudyAngiography = useCallback((protocol: Study) => {
+    const angiography = xaStudies.find(
+      (study) =>
+        study.study_type.toLowerCase() === "xa" &&
+        patientKey(study.patient) === patientKey(protocol.patient)
+    );
+    if (!angiography) return;
+    setRequestedXAStudyUID(angiography.study_id);
+    setActiveTab("angiography");
+  }, [xaStudies]);
+
   const createReport = useCallback(async (period: {
     days?: number;
     dateFrom?: string;
@@ -1189,6 +1274,7 @@ export default function App() {
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
                   angiographies={xaStudies}
+                  onOpenXA={openStudyAngiography}
                   onDelete={(study) => void removeStudy(study)}
                 />
               ) : null}
@@ -1205,6 +1291,8 @@ export default function App() {
                   onRetry={() => void loadXAStudies()}
                   onDeleteLocal={removeLocalAngiography}
                   onDeletePACS={removePACSAngiography}
+                  initialStudyUID={requestedXAStudyUID}
+                  onInitialStudyHandled={() => setRequestedXAStudyUID(null)}
                 />
               ) : null}
               {activeTab === "requests" ? (
@@ -1258,6 +1346,16 @@ export default function App() {
                       request.status === "error" || Boolean(request.errors)
                   )}
                   onDelete={(request) => void removeRequest(request)}
+                />
+              ) : null}
+              {activeTab === "statistics" && !compact ? (
+                <StatisticsScreen
+                  statistics={statistics}
+                  studies={protocolStudies}
+                  loading={statisticsLoading}
+                  error={statisticsError}
+                  onRetry={() => void loadStatistics()}
+                  onUpdate={updateVMPStatistics}
                 />
               ) : null}
               {activeTab === "settings" ? (
@@ -1829,6 +1927,7 @@ function StudiesScreen({
   onRetry,
   onRefresh,
   angiographies,
+  onOpenXA,
   onDelete
 }: {
   compact: boolean;
@@ -1848,6 +1947,7 @@ function StudiesScreen({
   onRetry: () => void;
   onRefresh: () => void;
   angiographies: Study[];
+  onOpenXA: (study: Study) => void;
   onDelete: (study: Study) => void;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
@@ -1903,7 +2003,12 @@ function StudiesScreen({
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.studyList}
             >
-              {studies.map((study, index) => (
+              {studies.map((study, index) => {
+                const hasXA = angiographies.some((item) =>
+                  patientKey(item.patient) === patientKey(study.patient) &&
+                  item.study_type.toLowerCase() === "xa"
+                );
+                return (
                 <SwipeableCard key={study.id} onDelete={() => onDelete(study)}
                   onForward={() => void Share.share({
                     title: `Протокол операции — ${study.patient}`,
@@ -1914,14 +2019,13 @@ function StudiesScreen({
                     index={index}
                     compact={compact}
                     selected={selected?.id === study.id}
-                    hasXA={angiographies.some((item) =>
-                      patientKey(item.patient) === patientKey(study.patient) &&
-                      item.study_type.toLowerCase() === "xa"
-                    )}
+                    hasXA={hasXA}
+                    onOpenXA={() => onOpenXA(study)}
                     onPress={() => choose(study)}
                   />
                 </SwipeableCard>
-              ))}
+                );
+              })}
             </ScrollView>
           ) : (
             <EmptyState
@@ -1939,7 +2043,14 @@ function StudiesScreen({
             contentContainerStyle={styles.detailPaneContent}
           >
             {selected ? (
-              <StudyDetails study={selected} />
+              <StudyDetails
+                study={selected}
+                hasXA={angiographies.some((item) =>
+                  item.study_type.toLowerCase() === "xa" &&
+                  patientKey(item.patient) === patientKey(selected.patient)
+                )}
+                onOpenXA={() => onOpenXA(selected)}
+              />
             ) : (
               <EmptyState
                 icon="reader-outline"
@@ -1961,7 +2072,17 @@ function StudiesScreen({
         >
           {selected ? (
             <ScrollView contentContainerStyle={styles.sheetScroll}>
-              <StudyDetails study={selected} />
+              <StudyDetails
+                study={selected}
+                hasXA={angiographies.some((item) =>
+                  item.study_type.toLowerCase() === "xa" &&
+                  patientKey(item.patient) === patientKey(selected.patient)
+                )}
+                onOpenXA={() => {
+                  setDetailOpen(false);
+                  onOpenXA(selected);
+                }}
+              />
             </ScrollView>
           ) : null}
         </Sheet>
@@ -1976,6 +2097,7 @@ function StudyRow({
   compact,
   selected,
   onPress,
+  onOpenXA,
   hasXA
 }: {
   study: Study;
@@ -1983,6 +2105,7 @@ function StudyRow({
   compact: boolean;
   selected: boolean;
   onPress: () => void;
+  onOpenXA: () => void;
   hasXA: boolean;
 }) {
   const operation = shortOperationName(study.name_operation);
@@ -2016,9 +2139,19 @@ function StudyRow({
       </View>
       <View style={styles.studyTrailing}>
         <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
-        <View style={[styles.xaState, !hasXA && styles.xaStateInactive]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={hasXA ? "Открыть XA пациента" : "XA пациента отсутствует"}
+          disabled={!hasXA}
+          hitSlop={6}
+          onPress={(event) => {
+            event.stopPropagation();
+            onOpenXA();
+          }}
+          style={[styles.xaState, !hasXA && styles.xaStateInactive]}
+        >
           <Text style={[styles.xaStateText, !hasXA && styles.xaStateTextInactive]}>XA</Text>
-        </View>
+        </Pressable>
       </View>
     </Pressable>
   );
@@ -2162,7 +2295,15 @@ function ProtocolDescription({ description }: { description: string }) {
   );
 }
 
-function StudyDetails({ study }: { study: Study }) {
+function StudyDetails({
+  study,
+  hasXA,
+  onOpenXA
+}: {
+  study: Study;
+  hasXA: boolean;
+  onOpenXA: () => void;
+}) {
   return (
     <View style={styles.detailsCard}>
       <View style={styles.detailsHero}>
@@ -2205,7 +2346,22 @@ function StudyDetails({ study }: { study: Study }) {
       <View style={styles.protocolSection}>
         <ProtocolDescription description={study.descr_operation || ""} />
       </View>
-
+      <View style={styles.detailsActions}>
+        <Button
+          label="Отправить"
+          icon="share-outline"
+          variant="secondary"
+          onPress={() => void shareStudyProtocol(study)}
+          style={styles.flexButton}
+        />
+        <Button
+          label="Открыть XA"
+          icon="scan-outline"
+          disabled={!hasXA}
+          onPress={onOpenXA}
+          style={styles.flexButton}
+        />
+      </View>
     </View>
   );
 }
@@ -2228,7 +2384,9 @@ function AngiographyScreen({
   dicomCache,
   onRetry,
   onDeleteLocal,
-  onDeletePACS
+  onDeletePACS,
+  initialStudyUID,
+  onInitialStudyHandled
 }: {
   compact: boolean;
   studies: Study[];
@@ -2239,12 +2397,15 @@ function AngiographyScreen({
   onRetry: () => void;
   onDeleteLocal: (study: Study) => Promise<void>;
   onDeletePACS: (study: Study) => Promise<void>;
+  initialStudyUID: string | null;
+  onInitialStudyHandled: () => void;
 }) {
   const insets = useSafeAreaInsets();
   const [selected, setSelected] = useState<Study | null>(studies[0] ?? null);
   const [mobileViewer, setMobileViewer] = useState(false);
   const [studyFilter, setStudyFilter] = useState<"xa" | "ct">("xa");
   const [actionStudy, setActionStudy] = useState<Study | null>(null);
+  const [pacsGuideOpen, setPacsGuideOpen] = useState(false);
   useEffect(() => {
     if (!selected && studies[0]) setSelected(studies[0]);
   }, [selected, studies]);
@@ -2268,6 +2429,20 @@ function AngiographyScreen({
       setSelected(visibleStudies[0] ?? null);
     }
   }, [selected?.id, visibleStudies]);
+
+  useEffect(() => {
+    if (!initialStudyUID) return;
+    const study = studies.find(
+      (item) =>
+        item.study_id === initialStudyUID &&
+        item.study_type.toLowerCase() === "xa"
+    );
+    if (!study) return;
+    setStudyFilter("xa");
+    setSelected(study);
+    if (compact) setMobileViewer(true);
+    onInitialStudyHandled();
+  }, [compact, initialStudyUID, onInitialStudyHandled, studies]);
 
   return (
     <View style={styles.angioScreen}>
@@ -2304,6 +2479,14 @@ function AngiographyScreen({
                 </Text>
               </Pressable>
             ))}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Как подключить RadiAnt"
+              onPress={() => setPacsGuideOpen(true)}
+              style={styles.angioGuideButton}
+            >
+              <Icon name="alert-circle-outline" size={20} color={darkColors.primary} />
+            </Pressable>
           </View>
           <View
             style={[
@@ -2438,6 +2621,12 @@ function AngiographyScreen({
             Исследования появятся здесь после автоматической доставки агентом
             через Yandex в удалённый PACS.
           </Text>
+          <Button
+            label="Подключение RadiAnt"
+            icon="alert-circle-outline"
+            variant="secondary"
+            onPress={() => setPacsGuideOpen(true)}
+          />
         </View>
       )}
 
@@ -2530,6 +2719,33 @@ function AngiographyScreen({
             </Text>
           </Pressable>
         </View>
+      </Sheet>
+      <Sheet
+        visible={pacsGuideOpen}
+        title="Просмотр через RadiAnt"
+        onClose={() => setPacsGuideOpen(false)}
+        wide
+      >
+        <ScrollView contentContainerStyle={styles.pacsGuideContent}>
+          <Text style={styles.pacsGuideIntro}>
+            Добавьте удалённый PACS в разделе PACS locations программы RadiAnt.
+          </Text>
+          <View style={styles.pacsGuideGrid}>
+            <DetailItem label="Адрес сервера" value="135.106.130.37" />
+            <DetailItem label="DICOM-порт" value="4242" />
+            <DetailItem label="AE Title сервера" value="MAPDR" />
+            <DetailItem label="AE Title компьютера" value="RADIANT" />
+            <DetailItem label="Локальный порт" value="11112" />
+          </View>
+          <View style={styles.pacsGuideSteps}>
+            <Text style={styles.pacsGuideStep}>1. Откройте Configuration → PACS locations → Add.</Text>
+            <Text style={styles.pacsGuideStep}>2. Внесите параметры выше и сохраните подключение.</Text>
+            <Text style={styles.pacsGuideStep}>3. Выполните Verify/C-ECHO, затем используйте Search and download.</Text>
+          </View>
+          <Text style={styles.pacsGuideNote}>
+            Подключение доступно только с разрешённого компьютера и сети. Входящие DICOM-соединения RadiAnt должны быть разрешены в брандмауэре для порта 11112.
+          </Text>
+        </ScrollView>
       </Sheet>
     </View>
   );
@@ -3130,6 +3346,202 @@ function ReportPeriodSheet({
         />
       </ScrollView>
     </Sheet>
+  );
+}
+
+function StatisticsScreen({
+  statistics,
+  studies,
+  loading,
+  error,
+  onRetry,
+  onUpdate
+}: {
+  statistics: OperationStatistics | null;
+  studies: Study[];
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+  onUpdate: (config: VMPStatisticsConfig) => Promise<boolean>;
+}) {
+  const [patientPickerOpen, setPatientPickerOpen] = useState(false);
+  const [patientSearch, setPatientSearch] = useState("");
+  const config = useMemo<VMPStatisticsConfig>(() => ({
+    operationTypes: statistics?.vmp_operation_types ?? [],
+    includedStudyIds: statistics?.included_study_ids ?? [],
+    excludedStudyIds: statistics?.excluded_study_ids ?? []
+  }), [statistics]);
+  const vmpIDs = useMemo(
+    () => new Set(statistics?.vmp_patients.map((item) => item.study_id) ?? []),
+    [statistics]
+  );
+  const availableStudies = useMemo(() => {
+    const query = patientSearch.trim().toLocaleLowerCase("ru");
+    return studies.filter((study) => {
+      if (vmpIDs.has(study.id)) return false;
+      if (!query) return true;
+      return `${study.patient} ${study.name_operation} ${study.surgeon}`
+        .toLocaleLowerCase("ru")
+        .includes(query);
+    });
+  }, [patientSearch, studies, vmpIDs]);
+  const toggleOperationType = (typeID: string) => {
+    const selected = config.operationTypes.includes(typeID);
+    void onUpdate({
+      ...config,
+      operationTypes: selected
+        ? config.operationTypes.filter((value) => value !== typeID)
+        : [...config.operationTypes, typeID]
+    });
+  };
+  const addPatient = async (study: Study) => {
+    const saved = await onUpdate({
+      ...config,
+      includedStudyIds: [...new Set([...config.includedStudyIds, study.id])],
+      excludedStudyIds: config.excludedStudyIds.filter((id) => id !== study.id)
+    });
+    if (saved) {
+      setPatientPickerOpen(false);
+      setPatientSearch("");
+    }
+  };
+  const removePatient = (studyID: string) => {
+    void onUpdate({
+      ...config,
+      includedStudyIds: config.includedStudyIds.filter((id) => id !== studyID),
+      excludedStudyIds: [...new Set([...config.excludedStudyIds, studyID])]
+    });
+  };
+
+  return (
+    <View style={styles.statisticsScreen}>
+      <View style={styles.compactScreenToolbar}>
+        <View style={styles.compactScreenHeading}>
+          <Text style={styles.compactScreenTitle}>Статистика операций</Text>
+          <Text style={styles.compactScreenMeta}>
+            По протоколам, доступным в приложении
+          </Text>
+        </View>
+        <IconButton icon="refresh-outline" label="Обновить статистику" onPress={onRetry} />
+      </View>
+      {error ? <InlineError message={error} onRetry={onRetry} /> : null}
+      {loading && !statistics ? (
+        <LoadingState label="Считаем выполненные операции…" />
+      ) : statistics ? (
+        <View style={styles.statisticsWorkspace}>
+          <View style={styles.statisticsTableCard}>
+            <ScrollView horizontal showsHorizontalScrollIndicator style={styles.statisticsHorizontalScroll}>
+              <View>
+                <View style={styles.statisticsTableHeader}>
+                  <Text style={[styles.statisticsHeaderCell, styles.statisticsSurgeonCell]}>Хирург</Text>
+                  {statistics.operation_types.map((type) => (
+                    <Text key={type.id} style={styles.statisticsHeaderCell}>{type.label}</Text>
+                  ))}
+                  <Text style={[styles.statisticsHeaderCell, styles.statisticsVMPHeader]}>ВМП</Text>
+                  <Text style={[styles.statisticsHeaderCell, styles.statisticsTotalHeader]}>Всего</Text>
+                </View>
+                <ScrollView style={styles.statisticsRowsScroll}>
+                  {statistics.surgeons.map((row) => (
+                    <View key={row.surgeon} style={styles.statisticsTableRow}>
+                      <Text numberOfLines={1} style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>{row.surgeon}</Text>
+                      {statistics.operation_types.map((type) => (
+                        <Text key={type.id} style={styles.statisticsCell}>{row.counts[type.id] ?? 0}</Text>
+                      ))}
+                      <Text style={[styles.statisticsCell, styles.statisticsVMPCell]}>{row.vmp}</Text>
+                      <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>{row.total}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+                <View style={[styles.statisticsTableRow, styles.statisticsSummaryRow]}>
+                  <Text style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>Всего</Text>
+                  {statistics.operation_types.map((type) => (
+                    <Text key={type.id} style={styles.statisticsCell}>{type.total}</Text>
+                  ))}
+                  <Text style={[styles.statisticsCell, styles.statisticsVMPCell]}>
+                    {statistics.vmp_patients.length}
+                  </Text>
+                  <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>
+                    {statistics.operation_types.reduce((sum, type) => sum + type.total, 0)}
+                  </Text>
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+          <View style={styles.vmpPanel}>
+            <View style={styles.vmpPanelHeader}>
+              <View style={styles.compactScreenHeading}>
+                <Text style={styles.vmpPanelTitle}>Операции ВМП</Text>
+                <Text style={styles.compactScreenMeta}>{statistics.vmp_patients.length} пациентов</Text>
+              </View>
+              <IconButton icon="add" label="Добавить пациента ВМП" onPress={() => setPatientPickerOpen(true)} />
+            </View>
+            <Text style={styles.vmpSectionLabel}>ТИПЫ ОПЕРАЦИЙ</Text>
+            <View style={styles.vmpTypeChoices}>
+              {statistics.operation_types.map((type) => (
+                <Chip
+                  key={type.id}
+                  label={type.label}
+                  selected={config.operationTypes.includes(type.id)}
+                  onPress={() => toggleOperationType(type.id)}
+                />
+              ))}
+            </View>
+            <Text style={styles.vmpSectionLabel}>АКТУАЛЬНЫЙ СПИСОК</Text>
+            <ScrollView style={styles.vmpPatientList} contentContainerStyle={styles.vmpPatientListContent}>
+              {statistics.vmp_patients.map((patient) => (
+                <View key={patient.study_id} style={styles.vmpPatientRow}>
+                  <View style={styles.vmpPatientCopy}>
+                    <Text numberOfLines={1} style={styles.vmpPatientName}>{patient.patient}</Text>
+                    <Text numberOfLines={2} style={styles.vmpPatientOperation}>
+                      {cleanClinicalText(patient.operation, true)}
+                    </Text>
+                    <Text style={styles.vmpPatientMeta}>
+                      {formatDate(patient.date)} · {patient.surgeon || "Хирург не указан"}
+                    </Text>
+                  </View>
+                  <IconButton
+                    icon="trash-outline"
+                    label={`Исключить ${patient.patient} из ВМП`}
+                    onPress={() => removePatient(patient.study_id)}
+                  />
+                </View>
+              ))}
+              {!statistics.vmp_patients.length ? (
+                <Text style={styles.vmpEmptyText}>Типы и пациенты ВМП пока не выбраны.</Text>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      ) : null}
+      <Sheet
+        visible={patientPickerOpen}
+        title="Добавить пациента в ВМП"
+        onClose={() => setPatientPickerOpen(false)}
+        wide
+      >
+        <View style={styles.vmpPickerContent}>
+          <SearchField
+            value={patientSearch}
+            onChangeText={setPatientSearch}
+            placeholder="Пациент, операция или хирург"
+          />
+          <ScrollView style={styles.vmpPickerList} contentContainerStyle={styles.vmpPickerListContent}>
+            {availableStudies.map((study) => (
+              <Pressable key={study.id} onPress={() => void addPatient(study)} style={styles.vmpPickerRow}>
+                <View style={styles.vmpPatientCopy}>
+                  <Text style={styles.vmpPatientName}>{study.patient}</Text>
+                  <Text numberOfLines={2} style={styles.vmpPatientOperation}>
+                    {cleanClinicalText(study.name_operation, true)}
+                  </Text>
+                  <Text style={styles.vmpPatientMeta}>{formatDate(study.time_beginning)} · {study.surgeon}</Text>
+                </View>
+                <Icon name="add-circle-outline" color={colors.primary} />
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </Sheet>
+    </View>
   );
 }
 
@@ -3826,6 +4238,7 @@ function MobileMenu({
   onSettings: () => void;
 }) {
   const translateX = useRef(new Animated.Value(-380)).current;
+  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     if (!visible) return;
@@ -3854,7 +4267,14 @@ function MobileMenu({
           style={StyleSheet.absoluteFill}
         />
         <Animated.View
-          style={[styles.drawer, { transform: [{ translateX }] }]}
+          style={[
+            styles.drawer,
+            {
+              paddingTop: Math.max(18, insets.top + 12),
+              paddingBottom: Math.max(22, insets.bottom + 14),
+              transform: [{ translateX }]
+            }
+          ]}
         >
           <View style={styles.drawerHeader}>
             <View style={styles.drawerBrand}>
@@ -4981,6 +5401,17 @@ const styles = StyleSheet.create({
   },
   angioFilterText: { ...typography.meta, color: darkColors.textMuted },
   angioFilterTextActive: { color: darkColors.primary, fontWeight: "700" },
+  angioGuideButton: {
+    width: 40,
+    height: 40,
+    marginLeft: "auto",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: darkColors.borderSoft,
+    backgroundColor: darkColors.surface,
+    alignItems: "center",
+    justifyContent: "center"
+  },
   angioAutoStatus: {
     marginLeft: "auto",
     flexDirection: "row",
@@ -5059,6 +5490,27 @@ const styles = StyleSheet.create({
   angioActionText: { ...typography.body, fontWeight: "600", color: colors.text },
   angioActionDanger: { backgroundColor: colors.dangerSoft },
   angioActionDangerText: { color: colors.danger },
+  pacsGuideContent: { padding: 18, gap: 16 },
+  pacsGuideIntro: { ...typography.body, color: colors.textMuted },
+  pacsGuideGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginHorizontal: -6,
+    padding: 10,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: colors.border
+  },
+  pacsGuideSteps: { gap: 9 },
+  pacsGuideStep: { ...typography.body, color: colors.text },
+  pacsGuideNote: {
+    ...typography.meta,
+    color: colors.textMuted,
+    padding: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.primarySoft
+  },
   angioCTPlaceholder: {
     flex: 1,
     alignItems: "center",
@@ -5474,6 +5926,133 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.dangerSoft
+  },
+  statisticsScreen: {
+    flex: 1,
+    minHeight: 0,
+    paddingHorizontal: 18,
+    paddingBottom: 12
+  },
+  statisticsWorkspace: {
+    flex: 1,
+    minHeight: 0,
+    flexDirection: "row",
+    gap: 14,
+    marginTop: 10
+  },
+  statisticsTableCard: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    overflow: "hidden"
+  },
+  statisticsHorizontalScroll: { flex: 1 },
+  statisticsRowsScroll: { flexGrow: 0, maxHeight: 520 },
+  statisticsTableHeader: {
+    minHeight: 54,
+    flexDirection: "row",
+    alignItems: "stretch",
+    backgroundColor: colors.canvasRaised,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border
+  },
+  statisticsTableRow: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "stretch",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  statisticsHeaderCell: {
+    width: 92,
+    paddingHorizontal: 8,
+    textAlign: "center",
+    textAlignVertical: "center",
+    ...typography.meta,
+    fontWeight: "800",
+    color: colors.textMuted
+  },
+  statisticsCell: {
+    width: 92,
+    paddingHorizontal: 8,
+    textAlign: "center",
+    textAlignVertical: "center",
+    ...typography.label,
+    color: colors.text
+  },
+  statisticsSurgeonCell: {
+    width: 150,
+    textAlign: "left",
+    textTransform: "capitalize"
+  },
+  statisticsVMPHeader: { color: colors.primary },
+  statisticsTotalHeader: { color: colors.text },
+  statisticsVMPCell: {
+    color: colors.primary,
+    backgroundColor: colors.primarySoft
+  },
+  statisticsTotalCell: { fontWeight: "800" },
+  statisticsSummaryRow: { backgroundColor: colors.canvasRaised },
+  vmpPanel: {
+    width: 390,
+    minHeight: 0,
+    padding: 14,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  vmpPanelHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  vmpPanelTitle: { ...typography.title, color: colors.text },
+  vmpSectionLabel: {
+    marginTop: 14,
+    marginBottom: 8,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1,
+    color: colors.textDim
+  },
+  vmpTypeChoices: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  vmpPatientList: { flex: 1, minHeight: 120 },
+  vmpPatientListContent: { gap: 6, paddingBottom: 12 },
+  vmpPatientRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 10,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: colors.borderSoft
+  },
+  vmpPatientCopy: { flex: 1, minWidth: 0 },
+  vmpPatientName: { ...typography.label, color: colors.text },
+  vmpPatientOperation: { ...typography.meta, color: colors.textMuted, marginTop: 2 },
+  vmpPatientMeta: { fontSize: 10, color: colors.textDim, marginTop: 4 },
+  vmpEmptyText: { ...typography.body, color: colors.textDim, paddingVertical: 18 },
+  vmpPickerContent: { padding: 16, gap: 12, minHeight: 420 },
+  vmpPickerList: { flex: 1 },
+  vmpPickerListContent: { gap: 7, paddingBottom: 12 },
+  vmpPickerRow: {
+    minHeight: 70,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 12,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: colors.borderSoft
   },
   logsScreen: {
     flex: 1,
