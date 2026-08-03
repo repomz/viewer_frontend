@@ -110,6 +110,7 @@ export function MobileDicomViewer({
   const videoElement = useRef<HTMLVideoElement | null>(null);
   const cineFallbackUsed = useRef(false);
   const seriesSheetY = useRef(new Animated.Value(0)).current;
+  const gallerySheetY = useRef(new Animated.Value(0)).current;
   const capturePinchDistance = useRef(0);
   const capturePinchZoom = useRef(1);
   const capturePanStart = useRef({ x: 0, y: 0 });
@@ -769,6 +770,35 @@ export function MobileDicomViewer({
     [seriesSheetY]
   );
 
+  const gallerySheetGesture = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_event, gesture) =>
+          gesture.dy > 8 && Math.abs(gesture.dy) > Math.abs(gesture.dx),
+        onPanResponderMove: (_event, gesture) => {
+          gallerySheetY.setValue(Math.max(0, gesture.dy));
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dy > 80 || gesture.vy > 0.75) {
+            Animated.timing(gallerySheetY, {
+              toValue: 430,
+              duration: 180,
+              useNativeDriver: true
+            }).start(() => {
+              setGalleryOpen(false);
+              gallerySheetY.setValue(0);
+            });
+            return;
+          }
+          Animated.spring(gallerySheetY, {
+            toValue: 0,
+            useNativeDriver: true
+          }).start();
+        }
+      }),
+    [gallerySheetY]
+  );
+
   const reset = () => {
     setPlaying(false);
     videoElement.current?.pause();
@@ -1250,7 +1280,23 @@ export function MobileDicomViewer({
         onRequestClose={() => setGalleryOpen(false)}
       >
         <View style={styles.galleryBackdrop}>
-          <View style={[styles.gallerySheet, { paddingBottom: insets.bottom + 12 }]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Закрыть галерею"
+            onPress={() => setGalleryOpen(false)}
+            style={StyleSheet.absoluteFill}
+          />
+          <Animated.View
+            {...gallerySheetGesture.panHandlers}
+            style={[
+              styles.gallerySheet,
+              {
+                paddingBottom: insets.bottom + 12,
+                transform: [{ translateY: gallerySheetY }]
+              }
+            ]}
+          >
+            <View style={styles.sheetHandle} />
             <View style={styles.galleryHeader}>
               <Text style={styles.galleryTitle}>Захваты кадров</Text>
               <Pressable
@@ -1286,7 +1332,7 @@ export function MobileDicomViewer({
             ) : (
               <Text style={styles.galleryEmpty}>Захватов пока нет</Text>
             )}
-          </View>
+          </Animated.View>
         </View>
       </Modal>
     </View>
@@ -1588,12 +1634,11 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(5,8,11,0.7)"
   },
   gallerySheet: {
-    maxHeight: "72%",
-    minHeight: 280,
+    height: 420,
     paddingHorizontal: 14,
-    paddingTop: 12,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    paddingTop: 30,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
     backgroundColor: "#1E2127"
   },
   galleryHeader: {
@@ -1609,14 +1654,16 @@ const styles = StyleSheet.create({
   galleryGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    gap: 15,
     paddingBottom: 20
   },
   galleryTile: {
-    width: "31%",
+    width: "21.5%",
+    minWidth: 70,
+    maxWidth: 84,
     aspectRatio: 1,
     overflow: "hidden",
-    borderRadius: 12,
+    borderRadius: 9,
     borderWidth: 1,
     borderColor: darkColors.borderSoft
   },

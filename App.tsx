@@ -1211,7 +1211,6 @@ export default function App() {
                       });
                     }
                   }}
-                  onDelete={(item) => void removeRequest(item)}
                   onDeleteAll={async () => {
                     try {
                       await deleteAllUserRequests(settings.userId, settings.agentId);
@@ -2008,7 +2007,9 @@ function StudyRow({
         <View style={styles.studyTitleLine}>
           <Text numberOfLines={1} style={styles.studyPatient}>
             {study.patient}
-            {study.age ? ` · ${study.age} лет` : ""}
+            {study.age ? (
+              <Text style={styles.studyAge}> {study.age}</Text>
+            ) : null}
           </Text>
         </View>
         <Text numberOfLines={1} style={styles.studyOperation}>
@@ -2037,6 +2038,8 @@ export function cleanClinicalText(value: string, operation = false): string {
       /внутрисосудист(?:ое|ый)\s+(?:ультразвуковое\s+исследование|ультразвук|исследование)/gi,
       "ВСУЗИ"
     )
+    .replace(/частичная|отмечается/gi, "")
+    .replace(/\s+([,.;:])/g, "$1")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -2171,7 +2174,9 @@ function StudyDetails({ study }: { study: Study }) {
         <View style={styles.detailsHeroCopy}>
           <Text style={styles.detailsPatient}>
             {study.patient}
-            {study.age ? ` · ${study.age} лет` : ""}
+            {study.age ? (
+              <Text style={styles.detailsAge}> {study.age}</Text>
+            ) : null}
           </Text>
           <Text style={styles.detailsSubtitle}>
             ID {study.study_id}
@@ -2539,7 +2544,6 @@ function RequestsScreen({
   onCommand,
   onSubmit,
   onRefresh,
-  onDelete,
   onDeleteAll
 }: {
   compact: boolean;
@@ -2551,7 +2555,6 @@ function RequestsScreen({
     payload: Record<string, unknown>
   ) => Promise<boolean>;
   onRefresh: (request: UserRequest) => void;
-  onDelete: (request: UserRequest) => void;
   onDeleteAll: () => void;
 }) {
   return (
@@ -2588,11 +2591,7 @@ function RequestsScreen({
         {requests.length ? (
         <View style={styles.requestList}>
           {requests.map((request) => (
-            <SwipeableCard key={request.id} onDelete={() => onDelete(request)}
-              onForward={() => void Share.share({
-                title: commandLabels[request.command] ?? request.command,
-                message: JSON.stringify(parseObject(request.result), null, 2)
-              })}>
+            <View key={request.id}>
               <RequestCard
                 compact={compact}
                 request={request}
@@ -2600,7 +2599,7 @@ function RequestsScreen({
                 onSubmit={onSubmit}
                 onRefresh={() => onRefresh(request)}
               />
-            </SwipeableCard>
+            </View>
           ))}
         </View>
       ) : (
@@ -2874,7 +2873,7 @@ function ReportsScreen({
       >
         <View style={styles.compactScreenHeading}>
           <Text style={styles.compactScreenTitle}>Отчёты дежурств</Text>
-          <Text style={styles.compactScreenMeta}>Смахните влево для действий</Text>
+          <Text style={styles.compactScreenMeta}>{reports.length} записей</Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -2918,11 +2917,7 @@ function ReportsScreen({
             }
           >
             {reports.map((report, index) => (
-              <SwipeableCard
-                key={report.filename ?? `${report.generated_at}-${index}`}
-                onDelete={() => onDelete(report)}
-                onForward={() => onForward(report)}
-              >
+              <View key={report.filename ?? `${report.generated_at}-${index}`}>
                 <ReportRow
                   report={report}
                   selected={selected?.filename === report.filename}
@@ -2931,7 +2926,7 @@ function ReportsScreen({
                   onDelete={() => onDelete(report)}
                   onForward={() => onForward(report)}
                 />
-              </SwipeableCard>
+              </View>
             ))}
           </ScrollView>
           {!compact && selected ? (
@@ -4689,6 +4684,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     flex: 1
   },
+  studyAge: { ...typography.meta, color: colors.textMuted },
   studyOperation: { ...typography.meta, color: colors.textMuted },
   studyDateCompact: {
     color: colors.textDim,
@@ -4720,6 +4716,7 @@ const styles = StyleSheet.create({
   },
   detailsHeroCopy: { flex: 1, minWidth: 0 },
   detailsPatient: { ...typography.title, color: colors.text },
+  detailsAge: { ...typography.meta, color: colors.textMuted },
   detailsSubtitle: { ...typography.meta, color: colors.textMuted, marginTop: 3 },
   detailGrid: {
     flexDirection: "row",
@@ -4800,7 +4797,7 @@ const styles = StyleSheet.create({
     gap: 6,
     marginBottom: 8
   },
-  angioFiltersCompact: { flexWrap: "wrap", minHeight: 84 },
+  angioFiltersCompact: { minHeight: 40, marginBottom: 4 },
   angioFilter: {
     minHeight: 40,
     paddingHorizontal: 14,

@@ -25,4 +25,10 @@ describe("clinical protocol presentation", () => {
       )
     ).toBe("КАГ. стент ПНА");
   });
+
+  it("removes filler words from operation names and protocol conclusions", () => {
+    expect(
+      cleanClinicalText("Отмечается частичная окклюзия ПКА. Частичная реканализация")
+    ).toBe("окклюзия ПКА. реканализация");
+  });
 });
