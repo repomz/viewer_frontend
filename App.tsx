@@ -1274,6 +1274,7 @@ export default function App() {
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
                   angiographies={xaStudies}
+                  dicomCache={dicomCache}
                   onOpenXA={openStudyAngiography}
                   onDelete={(study) => void removeStudy(study)}
                 />
@@ -1927,6 +1928,7 @@ function StudiesScreen({
   onRetry,
   onRefresh,
   angiographies,
+  dicomCache,
   onOpenXA,
   onDelete
 }: {
@@ -1947,10 +1949,22 @@ function StudiesScreen({
   onRetry: () => void;
   onRefresh: () => void;
   angiographies: Study[];
+  dicomCache: DicomCacheSnapshot;
   onOpenXA: (study: Study) => void;
   onDelete: (study: Study) => void;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
+  const patientXA = (study: Study) => angiographies.find((item) =>
+    patientKey(item.patient) === patientKey(study.patient) &&
+    item.study_type.toLowerCase() === "xa"
+  );
+  const hasAvailableXA = (study: Study) => {
+    const angiography = patientXA(study);
+    return Boolean(
+      angiography &&
+      (!compact || dicomCache.studies[angiography.study_id]?.complete)
+    );
+  };
   const choose = (study: Study) => {
     onSelect(study);
     if (!inlineDetail) setDetailOpen(true);
@@ -2004,10 +2018,7 @@ function StudiesScreen({
               contentContainerStyle={styles.studyList}
             >
               {studies.map((study, index) => {
-                const hasXA = angiographies.some((item) =>
-                  patientKey(item.patient) === patientKey(study.patient) &&
-                  item.study_type.toLowerCase() === "xa"
-                );
+                const hasXA = hasAvailableXA(study);
                 return (
                 <SwipeableCard key={study.id} onDelete={() => onDelete(study)}
                   onForward={() => void Share.share({
@@ -2045,10 +2056,7 @@ function StudiesScreen({
             {selected ? (
               <StudyDetails
                 study={selected}
-                hasXA={angiographies.some((item) =>
-                  item.study_type.toLowerCase() === "xa" &&
-                  patientKey(item.patient) === patientKey(selected.patient)
-                )}
+                hasXA={hasAvailableXA(selected)}
                 onOpenXA={() => onOpenXA(selected)}
               />
             ) : (
@@ -2074,10 +2082,7 @@ function StudiesScreen({
             <ScrollView contentContainerStyle={styles.sheetScroll}>
               <StudyDetails
                 study={selected}
-                hasXA={angiographies.some((item) =>
-                  item.study_type.toLowerCase() === "xa" &&
-                  patientKey(item.patient) === patientKey(selected.patient)
-                )}
+                hasXA={hasAvailableXA(selected)}
                 onOpenXA={() => {
                   setDetailOpen(false);
                   onOpenXA(selected);
