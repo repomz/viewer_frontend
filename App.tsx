@@ -750,21 +750,17 @@ export default function App() {
   useEffect(() => {
     if (preloadStarted.current) return;
     preloadStarted.current = true;
+    const studiesPromise = loadStudies();
+    const readyTimer = setTimeout(() => setAppReady(true), 1_800);
+    void studiesPromise.finally(() => setAppReady(true));
     void Promise.allSettled([
-      loadStudies(),
-      loadRequestHistory(),
-      loadXAStudies(),
-      loadReports(),
-      loadPlan(0),
+      studiesPromise,
       updateServerHealth(),
       updateAgentHealth()
-    ]).finally(() => setAppReady(true));
+    ]);
+    return () => clearTimeout(readyTimer);
   }, [
-    loadRequestHistory,
-    loadPlan,
-    loadReports,
     loadStudies,
-    loadXAStudies,
     updateAgentHealth,
     updateServerHealth
   ]);
@@ -791,6 +787,12 @@ export default function App() {
         // Older backend deployments do not expose the agent directory yet.
       });
   }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    void loadRequestHistory();
+    void loadXAStudies();
+  }, [authenticated, loadRequestHistory, loadXAStudies]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -2500,7 +2502,10 @@ function AngiographyScreen({
             ]}
           >
             <ScrollView
-              style={[styles.angioList, compact && styles.angioListCompact]}
+              style={[
+                styles.angioList,
+                compact ? styles.angioListCompact : styles.angioListDesktop
+              ]}
               contentContainerStyle={styles.angioListContent}
               showsVerticalScrollIndicator={false}
             >
@@ -3835,18 +3840,20 @@ const defaultPlanOperations: Record<string, string> = {
   рсц: "цаг",
   неврология: "цаг",
   "нейро/х": "цаг",
-  сосуды: "каротиды",
+  сосуды: "ангио вса",
   гинек: "эма",
   урология: "эмб простаты",
   "гной хир": "бап голени"
 };
 
 const vascularOperations = [
+  "каг",
   "гибрид",
-  "каротиды",
-  "каротиды + стент",
-  "ангиогр в/к",
-  "ангиогр н/к",
+  "ангио вса",
+  "стент вса",
+  "ангио в/к",
+  "ангио н/к",
+  "ангио опа/нпа",
   "стент опа/нпа",
   "бап голень"
 ];
@@ -3881,6 +3888,17 @@ const sortPlanEntries = (entries: PlanEntry[]) =>
     if (department) return department;
     return left.patient.localeCompare(right.patient, "ru");
   });
+
+const shortPlanDepartment = (department: string) => {
+  const value = department.toLocaleLowerCase("ru");
+  if (value.startsWith("кардио")) return "к/о";
+  if (value === "нейро/х") return "н/х";
+  if (value === "сосуды") return "с/х";
+  if (value.startsWith("гинек")) return "г/о";
+  if (value === "неврология") return "н/о";
+  if (value.includes("хир")) return "х/о";
+  return department;
+};
 
 const weekdayTitle = (date: string) =>
   new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "2-digit" })
@@ -3983,6 +4001,54 @@ async function sharePlanSnapshot(
   }
 }
 
+function escapePrintHTML(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function printOperationPlan(plan: OperationPlan) {
+  if (Platform.OS !== "web") return;
+  const printWindow = window.open("", "_blank", "width=1180,height=820");
+  if (!printWindow) throw new Error("Браузер заблокировал окно печати");
+  printWindow.opener = null;
+  const rows = plan.days.flatMap((day) => {
+    const entries = day.entries.length ? day.entries : [null];
+    return entries.map(
+      (entry, index) => `<tr>
+        ${index === 0 ? `<td rowspan="${entries.length}" class="day">${escapePrintHTML(weekdayTitle(day.date))}</td>` : ""}
+        <td>${escapePrintHTML(entry?.patient || "—")}</td>
+        <td>${escapePrintHTML(entry?.department || "—")}</td>
+        <td>${escapePrintHTML(entry?.operation || "—")}</td>
+        <td>${escapePrintHTML(entry?.additions || "—")}</td>
+        <td>${escapePrintHTML(entry?.previous_operation?.name_operation || "Первичная")}</td>
+      </tr>`
+    );
+  }).join("");
+  printWindow.addEventListener("load", () => printWindow.print(), { once: true });
+  printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
+    <title>План операций</title><style>
+      @page { size: landscape; margin: 12mm; }
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17232d; }
+      h1 { margin: 0 0 4px; font-size: 24px; }
+      p { margin: 0 0 18px; color: #536776; }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      th { background: #eaf1f5; color: #536776; font-size: 10px; text-transform: uppercase; }
+      th, td { border: 1px solid #d4dfe6; padding: 8px; vertical-align: top; font-size: 12px; }
+      th:first-child { width: 8%; } th:nth-child(2) { width: 18%; }
+      th:nth-child(3) { width: 12%; } th:nth-child(4) { width: 19%; }
+      th:nth-child(5) { width: 18%; } th:nth-child(6) { width: 25%; }
+      .day { color: #086f98; font-weight: 800; background: #f3f6f8; text-transform: capitalize; }
+    </style></head><body><h1>План операций</h1>
+    <p>Неделя с ${escapePrintHTML(formatDate(plan.week_start))}</p>
+    <table><thead><tr><th>День</th><th>Пациент</th><th>Отделение</th><th>Операция</th><th>Дополнения</th><th>Предыдущая операция</th></tr></thead>
+    <tbody>${rows}</tbody></table></body></html>`);
+  printWindow.document.close();
+}
+
 function PlanScreen({
   compact,
   plan,
@@ -4062,10 +4128,19 @@ function PlanScreen({
         </View>
         <View style={styles.planToolbarActions}>
           <IconButton
-            icon="share-outline"
-            label="Отправить снимок"
+            icon={compact ? "share-outline" : "print-outline"}
+            label={compact ? "Отправить снимок" : "Распечатать план"}
             onPress={() => {
-              if (plan) setShareOpen(true);
+              if (!plan) return;
+              if (compact) {
+                setShareOpen(true);
+                return;
+              }
+              try {
+                printOperationPlan(plan);
+              } catch (reason) {
+                Alert.alert("Не удалось распечатать", errorMessage(reason));
+              }
             }}
           />
         </View>
@@ -4099,12 +4174,14 @@ function PlanScreen({
       ) : plan ? (
         <View style={styles.planTable}>
           <View style={[styles.planTableRow, styles.planTableHeader]}>
-            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDayCell]}>День</Text>
-            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPatientCell]}>Пациент</Text>
-            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDepartmentCell]}>{compact ? "Отд." : "Отделение"}</Text>
-            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planOperationCell]}>{compact ? "Опер." : "Операция"}</Text>
-            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planAdditionsCell]}>{compact ? "Доп." : "Дополнения"}</Text>
-            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPreviousCell]}>{compact ? "История" : "Предыдущие операции"}</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDayCell, compact && styles.planDayCellCompact]}>День</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPatientCell, compact && styles.planPatientCellCompact]}>Пациент</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>{compact ? "Отд." : "Отделение"}</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planOperationCell, compact && styles.planOperationCellCompact]}>{compact ? "Опер." : "Операция"}</Text>
+            {!compact ? (
+              <Text style={[styles.planTableHeaderText, styles.planAdditionsCell]}>Дополнения</Text>
+            ) : null}
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPreviousCell, compact && styles.planPreviousCellCompact]}>{compact ? "Ист" : "Предыдущие операции"}</Text>
           </View>
           <ScrollView
             style={styles.planTableBody}
@@ -4122,26 +4199,37 @@ function PlanScreen({
                   pressed && styles.planTableRowPressed
                 ]}
               >
-                <Text style={[styles.planTableDayText, styles.planDayCell]}>
+                <Text style={[styles.planTableDayText, styles.planDayCell, compact && styles.planDayCellCompact]}>
                   {weekdayTitle(day.date)}
                 </Text>
-                <View style={styles.planEntriesColumn}>
+                <View style={[styles.planEntriesColumn, compact && styles.planEntriesColumnCompact]}>
                   {(day.entries.length ? day.entries : [null]).map(
                     (entry, index) => (
                       <View key={index} style={styles.planEntryRow}>
-                        <Text style={[styles.planTableText, styles.planPatientCell]}>
+                        <Text
+                          numberOfLines={1}
+                          adjustsFontSizeToFit={compact}
+                          minimumFontScale={0.72}
+                          style={[styles.planTableText, styles.planPatientCell, compact && styles.planPatientCellCompact]}
+                        >
                           {entry?.patient || "—"}
                         </Text>
-                        <Text style={[styles.planTableText, styles.planDepartmentCell]}>
-                          {entry?.department || "—"}
+                        <Text style={[styles.planTableText, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>
+                          {entry
+                            ? compact
+                              ? shortPlanDepartment(entry.department)
+                              : entry.department
+                            : "—"}
                         </Text>
-                        <Text style={[styles.planTableText, styles.planOperationCell]}>
+                        <Text numberOfLines={2} style={[styles.planTableText, styles.planOperationCell, compact && styles.planOperationCellCompact]}>
                           {entry?.operation || "—"}
                         </Text>
-                        <Text style={[styles.planTableText, styles.planAdditionsCell]}>
-                          {entry?.additions || "—"}
-                        </Text>
-                        <View style={styles.planPreviousCell}>
+                        {!compact ? (
+                          <Text style={[styles.planTableText, styles.planAdditionsCell]}>
+                            {entry?.additions || "—"}
+                          </Text>
+                        ) : null}
+                        <View style={[styles.planPreviousCell, compact && styles.planPreviousCellCompact]}>
                           {entry?.previous_operation ? (
                             <Pressable
                               accessibilityRole="button"
@@ -4154,12 +4242,14 @@ function PlanScreen({
                             >
                               <Text numberOfLines={2} style={styles.planPreviousButtonText}>
                                 {compact
-                                  ? "Открыть"
+                                  ? "повт"
                                   : cleanClinicalText(entry.previous_operation.name_operation, true)}
                               </Text>
                             </Pressable>
                           ) : (
-                            <Text style={styles.planPrimaryText}>Первичная</Text>
+                            <Text style={styles.planPrimaryText}>
+                              {entry ? (compact ? "перв" : "Первичная") : "—"}
+                            </Text>
                           )}
                         </View>
                       </View>
@@ -4177,15 +4267,36 @@ function PlanScreen({
         title={selectedDate ? `План на ${formatDate(selectedDate)}` : "План дня"}
         onClose={() => setSelectedDate(null)}
         fullScreen={compact}
+        extraWide={!compact}
       >
+        <View style={styles.planEditorShell}>
         <ScrollView
+          style={styles.planEditorScroll}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={styles.planEditorContent}
+          contentContainerStyle={[
+            styles.planEditorContent,
+            !compact && styles.planEditorContentDesktop
+          ]}
         >
+          {!compact ? (
+            <View style={styles.planEditorColumns}>
+              <View style={styles.planEditorHeaderDesktop} />
+              <Text style={[styles.planFieldLabel, styles.planEditorPatientField]}>Пациент</Text>
+              <Text style={[styles.planFieldLabel, styles.planEditorDepartmentField]}>Отделение</Text>
+              <Text style={[styles.planFieldLabel, styles.planEditorOperationField]}>Операция</Text>
+              <Text style={[styles.planFieldLabel, styles.planEditorAdditionsField]}>Дополнения</Text>
+              <Text style={[styles.planFieldLabel, styles.planEditorHistoryField]}>Предыдущая</Text>
+            </View>
+          ) : null}
           {draft.map((entry, index) => (
-            <View key={index} style={styles.planEditorRow}>
-              <View style={styles.planEditorHeader}>
-                <Text style={styles.settingsTitle}>Пациент {index + 1}</Text>
+            <View
+              key={index}
+              style={[styles.planEditorRow, !compact && styles.planEditorRowDesktop]}
+            >
+              <View style={[styles.planEditorHeader, !compact && styles.planEditorHeaderDesktop]}>
+                <Text style={[styles.settingsTitle, !compact && styles.planEditorNumber]}>
+                  {compact ? `Пациент ${index + 1}` : String(index + 1).padStart(2, "0")}
+                </Text>
                 {draft.length > 1 ? (
                   <IconButton
                     icon="trash-outline"
@@ -4198,98 +4309,120 @@ function PlanScreen({
                   />
                 ) : null}
               </View>
-              <Text style={styles.planFieldLabel}>Пациент</Text>
-              <TextInput
-                value={entry.patient}
-                onChangeText={(patient) => updateEntry(index, { patient })}
-                placeholder="Фамилия пациента"
-                placeholderTextColor={colors.textDim}
-                autoCapitalize="words"
-                style={styles.planPatientInput}
-              />
-              <Text style={styles.planFieldLabel}>Отделение</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Выбрать отделение пациента ${index + 1}`}
-                onPress={() =>
-                  setPicker(
-                    picker?.index === index && picker.type === "department"
-                      ? null
-                      : { index, type: "department" }
-                  )
-                }
-                style={styles.planSelect}
-              >
-                <Text style={styles.planSelectText}>{entry.department}</Text>
-                <Icon name="chevron-down" size={17} color={colors.textDim} />
-              </Pressable>
-              {picker?.index === index && picker.type === "department" ? (
-                <View style={styles.planOptions}>
-                  {planDepartments.map((department) => (
-                    <Pressable
-                      key={department}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Отделение ${department}`}
-                      onPress={() => {
-                        updateEntry(index, {
-                          department,
-                          operation: defaultPlanOperations[department]!
-                        });
-                        setPicker(null);
-                      }}
-                      style={styles.planOption}
-                    >
-                      <Text style={styles.planOptionText}>{department}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              ) : null}
-              <Text style={styles.planFieldLabel}>Операция</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Выбрать операцию пациента ${index + 1}`}
-                disabled={planOperationsFor(entry.department).length < 2}
-                onPress={() =>
-                  setPicker(
-                    picker?.index === index && picker.type === "operation"
-                      ? null
-                      : { index, type: "operation" }
-                  )
-                }
-                style={styles.planSelect}
-              >
-                <Text style={styles.planSelectText}>{entry.operation}</Text>
-                {planOperationsFor(entry.department).length > 1 ? (
+              <View style={[styles.planEditorField, !compact && styles.planEditorPatientField]}>
+                {compact ? <Text style={styles.planFieldLabel}>Пациент</Text> : null}
+                <TextInput
+                  value={entry.patient}
+                  onChangeText={(patient) => updateEntry(index, { patient })}
+                  placeholder="Фамилия или ФИО"
+                  placeholderTextColor={colors.textDim}
+                  autoCapitalize="words"
+                  style={[styles.planPatientInput, !compact && styles.planDesktopControl]}
+                />
+              </View>
+              <View style={[styles.planEditorField, !compact && styles.planEditorDepartmentField]}>
+                {compact ? <Text style={styles.planFieldLabel}>Отделение</Text> : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Выбрать отделение пациента ${index + 1}`}
+                  onPress={() =>
+                    setPicker(
+                      picker?.index === index && picker.type === "department"
+                        ? null
+                        : { index, type: "department" }
+                    )
+                  }
+                  style={[styles.planSelect, !compact && styles.planDesktopControl]}
+                >
+                  <Text style={styles.planSelectText}>{entry.department}</Text>
                   <Icon name="chevron-down" size={17} color={colors.textDim} />
+                </Pressable>
+                {picker?.index === index && picker.type === "department" ? (
+                  <View style={styles.planOptions}>
+                    {planDepartments.map((department) => (
+                      <Pressable
+                        key={department}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Отделение ${department}`}
+                        onPress={() => {
+                          updateEntry(index, {
+                            department,
+                            operation: defaultPlanOperations[department]!
+                          });
+                          setPicker(null);
+                        }}
+                        style={styles.planOption}
+                      >
+                        <Text style={styles.planOptionText}>{department}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
                 ) : null}
-              </Pressable>
-              {picker?.index === index && picker.type === "operation" ? (
-                <View style={styles.planOptions}>
-                  {planOperationsFor(entry.department).map((operation) => (
-                    <Pressable
-                      key={operation}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Операция ${operation}`}
-                      onPress={() => {
-                        updateEntry(index, { operation });
-                        setPicker(null);
-                      }}
-                      style={styles.planOption}
-                    >
-                      <Text style={styles.planOptionText}>{operation}</Text>
-                    </Pressable>
-                  ))}
+              </View>
+              <View style={[styles.planEditorField, !compact && styles.planEditorOperationField]}>
+                {compact ? <Text style={styles.planFieldLabel}>Операция</Text> : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Выбрать операцию пациента ${index + 1}`}
+                  disabled={planOperationsFor(entry.department).length < 2}
+                  onPress={() =>
+                    setPicker(
+                      picker?.index === index && picker.type === "operation"
+                        ? null
+                        : { index, type: "operation" }
+                    )
+                  }
+                  style={[styles.planSelect, !compact && styles.planDesktopControl]}
+                >
+                  <Text style={styles.planSelectText}>{entry.operation}</Text>
+                  {planOperationsFor(entry.department).length > 1 ? (
+                    <Icon name="chevron-down" size={17} color={colors.textDim} />
+                  ) : null}
+                </Pressable>
+                {picker?.index === index && picker.type === "operation" ? (
+                  <View style={styles.planOptions}>
+                    {planOperationsFor(entry.department).map((operation) => (
+                      <Pressable
+                        key={operation}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Операция ${operation}`}
+                        onPress={() => {
+                          updateEntry(index, { operation });
+                          setPicker(null);
+                        }}
+                        style={styles.planOption}
+                      >
+                        <Text style={styles.planOptionText}>{operation}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+              <View style={[styles.planEditorField, !compact && styles.planEditorAdditionsField]}>
+                {compact ? <Text style={styles.planFieldLabel}>Дополнения</Text> : null}
+                <TextInput
+                  value={entry.additions}
+                  onChangeText={(additions) => updateEntry(index, { additions })}
+                  placeholder="Дополнения"
+                  placeholderTextColor={colors.textDim}
+                  multiline
+                  style={[
+                    styles.planPatientInput,
+                    compact ? styles.planAdditionsInput : styles.planDesktopControl
+                  ]}
+                />
+              </View>
+              {!compact ? (
+                <View style={[styles.planEditorField, styles.planEditorHistoryField]}>
+                  <View style={[styles.planEditorHistoryValue, styles.planDesktopControl]}>
+                    <Text numberOfLines={2} style={styles.planEditorHistoryText}>
+                      {entry.previous_operation
+                        ? cleanClinicalText(entry.previous_operation.name_operation, true)
+                        : "Первичная"}
+                    </Text>
+                  </View>
                 </View>
               ) : null}
-              <Text style={styles.planFieldLabel}>Дополнения</Text>
-              <TextInput
-                value={entry.additions}
-                onChangeText={(additions) => updateEntry(index, { additions })}
-                placeholder="Дополнительная информация"
-                placeholderTextColor={colors.textDim}
-                multiline
-                style={[styles.planPatientInput, styles.planAdditionsInput]}
-              />
             </View>
           ))}
           <Button
@@ -4298,12 +4431,15 @@ function PlanScreen({
             variant="ghost"
             onPress={() => setDraft((current) => [...current, newPlanEntry()])}
           />
+        </ScrollView>
+        <View style={[styles.planEditorFooter, !compact && styles.planEditorFooterDesktop]}>
           {saveError ? <InlineError message={saveError} onRetry={saveDay} /> : null}
           <View style={styles.planEditorActions}>
             <Button label="Отмена" variant="ghost" onPress={() => setSelectedDate(null)} />
             <Button label="Сохранить" loading={saving} onPress={() => void saveDay()} />
           </View>
-        </ScrollView>
+        </View>
+        </View>
       </Sheet>
 
       <Sheet
@@ -5582,17 +5718,20 @@ const styles = StyleSheet.create({
     minWidth: 0,
     backgroundColor: "transparent"
   },
+  angioListDesktop: {
+    width: 290,
+    maxWidth: 290,
+    flexBasis: 290,
+    flexGrow: 0,
+    flexShrink: 0
+  },
   angioListCompact: { flex: 1, width: "100%", minWidth: 0, maxWidth: "100%" },
   angioListContent: { gap: 6, paddingBottom: 8 },
   angioDesktopViewer: {
-    width: "58%",
-    maxWidth: 900,
-    minWidth: 560,
-    maxHeight: "100%",
-    aspectRatio: 1.28,
-    alignSelf: "center",
-    flexGrow: 0,
-    flexShrink: 1,
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    alignSelf: "stretch",
     overflow: "hidden",
     borderRadius: radii.lg,
     borderWidth: 1,
@@ -6676,13 +6815,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "stretch",
     borderLeftWidth: 4,
-    borderLeftColor: colors.primary,
+    borderLeftColor: "rgba(11,132,179,0.28)",
     borderBottomWidth: 3,
     borderBottomColor: colors.border,
     backgroundColor: colors.canvasRaised
   },
   planTableDayRowAlternate: { backgroundColor: colors.surfaceSoft },
   planEntriesColumn: { flex: 5.15 },
+  planEntriesColumnCompact: { flex: 3.9 },
   planEntryRow: {
     minHeight: 34,
     flexDirection: "row",
@@ -6731,6 +6871,11 @@ const styles = StyleSheet.create({
   planOperationCell: { flex: 1, minWidth: 0, flexShrink: 1 },
   planAdditionsCell: { flex: 1, minWidth: 0, flexShrink: 1 },
   planPreviousCell: { flex: 1.2, minWidth: 0, flexShrink: 1 },
+  planDayCellCompact: { flex: 0.58 },
+  planPatientCellCompact: { flex: 1.75 },
+  planDepartmentCellCompact: { flex: 0.52, textAlign: "center", paddingHorizontal: 1 },
+  planOperationCellCompact: { flex: 1.08, paddingHorizontal: 2, fontSize: 9, lineHeight: 12 },
+  planPreviousCellCompact: { flex: 0.55 },
   planPreviousButton: {
     flex: 1,
     minHeight: 32,
@@ -6751,10 +6896,20 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "700"
   },
+  planEditorShell: { flex: 1, minHeight: 0 },
+  planEditorScroll: { flex: 1, minHeight: 0 },
   planEditorContent: {
     padding: 12,
     paddingBottom: 24,
     gap: 8
+  },
+  planEditorContentDesktop: { padding: 8, gap: 4 },
+  planEditorColumns: {
+    minHeight: 18,
+    paddingHorizontal: 5,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7
   },
   planEditorRow: {
     padding: 14,
@@ -6764,11 +6919,47 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.surface
   },
+  planEditorRowDesktop: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 7,
+    padding: 5
+  },
   planEditorHeader: {
     minHeight: 26,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between"
+  },
+  planEditorHeaderDesktop: {
+    width: 58,
+    flexShrink: 0,
+    minHeight: 34,
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  planEditorNumber: { color: colors.primary, fontSize: 13 },
+  planEditorField: { minWidth: 0, gap: 5 },
+  planDesktopControl: { minHeight: 34, height: 34 },
+  planEditorPatientField: { flex: 1.55 },
+  planEditorDepartmentField: { flex: 0.9 },
+  planEditorOperationField: { flex: 1.25 },
+  planEditorAdditionsField: { flex: 1.2 },
+  planEditorHistoryField: { flex: 1.2 },
+  planEditorHistoryValue: {
+    minHeight: 42,
+    paddingHorizontal: 10,
+    justifyContent: "center",
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.surfaceSoft
+  },
+  planEditorHistoryText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "600"
   },
   planPatientInput: {
     minHeight: 42,
@@ -6830,6 +7021,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "flex-end",
     gap: 8
+  },
+  planEditorFooter: {
+    minHeight: 68,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+    backgroundColor: colors.surface
+  },
+  planEditorFooterDesktop: {
+    minHeight: 54,
+    paddingVertical: 5
   },
   previousProtocolContent: { padding: 16, paddingBottom: 32 },
   planShareOptions: { padding: 16, gap: 8 },

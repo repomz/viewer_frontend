@@ -369,12 +369,14 @@ export function Sheet({
   onClose,
   children,
   wide = false,
+  extraWide = false,
   fullScreen = false
 }: PropsWithChildren<{
   visible: boolean;
   title: string;
   onClose: () => void;
   wide?: boolean;
+  extraWide?: boolean;
   fullScreen?: boolean;
 }>) {
   const { width } = useWindowDimensions();
@@ -391,6 +393,7 @@ export function Sheet({
         style={[
           styles.modalRoot,
           compact && styles.modalRootCompact,
+          extraWide && styles.modalRootExtraWide,
           fullScreen && styles.modalRootFull
         ]}
       >
@@ -405,12 +408,14 @@ export function Sheet({
             styles.sheet,
             compact && styles.sheetCompact,
             wide && styles.sheetWide,
+            extraWide && styles.sheetExtraWide,
             fullScreen && styles.sheetFull
           ]}
         >
           <View
             style={[
-              styles.sheetHeader,
+            styles.sheetHeader,
+              extraWide && styles.sheetHeaderExtraWide,
               fullScreen && {
                 minHeight: 62 + insets.top,
                 paddingTop: insets.top
@@ -728,6 +733,9 @@ const styles = StyleSheet.create({
     padding: 8,
     paddingBottom: 0
   },
+  modalRootExtraWide: {
+    padding: 4
+  },
   sheet: {
     width: "100%",
     maxWidth: 520,
@@ -741,6 +749,11 @@ const styles = StyleSheet.create({
   },
   sheetWide: {
     maxWidth: 760
+  },
+  sheetExtraWide: {
+    maxWidth: 1240,
+    width: "96%",
+    maxHeight: "100%"
   },
   sheetCompact: {
     maxWidth: "100%",
@@ -764,6 +777,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft
+  },
+  sheetHeaderExtraWide: {
+    minHeight: 54,
+    paddingHorizontal: 14
   },
   sheetTitle: {
     ...typography.title,

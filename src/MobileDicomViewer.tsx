@@ -980,7 +980,7 @@ export function MobileDicomViewer({
         desktop && styles.rootDesktop,
         {
           paddingTop: desktop ? 0 : insets.top + 58,
-          paddingBottom: desktop ? 74 : insets.bottom + 82
+          paddingBottom: desktop ? 0 : insets.bottom + 82
         }
       ]}
     >
@@ -1356,7 +1356,7 @@ const styles = StyleSheet.create({
     width: 148,
     minWidth: 148,
     padding: 10,
-    paddingBottom: 76,
+    paddingBottom: 10,
     borderRightWidth: 1,
     borderRightColor: darkColors.borderSoft,
     backgroundColor: "#12161B"
