@@ -119,6 +119,8 @@ export type PlanEntry = {
   patient: string;
   department: string;
   operation: string;
+  additions: string;
+  previous_operation?: Study;
 };
 
 export type PlanDay = {
@@ -167,4 +169,19 @@ export type VMPStatisticsConfig = {
   operationTypes: string[];
   includedStudyIds: string[];
   excludedStudyIds: string[];
+};
+
+export type HistoricalStatisticsYear = {
+  year: number;
+  counts: Record<string, number>;
+  total: number;
+};
+
+export type HistoricalStatistics = {
+  source: string;
+  start_year: number;
+  end_year: number;
+  generated_at: string;
+  operation_types: string[];
+  years: HistoricalStatisticsYear[];
 };

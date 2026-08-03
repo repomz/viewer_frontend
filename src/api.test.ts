@@ -3,6 +3,7 @@ import {
   deletePACSStudy,
   generateReport,
   getAgentHeartbeatTimes,
+  getHistoricalStatistics,
   getOperationStatistics,
   getOperationPlan,
   getStudies,
@@ -165,6 +166,29 @@ describe("Viewer API client", () => {
           excluded_study_ids: []
         })
       })
+    );
+  });
+
+  it("loads the dynamic historical statistics table", async () => {
+    const payload = {
+      source: "hospital-archive",
+      start_year: 2024,
+      end_year: 2026,
+      generated_at: "2026-08-03T00:00:00Z",
+      operation_types: ["КАГ", "ЦАГ"],
+      years: [{ year: 2026, counts: { "КАГ": 4, "ЦАГ": 2 }, total: 6 }]
+    };
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await expect(getHistoricalStatistics()).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/statistics/history",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
   });
 });

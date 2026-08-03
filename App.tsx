@@ -38,6 +38,7 @@ import {
   getAgentHeartbeatTimes,
   getAgents,
   generateReport,
+  getHistoricalStatistics,
   getOperationStatistics,
   getOperationPlan,
   getReports,
@@ -81,6 +82,7 @@ import type {
   AgentHealth,
   ApiHealth,
   AppSettings,
+  HistoricalStatistics,
   OperationStatistics,
   OperationPlan,
   OperationsReport,
@@ -543,6 +545,7 @@ export default function App() {
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState("");
   const [statistics, setStatistics] = useState<OperationStatistics | null>(null);
+  const [historicalStatistics, setHistoricalStatistics] = useState<HistoricalStatistics | null>(null);
   const [statisticsLoading, setStatisticsLoading] = useState(false);
   const [statisticsError, setStatisticsError] = useState("");
   const [requestedXAStudyUID, setRequestedXAStudyUID] = useState<string | null>(null);
@@ -656,7 +659,12 @@ export default function App() {
     setStatisticsError("");
     setStatisticsLoading(true);
     try {
-      setStatistics(await getOperationStatistics());
+      const [current, historical] = await Promise.all([
+        getOperationStatistics(),
+        getHistoricalStatistics()
+      ]);
+      setStatistics(current);
+      setHistoricalStatistics(historical);
     } catch (error) {
       setStatisticsError(errorMessage(error));
     } finally {
@@ -1352,6 +1360,7 @@ export default function App() {
               {activeTab === "statistics" && !compact ? (
                 <StatisticsScreen
                   statistics={statistics}
+                  historicalStatistics={historicalStatistics}
                   studies={protocolStudies}
                   loading={statisticsLoading}
                   error={statisticsError}
@@ -1391,17 +1400,8 @@ export default function App() {
                   }}
                   onRetry={() => void loadPlan(planWeekOffset)}
                   onSave={async (date, entries) => {
-                    const saved = await saveOperationPlanDay(date, entries);
-                    setPlan((current) =>
-                      current
-                        ? {
-                            ...current,
-                            days: current.days.map((day) =>
-                              day.date === saved.date ? saved : day
-                            )
-                          }
-                        : current
-                    );
+                    await saveOperationPlanDay(date, entries);
+                    await loadPlan(planWeekOffset);
                   }}
                 />
               ) : null}
@@ -3356,6 +3356,7 @@ function ReportPeriodSheet({
 
 function StatisticsScreen({
   statistics,
+  historicalStatistics,
   studies,
   loading,
   error,
@@ -3363,6 +3364,7 @@ function StatisticsScreen({
   onUpdate
 }: {
   statistics: OperationStatistics | null;
+  historicalStatistics: HistoricalStatistics | null;
   studies: Study[];
   loading: boolean;
   error: string;
@@ -3424,7 +3426,7 @@ function StatisticsScreen({
         <View style={styles.compactScreenHeading}>
           <Text style={styles.compactScreenTitle}>Статистика операций</Text>
           <Text style={styles.compactScreenMeta}>
-            По протоколам, доступным в приложении
+            Хирурги — текущий год; архив — по всем импортированным годам
           </Text>
         </View>
         <IconButton icon="refresh-outline" label="Обновить статистику" onPress={onRetry} />
@@ -3434,7 +3436,12 @@ function StatisticsScreen({
         <LoadingState label="Считаем выполненные операции…" />
       ) : statistics ? (
         <View style={styles.statisticsWorkspace}>
+          <View style={styles.statisticsTablesPane}>
           <View style={styles.statisticsTableCard}>
+            <View style={styles.statisticsCardHeading}>
+              <Text style={styles.statisticsCardTitle}>Хирурги · {new Date().getFullYear()}</Text>
+              <Text style={styles.compactScreenMeta}>Только операции текущего года</Text>
+            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator style={styles.statisticsHorizontalScroll}>
               <View>
                 <View style={styles.statisticsTableHeader}>
@@ -3471,6 +3478,46 @@ function StatisticsScreen({
                 </View>
               </View>
             </ScrollView>
+          </View>
+          <View style={styles.historicalStatisticsCard}>
+            <View style={styles.statisticsCardHeading}>
+              <Text style={styles.statisticsCardTitle}>Операции по годам</Text>
+              <Text style={styles.compactScreenMeta}>
+                {historicalStatistics?.years.length
+                  ? `${historicalStatistics.start_year}–${historicalStatistics.end_year}`
+                  : "Архив ещё не импортирован"}
+              </Text>
+            </View>
+            {historicalStatistics?.years.length ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator>
+                <View>
+                  <View style={styles.historyTableRow}>
+                    <Text style={[styles.historyHeaderCell, styles.historyYearCell]}>ГОД</Text>
+                    {historicalStatistics.operation_types.map((type) => (
+                      <Text key={type} style={styles.historyHeaderCell}>{type}</Text>
+                    ))}
+                    <Text style={styles.historyHeaderCell}>ВСЕГО</Text>
+                  </View>
+                  <ScrollView style={styles.historyRowsScroll}>
+                    {historicalStatistics.years.map((row) => (
+                      <View key={row.year} style={styles.historyTableRow}>
+                        <Text style={[styles.historyCell, styles.historyYearCell]}>{row.year}</Text>
+                        {historicalStatistics.operation_types.map((type) => (
+                          <Text key={type} style={styles.historyCell}>{row.counts[type] ?? 0}</Text>
+                        ))}
+                        <Text style={[styles.historyCell, styles.historyTotalCell]}>{row.total}</Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                </View>
+              </ScrollView>
+            ) : (
+              <View style={styles.historyEmpty}>
+                <Icon name="analytics-outline" color={colors.textDim} />
+                <Text style={styles.compactScreenMeta}>Запустите скрипт импорта архива на больничном компьютере.</Text>
+              </View>
+            )}
+          </View>
           </View>
           <View style={styles.vmpPanel}>
             <View style={styles.vmpPanelHeader}>
@@ -3788,29 +3835,25 @@ const defaultPlanOperations: Record<string, string> = {
   рсц: "цаг",
   неврология: "цаг",
   "нейро/х": "цаг",
-  сосуды: "каротидография",
+  сосуды: "каротиды",
   гинек: "эма",
   урология: "эмб простаты",
   "гной хир": "бап голени"
 };
 
 const vascularOperations = [
-  "каротидография",
-  "каротиды + стент вса справа",
-  "каротиды + стент вса слева",
-  "ангио н/к справа",
-  "ангио н/к слева",
-  "стент опа/нпа справа",
-  "стент опа/нпа слева",
-  "ангио в/к справа",
-  "ангио в/к слева",
-  "стент подключи справа",
-  "стент подключи слева"
+  "гибрид",
+  "каротиды",
+  "каротиды + стент",
+  "ангиогр в/к",
+  "ангиогр н/к",
+  "стент опа/нпа",
+  "бап голень"
 ];
 
 const planOperationsFor = (department: string): string[] => {
   if (department.startsWith("кардио")) {
-    return ["каг + стент", "каг диагностика"];
+    return ["каг + стент", "каг диагностика", "ЭКС"];
   }
   if (department === "сосуды") return vascularOperations;
   return [defaultPlanOperations[department] ?? ""];
@@ -3819,8 +3862,25 @@ const planOperationsFor = (department: string): string[] => {
 const newPlanEntry = (): PlanEntry => ({
   patient: "",
   department: "кардио 2",
-  operation: defaultPlanOperations["кардио 2"]!
+  operation: defaultPlanOperations["кардио 2"]!,
+  additions: ""
 });
+
+const planDepartmentRank = (department: string) => {
+  if (department.startsWith("кардио")) return 0;
+  if (department === "сосуды") return 1;
+  if (["рсц", "неврология", "нейро/х"].includes(department)) return 2;
+  return 3;
+};
+
+const sortPlanEntries = (entries: PlanEntry[]) =>
+  [...entries].sort((left, right) => {
+    const group = planDepartmentRank(left.department) - planDepartmentRank(right.department);
+    if (group) return group;
+    const department = left.department.localeCompare(right.department, "ru");
+    if (department) return department;
+    return left.patient.localeCompare(right.patient, "ru");
+  });
 
 const weekdayTitle = (date: string) =>
   new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "2-digit" })
@@ -3836,7 +3896,8 @@ async function sharePlanSnapshot(
       day.entries.map(
         (entry) =>
           `${weekdayTitle(day.date)} — ${entry.patient}: ` +
-          `${entry.department}, ${entry.operation}`
+          `${entry.department}, ${entry.operation}` +
+          (entry.additions ? ` · ${entry.additions}` : "")
       )
     )
     .join("\n");
@@ -3873,7 +3934,10 @@ async function sharePlanSnapshot(
       context.font = "400 25px -apple-system, sans-serif";
       context.fillStyle = "#607482";
       context.fillText(
-        entry ? `${entry.department} · ${entry.operation}` : "Операций нет",
+        entry
+          ? `${entry.department} · ${entry.operation}` +
+            (entry.additions ? ` · ${entry.additions}` : "")
+          : "Операций нет",
         75,
         y + 35
       );
@@ -3947,10 +4011,15 @@ function PlanScreen({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
+  const [previousProtocol, setPreviousProtocol] = useState<Study | null>(null);
 
   const openDay = (date: string) => {
     const entries = plan?.days.find((day) => day.date === date)?.entries ?? [];
-    setDraft(entries.length ? entries.map((entry) => ({ ...entry })) : [newPlanEntry()]);
+    setDraft(
+      entries.length
+        ? entries.map((entry) => ({ ...entry, additions: entry.additions || "" }))
+        : [newPlanEntry()]
+    );
     setSelectedDate(date);
     setPicker(null);
     setSaveError("");
@@ -3970,9 +4039,9 @@ function PlanScreen({
     try {
       await onSave(
         selectedDate,
-        draft
+        sortPlanEntries(draft
           .map((entry) => ({ ...entry, patient: entry.patient.trim() }))
-          .filter((entry) => entry.patient)
+          .filter((entry) => entry.patient))
       );
       setSelectedDate(null);
     } catch (reason) {
@@ -4030,16 +4099,18 @@ function PlanScreen({
       ) : plan ? (
         <View style={styles.planTable}>
           <View style={[styles.planTableRow, styles.planTableHeader]}>
-            <Text style={[styles.planTableHeaderText, styles.planDayCell]}>День</Text>
-            <Text style={[styles.planTableHeaderText, styles.planPatientCell]}>Пациент</Text>
-            <Text style={[styles.planTableHeaderText, styles.planDepartmentCell]}>Отделение</Text>
-            <Text style={[styles.planTableHeaderText, styles.planOperationCell]}>Операция</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDayCell]}>День</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPatientCell]}>Пациент</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDepartmentCell]}>{compact ? "Отд." : "Отделение"}</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planOperationCell]}>{compact ? "Опер." : "Операция"}</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planAdditionsCell]}>{compact ? "Доп." : "Дополнения"}</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPreviousCell]}>{compact ? "История" : "Предыдущие операции"}</Text>
           </View>
           <ScrollView
             style={styles.planTableBody}
             showsVerticalScrollIndicator={false}
           >
-          {plan.days.map((day) => (
+          {plan.days.map((day, dayIndex) => (
               <Pressable
                 key={day.date}
                 accessibilityRole="button"
@@ -4047,6 +4118,7 @@ function PlanScreen({
                 onPress={() => openDay(day.date)}
                 style={({ pressed }) => [
                   styles.planTableDayRow,
+                  dayIndex % 2 === 1 && styles.planTableDayRowAlternate,
                   pressed && styles.planTableRowPressed
                 ]}
               >
@@ -4066,6 +4138,30 @@ function PlanScreen({
                         <Text style={[styles.planTableText, styles.planOperationCell]}>
                           {entry?.operation || "—"}
                         </Text>
+                        <Text style={[styles.planTableText, styles.planAdditionsCell]}>
+                          {entry?.additions || "—"}
+                        </Text>
+                        <View style={styles.planPreviousCell}>
+                          {entry?.previous_operation ? (
+                            <Pressable
+                              accessibilityRole="button"
+                              accessibilityLabel={`Открыть предыдущую операцию ${entry.patient}`}
+                              onPress={(event) => {
+                                event.stopPropagation?.();
+                                setPreviousProtocol(entry.previous_operation ?? null);
+                              }}
+                              style={styles.planPreviousButton}
+                            >
+                              <Text numberOfLines={2} style={styles.planPreviousButtonText}>
+                                {compact
+                                  ? "Открыть"
+                                  : cleanClinicalText(entry.previous_operation.name_operation, true)}
+                              </Text>
+                            </Pressable>
+                          ) : (
+                            <Text style={styles.planPrimaryText}>Первичная</Text>
+                          )}
+                        </View>
                       </View>
                     )
                   )}
@@ -4102,6 +4198,7 @@ function PlanScreen({
                   />
                 ) : null}
               </View>
+              <Text style={styles.planFieldLabel}>Пациент</Text>
               <TextInput
                 value={entry.patient}
                 onChangeText={(patient) => updateEntry(index, { patient })}
@@ -4184,6 +4281,15 @@ function PlanScreen({
                   ))}
                 </View>
               ) : null}
+              <Text style={styles.planFieldLabel}>Дополнения</Text>
+              <TextInput
+                value={entry.additions}
+                onChangeText={(additions) => updateEntry(index, { additions })}
+                placeholder="Дополнительная информация"
+                placeholderTextColor={colors.textDim}
+                multiline
+                style={[styles.planPatientInput, styles.planAdditionsInput]}
+              />
             </View>
           ))}
           <Button
@@ -4198,6 +4304,24 @@ function PlanScreen({
             <Button label="Сохранить" loading={saving} onPress={() => void saveDay()} />
           </View>
         </ScrollView>
+      </Sheet>
+
+      <Sheet
+        visible={Boolean(previousProtocol)}
+        title="Предыдущая операция"
+        onClose={() => setPreviousProtocol(null)}
+        fullScreen={compact}
+        wide
+      >
+        {previousProtocol ? (
+          <ScrollView contentContainerStyle={styles.previousProtocolContent}>
+            <StudyDetails
+              study={previousProtocol}
+              hasXA={false}
+              onOpenXA={() => undefined}
+            />
+          </ScrollView>
+        ) : null}
       </Sheet>
 
       <Sheet
@@ -5277,7 +5401,7 @@ const styles = StyleSheet.create({
     color: colors.text,
     flex: 1
   },
-  studyAge: { ...typography.meta, color: colors.textMuted },
+  studyAge: { color: colors.text, fontSize: 14, fontWeight: "600" },
   studyOperation: { ...typography.meta, color: colors.textMuted },
   studyDateCompact: {
     color: colors.textDim,
@@ -5309,7 +5433,7 @@ const styles = StyleSheet.create({
   },
   detailsHeroCopy: { flex: 1, minWidth: 0 },
   detailsPatient: { ...typography.title, color: colors.text },
-  detailsAge: { ...typography.meta, color: colors.textMuted },
+  detailsAge: { color: colors.text, fontSize: typography.title.fontSize, fontWeight: "700" },
   detailsSubtitle: { ...typography.meta, color: colors.textMuted, marginTop: 3 },
   detailGrid: {
     flexDirection: "row",
@@ -5945,6 +6069,12 @@ const styles = StyleSheet.create({
     gap: 14,
     marginTop: 10
   },
+  statisticsTablesPane: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+    gap: 12
+  },
   statisticsTableCard: {
     flex: 1,
     minWidth: 0,
@@ -5954,6 +6084,14 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     overflow: "hidden"
   },
+  statisticsCardHeading: {
+    minHeight: 50,
+    paddingHorizontal: 14,
+    justifyContent: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  statisticsCardTitle: { ...typography.label, color: colors.text },
   statisticsHorizontalScroll: { flex: 1 },
   statisticsRowsScroll: { flexGrow: 0, maxHeight: 520 },
   statisticsTableHeader: {
@@ -6001,6 +6139,52 @@ const styles = StyleSheet.create({
   },
   statisticsTotalCell: { fontWeight: "800" },
   statisticsSummaryRow: { backgroundColor: colors.canvasRaised },
+  historicalStatisticsCard: {
+    height: 250,
+    minWidth: 0,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    overflow: "hidden"
+  },
+  historyRowsScroll: { maxHeight: 150 },
+  historyTableRow: {
+    minHeight: 38,
+    flexDirection: "row",
+    alignItems: "stretch",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  historyHeaderCell: {
+    width: 108,
+    paddingHorizontal: 7,
+    textAlign: "center",
+    textAlignVertical: "center",
+    fontFamily: Platform.select({ web: "ui-monospace, SFMono-Regular, Menlo, monospace", default: "monospace" }),
+    fontSize: 10,
+    fontWeight: "800",
+    color: colors.textMuted,
+    backgroundColor: colors.canvasRaised
+  },
+  historyCell: {
+    width: 108,
+    paddingHorizontal: 7,
+    textAlign: "center",
+    textAlignVertical: "center",
+    fontFamily: Platform.select({ web: "ui-monospace, SFMono-Regular, Menlo, monospace", default: "monospace" }),
+    fontSize: 12,
+    color: colors.text
+  },
+  historyYearCell: { width: 70, fontWeight: "800" },
+  historyTotalCell: { fontWeight: "800", color: colors.primary },
+  historyEmpty: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    padding: 20
+  },
   vmpPanel: {
     width: 390,
     minHeight: 0,
@@ -6491,11 +6675,14 @@ const styles = StyleSheet.create({
     minHeight: 40,
     flexDirection: "row",
     alignItems: "stretch",
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.primary,
+    borderBottomWidth: 3,
+    borderBottomColor: colors.border,
     backgroundColor: colors.canvasRaised
   },
-  planEntriesColumn: { flex: 3.78 },
+  planTableDayRowAlternate: { backgroundColor: colors.surfaceSoft },
+  planEntriesColumn: { flex: 5.15 },
   planEntryRow: {
     minHeight: 34,
     flexDirection: "row",
@@ -6517,33 +6704,61 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     textTransform: "uppercase"
   },
+  planTableHeaderTextCompact: {
+    paddingHorizontal: 2,
+    fontSize: 8,
+    textAlign: "center"
+  },
   planTableText: {
     paddingHorizontal: 5,
-    color: colors.textMuted,
-    fontSize: 11,
-    lineHeight: 15
+    color: colors.text,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "600"
   },
   planTableDayText: {
     paddingHorizontal: 5,
-    color: colors.primary,
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: "800",
+    color: colors.text,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "900",
     textTransform: "capitalize",
     paddingTop: 10
   },
-  planDayCell: { flex: 0.72 },
-  planPatientCell: { flex: 1.25 },
-  planDepartmentCell: { flex: 1.08 },
-  planOperationCell: { flex: 1.45 },
+  planDayCell: { flex: 0.65, minWidth: 0, flexShrink: 1 },
+  planPatientCell: { flex: 1.15, minWidth: 0, flexShrink: 1 },
+  planDepartmentCell: { flex: 0.8, minWidth: 0, flexShrink: 1 },
+  planOperationCell: { flex: 1, minWidth: 0, flexShrink: 1 },
+  planAdditionsCell: { flex: 1, minWidth: 0, flexShrink: 1 },
+  planPreviousCell: { flex: 1.2, minWidth: 0, flexShrink: 1 },
+  planPreviousButton: {
+    flex: 1,
+    minHeight: 32,
+    paddingHorizontal: 5,
+    justifyContent: "center",
+    borderRadius: radii.sm,
+    backgroundColor: colors.primarySoft
+  },
+  planPreviousButtonText: {
+    color: colors.primary,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "800"
+  },
+  planPrimaryText: {
+    paddingHorizontal: 5,
+    color: colors.textDim,
+    fontSize: 10,
+    fontWeight: "700"
+  },
   planEditorContent: {
     padding: 12,
     paddingBottom: 24,
     gap: 8
   },
   planEditorRow: {
-    padding: 10,
-    gap: 5,
+    padding: 14,
+    gap: 7,
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.border,
@@ -6564,6 +6779,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     backgroundColor: colors.canvasRaised,
     fontSize: 15
+  },
+  planAdditionsInput: {
+    minHeight: 74,
+    paddingTop: 11,
+    paddingBottom: 11,
+    textAlignVertical: "top"
   },
   planFieldLabel: {
     marginTop: 1,
@@ -6610,6 +6831,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
     gap: 8
   },
+  previousProtocolContent: { padding: 16, paddingBottom: 32 },
   planShareOptions: { padding: 16, gap: 8 },
   profileCard: {
     flexDirection: "row",

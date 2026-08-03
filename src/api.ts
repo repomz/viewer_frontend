@@ -1,5 +1,6 @@
 import type {
   AgentCommand,
+  HistoricalStatistics,
   OperationStatistics,
   OperationPlan,
   PlanDay,
@@ -227,7 +228,13 @@ export async function getOperationPlan(
     days: Array.isArray(response?.days)
       ? response.days.map((day) => ({
           ...day,
-          entries: Array.isArray(day.entries) ? day.entries : []
+          entries: Array.isArray(day.entries)
+            ? day.entries.map((entry) => ({
+                ...entry,
+                additions:
+                  typeof entry.additions === "string" ? entry.additions : ""
+              }))
+            : []
         }))
       : []
   };
@@ -239,12 +246,23 @@ export async function saveOperationPlanDay(
 ): Promise<PlanDay> {
   return request<PlanDay>(`/operation-plan/${encodeURIComponent(date)}`, {
     method: "PUT",
-    body: JSON.stringify({ entries })
+    body: JSON.stringify({
+      entries: entries.map(({ patient, department, operation, additions }) => ({
+        patient,
+        department,
+        operation,
+        additions
+      }))
+    })
   });
 }
 
 export async function getOperationStatistics(): Promise<OperationStatistics> {
   return request<OperationStatistics>("/statistics/operations");
+}
+
+export async function getHistoricalStatistics(): Promise<HistoricalStatistics> {
+  return request<HistoricalStatistics>("/statistics/history");
 }
 
 export async function saveVMPStatisticsConfig(
