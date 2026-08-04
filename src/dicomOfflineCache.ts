@@ -307,7 +307,7 @@ async function persistPreparedCines(
       stored.push({ url, studyUID, bytes: blob.size });
     }
   };
-  await Promise.all(Array.from({ length: 3 }, () => worker()));
+  await Promise.all(Array.from({ length: 6 }, () => worker()));
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
   recordCines(stored);
 }
@@ -651,6 +651,50 @@ export async function downloadStudyForOffline(
       downloadErrors.set(
         studyUID,
         reason instanceof Error ? reason.message : "Не удалось сохранить XA"
+      );
+    }
+    return false;
+  } finally {
+    downloadControllers.delete(studyUID);
+    activeDownloads.delete(studyUID);
+    emit();
+  }
+}
+
+export async function downloadStudyFirstSeriesForOffline(
+  studyUID: string
+): Promise<boolean> {
+  if (!supported() || activeDownloads.has(studyUID)) return false;
+  activeDownloads.add(studyUID);
+  const controller = new AbortController();
+  downloadControllers.set(studyUID, controller);
+  downloadErrors.delete(studyUID);
+  emit();
+  try {
+    await requestPersistentStorage();
+    const manifest =
+      getCachedPreparedXAManifest(studyUID) ??
+      (await getPreparedXAManifest(studyUID, {
+        wait: true,
+        signal: controller.signal
+      }));
+    if (!manifest) return false;
+    const cineURLs = manifestCineURLs(manifest);
+    const firstCine = cineURLs[0];
+    if (!firstCine) return false;
+    const expected = readRecord<ExpectedFrames>(EXPECTED_KEY);
+    expected[studyUID] = cineURLs.length;
+    writeRecord(EXPECTED_KEY, expected);
+    await persistPreparedCines(studyUID, [firstCine], controller.signal);
+    cachePreparedXAManifest(manifest);
+    return true;
+  } catch (reason) {
+    if (!controller.signal.aborted) {
+      downloadErrors.set(
+        studyUID,
+        reason instanceof Error
+          ? reason.message
+          : "Не удалось сохранить первую серию XA"
       );
     }
     return false;

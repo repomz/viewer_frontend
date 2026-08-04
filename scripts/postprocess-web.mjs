@@ -18,9 +18,9 @@ const indexPath = resolve(dist, "index.html");
 mkdirSync(dist, { recursive: true });
 
 for (const filename of [
-  "favicon-xa-v4.png",
-  "apple-touch-icon-v4.png",
-  "pwa-icon-512-v4.png",
+  "favicon-vessels-v5.png",
+  "apple-touch-icon-v5.png",
+  "pwa-icon-512-v5.png",
   "angiography-splash.webp"
 ]) {
   copyFileSync(resolve(assets, filename), resolve(dist, filename));
@@ -40,10 +40,10 @@ writeFileSync(
       theme_color: "#07131F",
       icons: [
         {
-          src: "/pwa-icon-512-v4.png",
+          src: "/pwa-icon-512-v5.png",
           sizes: "512x512",
           type: "image/png",
-          purpose: "any maskable"
+          purpose: "any"
         }
       ]
     },
@@ -52,11 +52,30 @@ writeFileSync(
   )
 );
 
+function findRelativeFile(directory, suffix, prefix = "") {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      const nested = findRelativeFile(resolve(directory, entry.name), suffix, relative);
+      if (nested) return nested;
+    } else if (entry.name.endsWith(suffix)) {
+      return `/${relative}`;
+    }
+  }
+  return "";
+}
+
+const iconFontPath = findRelativeFile(dist, ".ttf");
+const iconFontPreload = iconFontPath
+  ? `<link rel="preload" as="font" type="font/ttf" href="${iconFontPath}" crossorigin fetchpriority="high" />`
+  : "";
+
 const splashHead = `
     <link rel="preload" as="image" href="/angiography-splash.webp" fetchpriority="high" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-xa-v4.png?v=4" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v4.png?v=4" />
-    <link rel="manifest" href="/manifest.webmanifest?v=4" />
+    ${iconFontPreload}
+    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-vessels-v5.png?v=5" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v5.png?v=5" />
+    <link rel="manifest" href="/manifest.webmanifest?v=5" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style id="viewer-launch-screen">
@@ -137,11 +156,12 @@ writeFileSync(indexPath, html);
 const appShell = [
   "/",
   webBundlePath,
+  iconFontPath,
   "/angiography-splash.webp",
-  "/manifest.webmanifest?v=4",
-  "/favicon-xa-v4.png?v=4",
-  "/apple-touch-icon-v4.png?v=4",
-  "/pwa-icon-512-v4.png"
+  "/manifest.webmanifest?v=5",
+  "/favicon-vessels-v5.png?v=5",
+  "/apple-touch-icon-v5.png?v=5",
+  "/pwa-icon-512-v5.png"
 ].filter(Boolean);
 
 writeFileSync(

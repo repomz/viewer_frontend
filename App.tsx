@@ -62,6 +62,7 @@ import {
   cancelDicomDownloads,
   clearDicomCache,
   deleteStudyFromDevice,
+  downloadStudyFirstSeriesForOffline,
   downloadStudyForOffline,
   formatStorageSize,
   getCachedPreparedXAManifest,
@@ -116,6 +117,7 @@ if (Platform.OS !== "web") {
 type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "statistics" | "logs" | "settings";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
+type StudySort = "time" | "operation";
 type StudyCategory =
   | "all"
   | "КАГ"
@@ -525,6 +527,7 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [dayFilter, setDayFilter] = useState<DayFilter>(null);
   const [category, setCategory] = useState<StudyCategory>("all");
+  const [studySort, setStudySort] = useState<StudySort>("time");
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
   const [xaStudies, setXaStudies] = useState<Study[]>([]);
@@ -802,7 +805,7 @@ export default function App() {
       setAutoDownloadStartAllowed(false);
       return;
     }
-    const timer = setTimeout(() => setAutoDownloadStartAllowed(true), 4_000);
+    const timer = setTimeout(() => setAutoDownloadStartAllowed(true), 1_000);
     return () => clearTimeout(timer);
   }, [authenticated, compact]);
 
@@ -999,6 +1002,13 @@ export default function App() {
       try {
         for (const study of studiesToDownload) {
           if (!autoDownloadAllowedRef.current) break;
+          const firstSeriesReady = await downloadStudyFirstSeriesForOffline(
+            study.study_id
+          );
+          retryNeeded ||= !firstSeriesReady;
+        }
+        for (const study of studiesToDownload) {
+          if (!autoDownloadAllowedRef.current) break;
           const complete = await downloadStudyForOffline(study.study_id);
           retryNeeded ||= !complete;
         }
@@ -1045,8 +1055,18 @@ export default function App() {
         study.department,
         study.study_id
       ].some((value) => value.toLocaleLowerCase("ru").includes(query));
+    }).sort((left, right) => {
+      const time =
+        new Date(right.time_beginning).getTime() -
+        new Date(left.time_beginning).getTime();
+      if (studySort === "time") return time;
+      const operation = shortOperationName(left.name_operation).localeCompare(
+        shortOperationName(right.name_operation),
+        "ru"
+      );
+      return operation || time;
     });
-  }, [category, dayFilter, protocolStudies, search]);
+  }, [category, dayFilter, protocolStudies, search, studySort]);
 
   const recordRequest = useCallback((request: UserRequest) => {
     setRequests((current) => {
@@ -1286,6 +1306,7 @@ export default function App() {
                   search={search}
                   dayFilter={dayFilter}
                   category={category}
+                  sort={studySort}
                   selected={selectedStudy}
                   onSearch={setSearch}
                   onDayFilter={(value) =>
@@ -1451,11 +1472,10 @@ export default function App() {
         <StudyFilterSheet
           visible={filterOpen}
           selected={category}
+          sort={studySort}
           onClose={() => setFilterOpen(false)}
-          onSelect={(value) => {
-            setCategory(value);
-            setFilterOpen(false);
-          }}
+          onSelect={setCategory}
+          onSort={setStudySort}
         />
         {toast ? (
           <Toast
@@ -1934,6 +1954,7 @@ function StudiesScreen({
   search,
   dayFilter,
   category,
+  sort,
   selected,
   onSearch,
   onDayFilter,
@@ -1955,6 +1976,7 @@ function StudiesScreen({
   search: string;
   dayFilter: DayFilter;
   category: StudyCategory;
+  sort: StudySort;
   selected: Study | null;
   onSearch: (value: string) => void;
   onDayFilter: (value: NonNullable<DayFilter>) => void;
@@ -1991,7 +2013,7 @@ function StudiesScreen({
           value={search}
           onChangeText={onSearch}
           placeholder={compact ? "Поиск пациента" : "Пациент, хирург, операция или ID"}
-          filterActive={category !== "all"}
+          filterActive={category !== "all" || sort !== "time"}
           onFilter={onFilter}
         />
         <ScrollView
@@ -3813,19 +3835,22 @@ function ReportSection({
               <View style={styles.operationTitleLine}>
                 <Text style={styles.operationPatient}>
                   {operation.patient || "ФИО не указано"}
+                  {operation.age ? (
+                    <Text style={styles.operationAge}> {operation.age}</Text>
+                  ) : null}
+                </Text>
+                <Text numberOfLines={1} style={styles.operationDepartment}>
+                  {operation.department || "—"}
+                </Text>
+              </View>
+              <View style={styles.operationSummaryLine}>
+                <Text numberOfLines={1} style={styles.operationName}>
+                  {shortOperationName(operation.operation || "Операция не указана")}
                 </Text>
                 <Text style={styles.operationTime}>
                   {operation.time_beginning || "—"}
                 </Text>
               </View>
-              <Text style={styles.operationName}>
-                {operation.operation || "Операция не указана"}
-              </Text>
-              <Text style={styles.operationMeta}>
-                {operation.age ? `${operation.age} лет · ` : ""}
-                {operation.department || "отделение не указано"} ·{" "}
-                {operation.surgeon || "хирург не указан"}
-              </Text>
             </View>
           </View>
         ))}
@@ -3894,6 +3919,8 @@ const planDepartmentRank = (department: string) => {
 
 const sortPlanEntries = (entries: PlanEntry[]) =>
   [...entries].sort((left, right) => {
+    const operation = left.operation.localeCompare(right.operation, "ru");
+    if (operation) return operation;
     const group = planDepartmentRank(left.department) - planDepartmentRank(right.department);
     if (group) return group;
     const department = left.department.localeCompare(right.department, "ru");
@@ -3923,9 +3950,9 @@ async function sharePlanSnapshot(
 ): Promise<void> {
   const text = plan.days
     .flatMap((day) =>
-      day.entries.map(
-        (entry) =>
-          `${weekdayTitle(day.date)} — ${entry.patient}: ` +
+      sortPlanEntries(day.entries).map(
+        (entry, index) =>
+          `${weekdayTitle(day.date)} · ${index + 1}. ${entry.patient}: ` +
           `${entry.department}, ${entry.operation}` +
           (entry.additions ? ` · ${entry.additions}` : "")
       )
@@ -3956,11 +3983,11 @@ async function sharePlanSnapshot(
     context.font = "700 27px -apple-system, sans-serif";
     context.fillText(weekdayTitle(day.date).toLocaleUpperCase("ru"), 75, y);
     y += 58;
-    const entries = day.entries.length ? day.entries : [null];
-    entries.forEach((entry) => {
+    const entries = day.entries.length ? sortPlanEntries(day.entries) : [null];
+    entries.forEach((entry, index) => {
       context.fillStyle = "#10212E";
       context.font = "700 30px -apple-system, sans-serif";
-      context.fillText(entry?.patient || "—", 75, y);
+      context.fillText(entry ? `${index + 1}. ${entry.patient}` : "—", 75, y);
       context.font = "400 25px -apple-system, sans-serif";
       context.fillStyle = "#607482";
       context.fillText(
@@ -4028,11 +4055,11 @@ function printOperationPlan(plan: OperationPlan) {
   if (!printWindow) throw new Error("Браузер заблокировал окно печати");
   printWindow.opener = null;
   const rows = plan.days.flatMap((day) => {
-    const entries = day.entries.length ? day.entries : [null];
+    const entries = day.entries.length ? sortPlanEntries(day.entries) : [null];
     return entries.map(
       (entry, index) => `<tr>
         ${index === 0 ? `<td rowspan="${entries.length}" class="day">${escapePrintHTML(weekdayTitle(day.date))}</td>` : ""}
-        <td>${escapePrintHTML(entry?.patient || "—")}</td>
+        <td>${escapePrintHTML(entry ? `${index + 1}. ${entry.patient}` : "—")}</td>
         <td>${escapePrintHTML(entry?.department || "—")}</td>
         <td>${escapePrintHTML(entry?.operation || "—")}</td>
         <td>${escapePrintHTML(entry?.additions || "—")}</td>
@@ -4095,7 +4122,7 @@ function PlanScreen({
     const entries = plan?.days.find((day) => day.date === date)?.entries ?? [];
     setDraft(
       entries.length
-        ? entries.map((entry) => ({ ...entry, additions: entry.additions || "" }))
+        ? sortPlanEntries(entries).map((entry) => ({ ...entry, additions: entry.additions || "" }))
         : [newPlanEntry()]
     );
     setSelectedDate(date);
@@ -4215,7 +4242,7 @@ function PlanScreen({
                   {weekdayTitle(day.date)}
                 </Text>
                 <View style={[styles.planEntriesColumn, compact && styles.planEntriesColumnCompact]}>
-                  {(day.entries.length ? day.entries : [null]).map(
+                  {(day.entries.length ? sortPlanEntries(day.entries) : [null]).map(
                     (entry, index) => (
                       <View key={index} style={styles.planEntryRow}>
                         <Text
@@ -4224,7 +4251,7 @@ function PlanScreen({
                           minimumFontScale={0.72}
                           style={[styles.planTableText, styles.planPatientCell, compact && styles.planPatientCellCompact]}
                         >
-                          {entry?.patient || "—"}
+                          {entry ? `${index + 1}. ${entry.patient}` : "—"}
                         </Text>
                         <Text style={[styles.planTableText, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>
                           {entry
@@ -4616,17 +4643,35 @@ function MobileMenu({
 function StudyFilterSheet({
   visible,
   selected,
+  sort,
   onClose,
-  onSelect
+  onSelect,
+  onSort
 }: {
   visible: boolean;
   selected: StudyCategory;
+  sort: StudySort;
   onClose: () => void;
   onSelect: (value: StudyCategory) => void;
+  onSort: (value: StudySort) => void;
 }) {
   return (
-    <Sheet visible={visible} title="Тип операции" onClose={onClose}>
+    <Sheet visible={visible} title="Фильтр и порядок" onClose={onClose}>
       <View style={styles.filterSheetContent}>
+        <Text style={styles.filterSectionTitle}>ПОРЯДОК СПИСКА</Text>
+        <View style={styles.filterSortRow}>
+          <Chip
+            label="По времени"
+            selected={sort === "time"}
+            onPress={() => onSort("time")}
+          />
+          <Chip
+            label="По типу операции"
+            selected={sort === "operation"}
+            onPress={() => onSort("operation")}
+          />
+        </View>
+        <Text style={styles.filterSectionTitle}>ТИП ОПЕРАЦИИ</Text>
         {studyCategories.map((value) => {
           const active = selected === value;
           return (
@@ -4655,6 +4700,7 @@ function StudyFilterSheet({
             </Pressable>
           );
         })}
+        <Button label="Готово" onPress={onClose} />
       </View>
     </Sheet>
   );
@@ -6507,8 +6553,9 @@ const styles = StyleSheet.create({
   },
   operationRow: {
     flexDirection: "row",
-    gap: 11,
-    padding: 12,
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft
   },
@@ -6525,10 +6572,23 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10
   },
-  operationPatient: { ...typography.label, color: colors.text, fontSize: 14 },
-  operationTime: { ...typography.meta, color: colors.primary },
-  operationName: { ...typography.body, color: colors.text, marginTop: 3 },
-  operationMeta: { ...typography.meta, color: colors.textDim, marginTop: 4 },
+  operationPatient: { ...typography.label, color: colors.text, fontSize: 14, flexShrink: 1 },
+  operationAge: { ...typography.label, color: colors.text, fontSize: 14 },
+  operationDepartment: {
+    ...typography.meta,
+    color: colors.textDim,
+    maxWidth: "38%",
+    textAlign: "right"
+  },
+  operationSummaryLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+    marginTop: 2
+  },
+  operationTime: { ...typography.meta, color: colors.primary, flexShrink: 0 },
+  operationName: { ...typography.body, color: colors.text, flex: 1, minWidth: 0 },
   settingsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 14 },
   settingsCard: {
     width: 430,
@@ -7122,6 +7182,19 @@ const styles = StyleSheet.create({
     paddingTop: 18
   },
   filterSheetContent: { padding: 14, gap: 6 },
+  filterSectionTitle: {
+    ...typography.meta,
+    color: colors.textDim,
+    marginTop: 5,
+    marginBottom: 2,
+    letterSpacing: 0.7
+  },
+  filterSortRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    marginBottom: 7
+  },
   filterOption: {
     minHeight: 48,
     paddingHorizontal: 14,

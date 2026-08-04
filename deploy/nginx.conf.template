@@ -29,6 +29,8 @@ http {
         application/manifest+json
         text/css
         text/plain
+        font/ttf
+        application/x-font-ttf
         image/svg+xml;
 
     server {
