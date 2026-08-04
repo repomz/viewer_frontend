@@ -97,6 +97,8 @@ const webBundleDirectory = resolve(dist, "_expo/static/js/web");
 const webBundle = readdirSync(webBundleDirectory).find((filename) =>
   filename.endsWith(".js")
 );
+let webBundlePath = "";
+let bundleVersion = "development";
 if (webBundle) {
   const bundlePath = resolve(webBundleDirectory, webBundle);
   const bundleHash = createHash("sha256")
@@ -111,6 +113,8 @@ if (webBundle) {
       `/_expo/static/js/web/${hashedBundle}`
     );
   }
+  webBundlePath = `/_expo/static/js/web/${hashedBundle}`;
+  bundleVersion = bundleHash;
 }
 html = html.replace(/<link rel="icon"[^>]*>/i, "");
 html = html.replace("</head>", `${splashHead}\n  </head>`);
@@ -118,4 +122,71 @@ html = html.replace(
   '<div id="root"></div>',
   '<div id="viewer-preboot"></div><div id="root"></div>'
 );
+html = html.replace(
+  "</body>",
+  `<script>
+    if ('serviceWorker' in navigator && window.isSecureContext) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+      });
+    }
+  </script></body>`
+);
 writeFileSync(indexPath, html);
+
+const appShell = [
+  "/",
+  webBundlePath,
+  "/angiography-splash.webp",
+  "/manifest.webmanifest?v=4",
+  "/favicon-xa-v4.png?v=4",
+  "/apple-touch-icon-v4.png?v=4",
+  "/pwa-icon-512-v4.png"
+].filter(Boolean);
+
+writeFileSync(
+  resolve(dist, "sw.js"),
+  `const CACHE_NAME = ${JSON.stringify(`viewer-shell-${bundleVersion}`)};
+const APP_SHELL = ${JSON.stringify(appShell)};
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .then(() => self.skipWaiting())
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith("viewer-shell-") && key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  if (request.method !== "GET") return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname.startsWith("/dicom-web/")) return;
+
+  if (request.mode === "navigate") {
+    event.respondWith(
+      caches.match("/").then((cached) => {
+        const refresh = fetch(request).then((response) => {
+          if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put("/", response.clone()));
+          return response;
+        });
+        return cached || refresh;
+      })
+    );
+    return;
+  }
+
+  event.respondWith(
+    caches.match(request).then((cached) => cached || fetch(request))
+  );
+});
+`
+);

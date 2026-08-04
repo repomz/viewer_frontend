@@ -33,6 +33,7 @@ http {
 
     server {
         listen 8080;
+        ${TLS_LISTEN}
         root /usr/share/nginx/html;
         index index.html;
 
@@ -46,6 +47,25 @@ http {
             access_log off;
             default_type text/plain;
             return 200 "ok\n";
+        }
+
+        location = /sw.js {
+            default_type application/javascript;
+            add_header Cache-Control "no-cache, no-store, must-revalidate";
+            add_header Service-Worker-Allowed "/";
+            try_files $uri =404;
+        }
+
+        location = /manifest.webmanifest {
+            default_type application/manifest+json;
+            add_header Cache-Control "no-cache";
+            try_files $uri =404;
+        }
+
+        location ^~ /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+            default_type text/plain;
+            try_files $uri =404;
         }
 
         location ^~ /api/ {
