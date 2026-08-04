@@ -98,6 +98,13 @@ http {
             proxy_buffering off;
         }
 
+        location ~* \.ttf$ {
+            default_type font/ttf;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+            try_files $uri =404;
+        }
+
         location ~* \.(?:js|css|woff2?|png|jpg|jpeg|gif|webp|ico)$ {
             expires 1y;
             add_header Cache-Control "public, immutable";
