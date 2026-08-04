@@ -52,10 +52,6 @@ writeFileSync(
   )
 );
 
-const embeddedSplash = readFileSync(
-  resolve(assets, "angiography-splash.webp")
-).toString("base64");
-
 const splashHead = `
     <link rel="preload" as="image" href="/angiography-splash.webp" fetchpriority="high" />
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-xa-v4.png?v=4" />
@@ -78,7 +74,7 @@ const splashHead = `
         z-index: 9999;
         display: grid;
         place-items: center;
-        background: #07131F url('data:image/webp;base64,${embeddedSplash}') center / cover no-repeat;
+        background: #07131F url('/angiography-splash.webp') center / cover no-repeat;
       }
       #viewer-preboot::before {
         content: '';

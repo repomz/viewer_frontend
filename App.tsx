@@ -515,6 +515,7 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(false);
   const [appReady, setAppReady] = useState(false);
   const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false);
+  const [autoDownloadStartAllowed, setAutoDownloadStartAllowed] = useState(false);
   const [enterRequested, setEnterRequested] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("studies");
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
@@ -567,7 +568,8 @@ export default function App() {
   const [dicomCache, setDicomCache] = useState<DicomCacheSnapshot>(
     getDicomCacheSnapshot
   );
-  const autoDownloadAllowed = authenticated && compact;
+  const autoDownloadAllowed =
+    authenticated && compact && autoDownloadStartAllowed;
   autoDownloadAllowedRef.current = autoDownloadAllowed;
 
   const loadStudies = useCallback(async () => {
@@ -743,18 +745,16 @@ export default function App() {
   }, [updateAgentHealth, updateServerHealth]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setLaunchDelayElapsed(true), 1_000);
+    const timer = setTimeout(() => setLaunchDelayElapsed(true), 600);
     return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {
     if (preloadStarted.current) return;
     preloadStarted.current = true;
-    const studiesPromise = loadStudies();
-    const readyTimer = setTimeout(() => setAppReady(true), 1_800);
-    void studiesPromise.finally(() => setAppReady(true));
+    const readyTimer = setTimeout(() => setAppReady(true), 250);
     void Promise.allSettled([
-      studiesPromise,
+      loadStudies(),
       updateServerHealth(),
       updateAgentHealth()
     ]);
@@ -790,9 +790,21 @@ export default function App() {
 
   useEffect(() => {
     if (!authenticated) return;
-    void loadRequestHistory();
-    void loadXAStudies();
+    const timer = setTimeout(() => {
+      void loadRequestHistory();
+      void loadXAStudies();
+    }, 350);
+    return () => clearTimeout(timer);
   }, [authenticated, loadRequestHistory, loadXAStudies]);
+
+  useEffect(() => {
+    if (!authenticated || !compact) {
+      setAutoDownloadStartAllowed(false);
+      return;
+    }
+    const timer = setTimeout(() => setAutoDownloadStartAllowed(true), 4_000);
+    return () => clearTimeout(timer);
+  }, [authenticated, compact]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -1482,12 +1494,12 @@ function LoginScreen({
     Animated.parallel([
       Animated.timing(panelOpacity, {
         toValue: 1,
-        duration: 650,
+        duration: 420,
         useNativeDriver: Platform.OS !== "web"
       }),
       Animated.timing(panelOffset, {
         toValue: 0,
-        duration: 650,
+        duration: 420,
         useNativeDriver: Platform.OS !== "web"
       })
     ]).start();
@@ -1500,7 +1512,7 @@ function LoginScreen({
         <Image
           source={
             Platform.OS === "web"
-              ? require("./assets/angiography-splash.webp")
+              ? { uri: "/angiography-splash.webp" }
               : require("./assets/angiography-splash.png")
           }
           resizeMode="cover"
