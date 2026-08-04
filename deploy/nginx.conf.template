@@ -64,6 +64,12 @@ http {
             try_files $uri =404;
         }
 
+        location = / {
+            ${ROOT_REDIRECT}
+            try_files $uri /index.html;
+            expires -1;
+        }
+
         location ^~ /.well-known/acme-challenge/ {
             root /var/www/certbot;
             default_type text/plain;

@@ -307,7 +307,7 @@ async function persistPreparedCines(
       stored.push({ url, studyUID, bytes: blob.size });
     }
   };
-  await Promise.all(Array.from({ length: 6 }, () => worker()));
+  await Promise.all(Array.from({ length: 3 }, () => worker()));
   if (signal.aborted) throw new DOMException("Aborted", "AbortError");
   recordCines(stored);
 }
@@ -626,7 +626,7 @@ export async function downloadStudyForOffline(
     }
 
     // Orthanc rendering remains limited to two requests, but static prepared
-    // files can saturate Wi-Fi safely with six parallel downloads.
+    // files use a small parallel pool so clinical API requests remain responsive.
     let nextIndex = 0;
     const worker = async () => {
       while (!controller.signal.aborted) {
@@ -642,7 +642,7 @@ export async function downloadStudyForOffline(
       }
     };
     await Promise.all(
-      Array.from({ length: preparedOnServer ? 6 : 2 }, () => worker())
+      Array.from({ length: preparedOnServer ? 3 : 2 }, () => worker())
     );
     if (preparedManifest) cachePreparedXAManifest(preparedManifest);
     return true;

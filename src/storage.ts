@@ -1,7 +1,14 @@
-import type { AppSettings, UserRequest } from "./types";
+import type {
+  AppSettings,
+  OperationPlan,
+  ReportDocument,
+  UserRequest
+} from "./types";
 
 const SETTINGS_KEY = "viewer.settings.v1";
 const REQUESTS_KEY = "viewer.requests.v1";
+const REPORTS_KEY_PREFIX = "viewer.reports.v1";
+const PLAN_KEY_PREFIX = "viewer.operation-plan.v1";
 
 export const defaultSettings: AppSettings = {
   agentId: 2,
@@ -71,5 +78,50 @@ export function saveRequests(requests: UserRequest[]): void {
   window.localStorage.setItem(
     REQUESTS_KEY,
     JSON.stringify(requests.slice(0, 40))
+  );
+}
+
+export function loadReportsCache(agentId: number): ReportDocument[] {
+  if (!hasStorage()) return [];
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(`${REPORTS_KEY_PREFIX}.${agentId}`) ?? "[]"
+    );
+    return Array.isArray(stored) ? stored.slice(0, 30) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveReportsCache(
+  agentId: number,
+  reports: ReportDocument[]
+): void {
+  if (!hasStorage()) return;
+  window.localStorage.setItem(
+    `${REPORTS_KEY_PREFIX}.${agentId}`,
+    JSON.stringify(reports.slice(0, 30))
+  );
+}
+
+export function loadOperationPlanCache(
+  weekStart: string
+): OperationPlan | null {
+  if (!hasStorage()) return null;
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(`${PLAN_KEY_PREFIX}.${weekStart}`) ?? "null"
+    ) as OperationPlan | null;
+    return stored && Array.isArray(stored.days) ? stored : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveOperationPlanCache(plan: OperationPlan): void {
+  if (!hasStorage() || !plan.week_start) return;
+  window.localStorage.setItem(
+    `${PLAN_KEY_PREFIX}.${plan.week_start}`,
+    JSON.stringify(plan)
   );
 }

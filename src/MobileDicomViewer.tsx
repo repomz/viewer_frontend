@@ -384,6 +384,7 @@ export function MobileDicomViewer({
 
   useEffect(() => {
     if (!selectedSeries?.frames.length) return;
+    if (selectedCineURL && !cineReady) return;
     let cancelled = false;
     let nextIndex = 0;
     const frames = selectedSeries.frames;
@@ -398,14 +399,14 @@ export function MobileDicomViewer({
         await loadRenderedFrame(url).catch(() => undefined);
       }
     };
-    void Promise.all(Array.from({ length: 6 }, () => worker()));
+    void Promise.all(Array.from({ length: 2 }, () => worker()));
     return () => {
       cancelled = true;
     };
-  }, [loadRenderedFrame, preparedFrames, selectedSeries]);
+  }, [cineReady, loadRenderedFrame, preparedFrames, selectedCineURL, selectedSeries]);
 
   useEffect(() => {
-    if (!seriesOpen && !desktop) return;
+    if (selectedCineURL && !cineReady) return;
     let cancelled = false;
     void (async () => {
       for (const item of series) {
@@ -432,7 +433,7 @@ export function MobileDicomViewer({
     return () => {
       cancelled = true;
     };
-  }, [desktop, loadRenderedFrame, preparedFrames, series, seriesOpen]);
+  }, [cineReady, loadRenderedFrame, preparedFrames, selectedCineURL, series]);
 
   useEffect(() => {
     const element = videoElement.current;

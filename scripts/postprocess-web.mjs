@@ -26,6 +26,12 @@ for (const filename of [
   copyFileSync(resolve(assets, filename), resolve(dist, filename));
 }
 
+// iOS asks for these conventional names before it parses the document head.
+// Keeping every fallback identical prevents the obsolete Expo "V" icon flash.
+copyFileSync(resolve(assets, "apple-touch-icon-v5.png"), resolve(dist, "apple-touch-icon.png"));
+copyFileSync(resolve(assets, "apple-touch-icon-v5.png"), resolve(dist, "apple-touch-icon-precomposed.png"));
+copyFileSync(resolve(assets, "favicon-vessels-v5.png"), resolve(dist, "favicon.ico"));
+
 writeFileSync(
   resolve(dist, "manifest.webmanifest"),
   JSON.stringify(
@@ -161,6 +167,9 @@ const appShell = [
   "/manifest.webmanifest?v=5",
   "/favicon-vessels-v5.png?v=5",
   "/apple-touch-icon-v5.png?v=5",
+  "/apple-touch-icon.png",
+  "/apple-touch-icon-precomposed.png",
+  "/favicon.ico",
   "/pwa-icon-512-v5.png"
 ].filter(Boolean);
 

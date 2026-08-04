@@ -53,9 +53,13 @@ import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import { isPacsImagingStudy } from "./src/studyClassification";
 import {
   defaultSettings,
+  loadOperationPlanCache,
   loadRequests,
+  loadReportsCache,
   loadSettings,
+  saveOperationPlanCache,
   saveRequests,
+  saveReportsCache,
   saveSettings
 } from "./src/storage";
 import {
@@ -534,7 +538,9 @@ export default function App() {
   const [xaLoading, setXaLoading] = useState(false);
   const [xaError, setXaError] = useState("");
   const [requests, setRequests] = useState<UserRequest[]>(loadRequests);
-  const [reports, setReports] = useState<ReportDocument[]>([]);
+  const [reports, setReports] = useState<ReportDocument[]>(() =>
+    loadReportsCache(loadSettings().agentId)
+  );
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsError, setReportsError] = useState("");
   const [reportGenerating, setReportGenerating] = useState(false);
@@ -544,7 +550,9 @@ export default function App() {
   >({});
   const [commandOpen, setCommandOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [plan, setPlan] = useState<OperationPlan | null>(null);
+  const [plan, setPlan] = useState<OperationPlan | null>(() =>
+    loadOperationPlanCache(operationPlanWeekStart(0))
+  );
   const [planWeekOffset, setPlanWeekOffset] = useState<0 | 1>(0);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState("");
@@ -637,24 +645,33 @@ export default function App() {
   }, [settings.agentId, settings.userId]);
 
   const loadReports = useCallback(async () => {
+    const cached = loadReportsCache(settings.agentId);
+    if (cached.length) setReports(cached);
     setReportsError("");
-    setReportsLoading(true);
+    setReportsLoading(cached.length === 0);
     try {
-      setReports(await getReports(settings.agentId));
+      const response = await getReports(settings.agentId);
+      setReports(response);
+      saveReportsCache(settings.agentId, response);
     } catch (error) {
-      setReportsError(errorMessage(error));
+      if (!cached.length) setReportsError(errorMessage(error));
     } finally {
       setReportsLoading(false);
     }
   }, [settings.agentId]);
 
   const loadPlan = useCallback(async (weekOffset: 0 | 1) => {
+    const weekStart = operationPlanWeekStart(weekOffset);
+    const cached = loadOperationPlanCache(weekStart);
+    if (cached) setPlan(cached);
     setPlanError("");
-    setPlanLoading(true);
+    setPlanLoading(!cached);
     try {
-      setPlan(await getOperationPlan(operationPlanWeekStart(weekOffset)));
+      const response = await getOperationPlan(weekStart);
+      setPlan(response);
+      saveOperationPlanCache(response);
     } catch (error) {
-      setPlanError(errorMessage(error));
+      if (!cached) setPlanError(errorMessage(error));
     } finally {
       setPlanLoading(false);
     }
@@ -793,21 +810,32 @@ export default function App() {
 
   useEffect(() => {
     if (!authenticated) return;
-    const timer = setTimeout(() => {
-      void loadRequestHistory();
-      void loadXAStudies();
-    }, 350);
-    return () => clearTimeout(timer);
-  }, [authenticated, loadRequestHistory, loadXAStudies]);
-
-  useEffect(() => {
-    if (!authenticated || !compact) {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (!compact) {
       setAutoDownloadStartAllowed(false);
-      return;
     }
-    const timer = setTimeout(() => setAutoDownloadStartAllowed(true), 1_000);
-    return () => clearTimeout(timer);
-  }, [authenticated, compact]);
+    void Promise.allSettled([
+      loadRequestHistory(),
+      loadReports(),
+      loadPlan(0),
+      loadXAStudies()
+    ]).then(() => {
+      if (cancelled || !compact) return;
+      timer = setTimeout(() => setAutoDownloadStartAllowed(true), 300);
+    });
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [
+    authenticated,
+    compact,
+    loadPlan,
+    loadReports,
+    loadRequestHistory,
+    loadXAStudies
+  ]);
 
   useEffect(() => {
     if (!authenticated) return;
