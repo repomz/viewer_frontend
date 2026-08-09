@@ -1551,7 +1551,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
     paddingHorizontal: 8,
-    backgroundColor: "#12161B"
+    backgroundColor: darkColors.canvas
   },
   controlRow: {
     flexDirection: "row",
