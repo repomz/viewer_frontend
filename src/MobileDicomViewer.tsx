@@ -246,29 +246,64 @@ export function MobileDicomViewer({
       try {
         const root = dicomWebRoot.replace(/\/$/, "");
         if (cachedPrepared) return;
-        const [metadataResult, preparedResult] = await Promise.allSettled([
-          fetch(`${root}/studies/${encodeURIComponent(studyUID)}/metadata`, {
+        let prepared: PreparedXAManifest | null = null;
+        try {
+          prepared = await getPreparedXAManifest(studyUID, {
+            signal: controller.signal
+          });
+        } catch {
+          // Direct PACS metadata remains a compatibility fallback.
+        }
+        if (prepared) {
+          const preparedSeries = manifestDicomSeries(prepared, root);
+          if (!cancelled) {
+            if (persistentCacheEnabled) cachePreparedXAManifest(prepared);
+            setSeries(preparedSeries);
+            setPreparedManifest(prepared);
+            setPreparedFrames(manifestFrameMap(prepared));
+          }
+          // Resolution/window metadata is useful, but must not delay the first cine.
+          void fetch(`${root}/studies/${encodeURIComponent(studyUID)}/metadata`, {
             headers: { Accept: "application/dicom+json" },
             signal: controller.signal
-          }),
-          getPreparedXAManifest(studyUID, {
-            signal: controller.signal
           })
-        ]);
-        let prepared =
-          preparedResult.status === "fulfilled" ? preparedResult.value : null;
+            .then(async (response) => {
+              if (!response.ok) return [];
+              return buildDicomSeries(
+                (await response.json()) as DicomMetadata[],
+                studyUID,
+                root
+              );
+            })
+            .then((metadataSeries) => {
+              if (!cancelled && metadataSeries.length) {
+                const metadataByUID = new Map(
+                  metadataSeries.map((item) => [item.uid, item] as const)
+                );
+                setSeries(
+                  preparedSeries.map(
+                    (item) => metadataByUID.get(item.uid) ?? item
+                  )
+                );
+              }
+            })
+            .catch(() => undefined);
+          return;
+        }
+
+        const metadataResponse = await fetch(
+          `${root}/studies/${encodeURIComponent(studyUID)}/metadata`,
+          {
+            headers: { Accept: "application/dicom+json" },
+            signal: controller.signal
+          }
+        );
         let loadedSeries: DicomSeries[] = [];
-        if (
-          metadataResult.status === "fulfilled" &&
-          metadataResult.value.ok
-        ) {
-          const metadata = (await metadataResult.value.json()) as DicomMetadata[];
+        if (metadataResponse.ok) {
+          const metadata = (await metadataResponse.json()) as DicomMetadata[];
           loadedSeries = buildDicomSeries(metadata, studyUID, root);
         }
-        if (!loadedSeries.length && prepared) {
-          loadedSeries = manifestDicomSeries(prepared, root);
-        }
-        if (!loadedSeries.length && !prepared) {
+        if (!loadedSeries.length) {
           const ready = await getPreparedXAManifest(studyUID, {
             wait: true,
             signal: controller.signal
@@ -280,13 +315,9 @@ export function MobileDicomViewer({
           }
         }
         if (!loadedSeries.length) {
-          const pacsStatus =
-            metadataResult.status === "fulfilled"
-              ? metadataResult.value.status
-              : 0;
           throw new Error(
-            pacsStatus
-              ? `Не удалось подготовить XA (PACS HTTP ${pacsStatus})`
+            metadataResponse.status
+              ? `Не удалось подготовить XA (PACS HTTP ${metadataResponse.status})`
               : "В исследовании не найдены DICOM-кадры"
           );
         }
@@ -1398,6 +1429,8 @@ const styles = StyleSheet.create({
   rootDesktop: {
     minHeight: 0,
     flexDirection: "row",
+    borderWidth: 1,
+    borderColor: darkColors.primary,
     borderRadius: 18,
     overflow: "hidden",
     backgroundColor: "#12161B"
@@ -1448,7 +1481,12 @@ const styles = StyleSheet.create({
     alignSelf: "stretch",
     marginHorizontal: 0,
     marginTop: 0,
-    borderRadius: 16
+    borderTopWidth: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderLeftWidth: 0,
+    borderColor: "transparent",
+    borderRadius: 0
   },
   state: {
     ...StyleSheet.absoluteFillObject,
@@ -1513,8 +1551,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
     paddingHorizontal: 8,
-    borderRightWidth: 1,
-    borderRightColor: darkColors.borderSoft,
     backgroundColor: "#12161B"
   },
   controlRow: {
