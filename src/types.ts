@@ -9,6 +9,7 @@ export type Study = {
   name_operation: string;
   study_type: string;
   descr_operation: string;
+  recommendation?: string;
   time_beginning: string;
   time_duration: number;
   surgeon: string;
@@ -120,7 +121,8 @@ export type PlanEntry = {
   department: string;
   operation: string;
   additions: string;
-  previous_operation?: Study;
+  previous_operations?: Study[];
+  completed_operation?: Study;
 };
 
 export type PlanDay = {

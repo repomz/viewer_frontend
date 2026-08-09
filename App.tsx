@@ -51,15 +51,18 @@ import {
 } from "./src/api";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import { isPacsImagingStudy } from "./src/studyClassification";
+import { protocolMatchesAngiography } from "./src/patientMatching";
 import {
   defaultSettings,
   loadOperationPlanCache,
   loadRequests,
   loadReportsCache,
   loadSettings,
+  loadStudiesCache,
   saveOperationPlanCache,
   saveRequests,
   saveReportsCache,
+  saveStudiesCache,
   saveSettings
 } from "./src/storage";
 import {
@@ -332,8 +335,22 @@ function reportData(document: ReportDocument): OperationsReport {
     : {};
 }
 
-function patientKey(value: string): string {
-  return value.toLocaleLowerCase("ru").replace(/ё/g, "е").split(/\s+/)[0] ?? "";
+function normalizeOperationStatistics(value: unknown): OperationStatistics {
+	const source = value && typeof value === "object" ? value as Partial<OperationStatistics> : {};
+	return {
+		operation_types: Array.isArray(source.operation_types) ? source.operation_types : [],
+		surgeons: Array.isArray(source.surgeons) ? source.surgeons : [],
+		vmp_operation_types: Array.isArray(source.vmp_operation_types) ? source.vmp_operation_types : [],
+		vmp_patients: Array.isArray(source.vmp_patients) ? source.vmp_patients : [],
+		included_study_ids: Array.isArray(source.included_study_ids) ? source.included_study_ids : [],
+		excluded_study_ids: Array.isArray(source.excluded_study_ids) ? source.excluded_study_ids : []
+	};
+}
+
+function shortPatientName(value: string): string {
+	const parts = value.trim().split(/\s+/).filter(Boolean);
+	if (parts.length < 2) return value.trim();
+	return `${parts[0]} ${parts.slice(1, 3).map((part) => `${part[0]?.toLocaleUpperCase("ru") ?? ""}.`).join("")}`;
 }
 
 function studyCategory(study: Study): Exclude<StudyCategory, "all"> {
@@ -525,8 +542,8 @@ export default function App() {
   const [enterRequested, setEnterRequested] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("studies");
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
-  const [studies, setStudies] = useState<Study[]>([]);
-  const [studiesLoading, setStudiesLoading] = useState(true);
+  const [studies, setStudies] = useState<Study[]>(loadStudiesCache);
+  const [studiesLoading, setStudiesLoading] = useState(() => loadStudiesCache().length === 0);
   const [studiesError, setStudiesError] = useState("");
   const [search, setSearch] = useState("");
   const [dayFilter, setDayFilter] = useState<DayFilter>(null);
@@ -584,11 +601,13 @@ export default function App() {
   autoDownloadAllowedRef.current = autoDownloadAllowed;
 
   const loadStudies = useCallback(async () => {
+	const cached = loadStudiesCache();
     setStudiesError("");
-    setStudiesLoading(true);
+    setStudiesLoading(cached.length === 0);
     try {
       const response = await getStudies();
       setStudies(response);
+	  saveStudiesCache(response);
       const protocols = response.filter((study) => !isPacsImagingStudy(study));
       setSelectedStudy((current) => {
         if (!current) return protocols[0] ?? null;
@@ -685,7 +704,7 @@ export default function App() {
         getOperationStatistics(),
         getHistoricalStatistics()
       ]);
-      setStatistics(current);
+	  setStatistics(normalizeOperationStatistics(current));
       setHistoricalStatistics(historical);
     } catch (error) {
       setStatisticsError(errorMessage(error));
@@ -697,7 +716,7 @@ export default function App() {
   const updateVMPStatistics = useCallback(async (config: VMPStatisticsConfig) => {
     setStatisticsLoading(true);
     try {
-      setStatistics(await saveVMPStatisticsConfig(config));
+	  setStatistics(normalizeOperationStatistics(await saveVMPStatisticsConfig(config)));
       setToast({ message: "Статистика ВМП обновлена", tone: "success" });
       return true;
     } catch (error) {
@@ -854,7 +873,7 @@ export default function App() {
     if (activeTab === "plan") {
       void loadPlan(planWeekOffset);
     }
-    if (activeTab === "statistics" && !compact) {
+    if (activeTab === "statistics") {
       void loadStatistics();
     }
   }, [
@@ -1220,9 +1239,7 @@ export default function App() {
 
   const openStudyAngiography = useCallback((protocol: Study) => {
     const angiography = xaStudies.find(
-      (study) =>
-        study.study_type.toLowerCase() === "xa" &&
-        patientKey(study.patient) === patientKey(protocol.patient)
+	  (study) => protocolMatchesAngiography(protocol, study)
     );
     if (!angiography) return;
     setRequestedXAStudyUID(angiography.study_id);
@@ -1345,7 +1362,6 @@ export default function App() {
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
                   angiographies={xaStudies}
-                  dicomCache={dicomCache}
                   onOpenXA={openStudyAngiography}
                   onDelete={(study) => void removeStudy(study)}
                 />
@@ -1420,8 +1436,9 @@ export default function App() {
                   onDelete={(request) => void removeRequest(request)}
                 />
               ) : null}
-              {activeTab === "statistics" && !compact ? (
+              {activeTab === "statistics" ? (
                 <StatisticsScreen
+				  compact={compact}
                   statistics={statistics}
                   historicalStatistics={historicalStatistics}
                   studies={protocolStudies}
@@ -1496,6 +1513,10 @@ export default function App() {
             setMenuOpen(false);
             setActiveTab("settings");
           }}
+		  onStatistics={() => {
+			setMenuOpen(false);
+			setActiveTab("statistics");
+		  }}
         />
         <StudyFilterSheet
           visible={filterOpen}
@@ -1991,7 +2012,6 @@ function StudiesScreen({
   onRetry,
   onRefresh,
   angiographies,
-  dicomCache,
   onOpenXA,
   onDelete
 }: {
@@ -2013,21 +2033,16 @@ function StudiesScreen({
   onRetry: () => void;
   onRefresh: () => void;
   angiographies: Study[];
-  dicomCache: DicomCacheSnapshot;
   onOpenXA: (study: Study) => void;
   onDelete: (study: Study) => void;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const patientXA = (study: Study) => angiographies.find((item) =>
-    patientKey(item.patient) === patientKey(study.patient) &&
-    item.study_type.toLowerCase() === "xa"
+	protocolMatchesAngiography(study, item)
   );
   const hasAvailableXA = (study: Study) => {
     const angiography = patientXA(study);
-    return Boolean(
-      angiography &&
-      (!compact || dicomCache.studies[angiography.study_id]?.complete)
-    );
+	return Boolean(angiography);
   };
   const choose = (study: Study) => {
     onSelect(study);
@@ -2196,7 +2211,7 @@ function StudyRow({
       <View style={styles.studyCopy}>
         <View style={styles.studyTitleLine}>
           <Text numberOfLines={1} style={styles.studyPatient}>
-            {study.patient}
+			{shortPatientName(study.patient)}
             {study.age ? (
               <Text style={styles.studyAge}> {study.age}</Text>
             ) : null}
@@ -2333,14 +2348,14 @@ function protocolSections(description: string): {
     result.course = normalized.slice(0, marker.index).trim();
     result.conclusion = normalized.slice(marker.index + marker[0].length).trim();
   } else {
-    result.course = normalized;
+	result.conclusion = normalized;
   }
   return result;
 }
 
-function ProtocolDescription({ description }: { description: string }) {
+function ProtocolDescription({ description, recommendation: directRecommendation = "" }: { description: string; recommendation?: string }) {
   const sections = protocolSections(description);
-  const recommendation = plannedRecommendation(sections.recommendation);
+	const recommendation = plannedRecommendation(directRecommendation || sections.recommendation);
   return (
     <View style={styles.protocolContent}>
       {sections.conclusion ? (
@@ -2381,7 +2396,7 @@ function StudyDetails({
         </View>
         <View style={styles.detailsHeroCopy}>
           <Text style={styles.detailsPatient}>
-            {study.patient}
+			{shortPatientName(study.patient)}
             {study.age ? (
               <Text style={styles.detailsAge}> {study.age}</Text>
             ) : null}
@@ -2413,7 +2428,7 @@ function StudyDetails({
       </View>
 
       <View style={styles.protocolSection}>
-        <ProtocolDescription description={study.descr_operation || ""} />
+		<ProtocolDescription description={study.descr_operation || ""} recommendation={study.recommendation} />
       </View>
       <View style={styles.detailsActions}>
         <Button
@@ -3422,6 +3437,7 @@ function ReportPeriodSheet({
 }
 
 function StatisticsScreen({
+	compact,
   statistics,
   historicalStatistics,
   studies,
@@ -3430,6 +3446,7 @@ function StatisticsScreen({
   onRetry,
   onUpdate
 }: {
+	compact: boolean;
   statistics: OperationStatistics | null;
   historicalStatistics: HistoricalStatistics | null;
   studies: Study[];
@@ -3440,6 +3457,7 @@ function StatisticsScreen({
 }) {
   const [patientPickerOpen, setPatientPickerOpen] = useState(false);
   const [patientSearch, setPatientSearch] = useState("");
+	const [mobileColumn, setMobileColumn] = useState("total");
   const config = useMemo<VMPStatisticsConfig>(() => ({
     operationTypes: statistics?.vmp_operation_types ?? [],
     includedStudyIds: statistics?.included_study_ids ?? [],
@@ -3486,6 +3504,40 @@ function StatisticsScreen({
       excludedStudyIds: [...new Set([...config.excludedStudyIds, studyID])]
     });
   };
+
+	if (compact) {
+		return (
+			<View style={[styles.statisticsScreen, styles.screenCompact]}>
+				<View style={styles.compactScreenToolbar}>
+					<View style={styles.compactScreenHeading}>
+						<Text style={styles.compactScreenTitle}>Статистика</Text>
+						<Text style={styles.compactScreenMeta}>Операции хирургов · {new Date().getFullYear()}</Text>
+					</View>
+					<IconButton icon="refresh-outline" label="Обновить статистику" onPress={onRetry} />
+				</View>
+				{error ? <InlineError message={error} onRetry={onRetry} /> : null}
+				{loading && !statistics ? <LoadingState label="Считаем операции…" /> : null}
+				{statistics ? (
+					<>
+						<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.vmpTypeChoices}>
+							<Chip label="Итого" selected={mobileColumn === "total"} onPress={() => setMobileColumn("total")} />
+							{statistics.operation_types.map((type) => (
+								<Chip key={type.id} label={type.label} selected={mobileColumn === type.id} onPress={() => setMobileColumn(type.id)} />
+							))}
+						</ScrollView>
+						<ScrollView contentContainerStyle={styles.vmpPatientListContent}>
+							{statistics.surgeons.map((row) => (
+								<View key={row.surgeon} style={styles.vmpPatientRow}>
+									<Text numberOfLines={1} style={styles.vmpPatientName}>{row.surgeon}</Text>
+									<Text style={styles.statisticsTotalCell}>{mobileColumn === "total" ? row.total : (row.counts[mobileColumn] ?? 0)}</Text>
+								</View>
+							))}
+						</ScrollView>
+					</>
+				) : null}
+			</View>
+		);
+	}
 
   return (
     <View style={styles.statisticsScreen}>
@@ -3540,7 +3592,7 @@ function StatisticsScreen({
                     {statistics.vmp_patients.length}
                   </Text>
                   <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>
-                    {statistics.operation_types.reduce((sum, type) => sum + type.total, 0)}
+					{statistics.surgeons.reduce((sum, row) => sum + row.total, 0)}
                   </Text>
                 </View>
               </View>
@@ -4077,12 +4129,13 @@ function escapePrintHTML(value: string) {
     .replaceAll("'", "&#039;");
 }
 
-function printOperationPlan(plan: OperationPlan) {
+function printOperationPlan(plan: OperationPlan, selectedDate?: string) {
   if (Platform.OS !== "web") return;
   const printWindow = window.open("", "_blank", "width=1180,height=820");
   if (!printWindow) throw new Error("Браузер заблокировал окно печати");
   printWindow.opener = null;
-  const rows = plan.days.flatMap((day) => {
+	const printedDays = selectedDate ? plan.days.filter((day) => day.date === selectedDate) : plan.days;
+  const rows = printedDays.flatMap((day) => {
     const entries = day.entries.length ? sortPlanEntries(day.entries) : [null];
     return entries.map(
       (entry, index) => `<tr>
@@ -4091,26 +4144,28 @@ function printOperationPlan(plan: OperationPlan) {
         <td>${escapePrintHTML(entry?.department || "—")}</td>
         <td>${escapePrintHTML(entry?.operation || "—")}</td>
         <td>${escapePrintHTML(entry?.additions || "—")}</td>
-        <td>${escapePrintHTML(entry?.previous_operation?.name_operation || "Первичная")}</td>
+		<td>${escapePrintHTML(entry?.previous_operations?.length
+			? entry.previous_operations.map((study) => `${formatDate(study.time_beginning)} ${cleanClinicalText(study.name_operation, true)}`).join("; ")
+			: "Первичная")}</td>
       </tr>`
     );
   }).join("");
   printWindow.addEventListener("load", () => printWindow.print(), { once: true });
   printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
     <title>План операций</title><style>
-      @page { size: landscape; margin: 12mm; }
+		@page { size: A4 portrait; margin: 10mm; }
       body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17232d; }
       h1 { margin: 0 0 4px; font-size: 24px; }
       p { margin: 0 0 18px; color: #536776; }
       table { width: 100%; border-collapse: collapse; table-layout: fixed; }
       th { background: #eaf1f5; color: #536776; font-size: 10px; text-transform: uppercase; }
-      th, td { border: 1px solid #d4dfe6; padding: 8px; vertical-align: top; font-size: 12px; }
+		th, td { border: 1px solid #d4dfe6; padding: 5px; vertical-align: top; font-size: 9px; }
       th:first-child { width: 8%; } th:nth-child(2) { width: 18%; }
       th:nth-child(3) { width: 12%; } th:nth-child(4) { width: 19%; }
       th:nth-child(5) { width: 18%; } th:nth-child(6) { width: 25%; }
       .day { color: #086f98; font-weight: 800; background: #f3f6f8; text-transform: capitalize; }
     </style></head><body><h1>План операций</h1>
-    <p>Неделя с ${escapePrintHTML(formatDate(plan.week_start))}</p>
+	<p>${selectedDate ? escapePrintHTML(formatDate(selectedDate)) : `Неделя с ${escapePrintHTML(formatDate(plan.week_start))}`}</p>
     <table><thead><tr><th>День</th><th>Пациент</th><th>Отделение</th><th>Операция</th><th>Дополнения</th><th>Предыдущая операция</th></tr></thead>
     <tbody>${rows}</tbody></table></body></html>`);
   printWindow.document.close();
@@ -4144,6 +4199,7 @@ function PlanScreen({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
+	const [printOpen, setPrintOpen] = useState(false);
   const [previousProtocol, setPreviousProtocol] = useState<Study | null>(null);
 
   const openDay = (date: string) => {
@@ -4204,7 +4260,7 @@ function PlanScreen({
                 return;
               }
               try {
-                printOperationPlan(plan);
+				setPrintOpen(true);
               } catch (reason) {
                 Alert.alert("Не удалось распечатать", errorMessage(reason));
               }
@@ -4241,6 +4297,7 @@ function PlanScreen({
       ) : plan ? (
         <View style={styles.planTable}>
           <View style={[styles.planTableRow, styles.planTableHeader]}>
+			<Text style={[styles.planTableHeaderText, styles.planStatusCell]}>✓</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDayCell, compact && styles.planDayCellCompact]}>День</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPatientCell, compact && styles.planPatientCellCompact]}>Пациент</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>{compact ? "Отд." : "Отделение"}</Text>
@@ -4273,6 +4330,13 @@ function PlanScreen({
                   {(day.entries.length ? sortPlanEntries(day.entries) : [null]).map(
                     (entry, index) => (
                       <View key={index} style={styles.planEntryRow}>
+						<View style={styles.planStatusCell}>
+							{entry?.completed_operation ? (
+								<Pressable onPress={(event) => { event.stopPropagation?.(); setPreviousProtocol(entry.completed_operation ?? null); }}>
+									<Icon name="checkmark-circle" color={colors.primary} size={18} />
+								</Pressable>
+							) : null}
+						</View>
                         <Text
                           numberOfLines={1}
                           adjustsFontSizeToFit={compact}
@@ -4297,22 +4361,14 @@ function PlanScreen({
                           </Text>
                         ) : null}
                         <View style={[styles.planPreviousCell, compact && styles.planPreviousCellCompact]}>
-                          {entry?.previous_operation ? (
-                            <Pressable
-                              accessibilityRole="button"
-                              accessibilityLabel={`Открыть предыдущую операцию ${entry.patient}`}
-                              onPress={(event) => {
-                                event.stopPropagation?.();
-                                setPreviousProtocol(entry.previous_operation ?? null);
-                              }}
-                              style={styles.planPreviousButton}
-                            >
-                              <Text numberOfLines={2} style={styles.planPreviousButtonText}>
-                                {compact
-                                  ? "повт"
-                                  : cleanClinicalText(entry.previous_operation.name_operation, true)}
-                              </Text>
-                            </Pressable>
+						  {entry?.previous_operations?.length ? (
+							<View style={styles.planHistoryButtons}>
+							  {entry.previous_operations.slice(0, 3).map((protocol) => (
+								<Pressable key={protocol.id} onPress={(event) => { event.stopPropagation?.(); setPreviousProtocol(protocol); }} style={styles.planPreviousButton}>
+								  <Text numberOfLines={2} style={styles.planPreviousButtonText}>{`${formatDate(protocol.time_beginning)} · ${cleanClinicalText(protocol.name_operation, true)}`}</Text>
+								</Pressable>
+							  ))}
+							</View>
                           ) : (
                             <Text style={styles.planPrimaryText}>
                               {entry ? (compact ? "перв" : "Первичная") : "—"}
@@ -4328,6 +4384,15 @@ function PlanScreen({
           </ScrollView>
         </View>
       ) : null}
+
+	  <Sheet visible={printOpen} title="Печать плана" onClose={() => setPrintOpen(false)}>
+		<View style={styles.filterSheetContent}>
+			<Button label="Вся неделя" icon="print-outline" onPress={() => { if (plan) printOperationPlan(plan); setPrintOpen(false); }} />
+			{plan?.days.map((day) => (
+				<Button key={day.date} label={`${weekdayTitle(day.date)} · ${formatDate(day.date)}`} variant="ghost" onPress={() => { printOperationPlan(plan, day.date); setPrintOpen(false); }} />
+			))}
+		</View>
+	  </Sheet>
 
       <Sheet
         visible={Boolean(selectedDate)}
@@ -4483,8 +4548,8 @@ function PlanScreen({
                 <View style={[styles.planEditorField, styles.planEditorHistoryField]}>
                   <View style={[styles.planEditorHistoryValue, styles.planDesktopControl]}>
                     <Text numberOfLines={2} style={styles.planEditorHistoryText}>
-                      {entry.previous_operation
-                        ? cleanClinicalText(entry.previous_operation.name_operation, true)
+					  {entry.previous_operations?.length
+						? entry.previous_operations.slice(0, 3).map((study) => `${formatDate(study.time_beginning)} · ${cleanClinicalText(study.name_operation, true)}`).join("; ")
                         : "Первичная"}
                     </Text>
                   </View>
@@ -4560,7 +4625,8 @@ function MobileMenu({
   health,
   agentHealth,
   onClose,
-  onSettings
+	onSettings,
+	onStatistics
 }: {
   visible: boolean;
   settings: AppSettings;
@@ -4568,6 +4634,7 @@ function MobileMenu({
   agentHealth: AgentHealth;
   onClose: () => void;
   onSettings: () => void;
+	onStatistics: () => void;
 }) {
   const translateX = useRef(new Animated.Value(-380)).current;
   const insets = useSafeAreaInsets();
@@ -4644,6 +4711,14 @@ function MobileMenu({
             />
           </View>
           <View style={styles.drawerMenu}>
+			<Pressable
+			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
+			  onPress={onStatistics}
+			>
+			  <Icon name="stats-chart-outline" color={colors.textMuted} />
+			  <Text style={styles.drawerItemText}>Статистика</Text>
+			  <Icon name="chevron-forward" size={17} color={colors.textDim} />
+			</Pressable>
             <Pressable
               style={({ pressed }) => [
                 styles.drawerItem,
@@ -6966,6 +7041,7 @@ const styles = StyleSheet.create({
     paddingTop: 10
   },
   planDayCell: { flex: 0.65, minWidth: 0, flexShrink: 1 },
+	planStatusCell: { width: 24, minWidth: 24, alignItems: "center", justifyContent: "center" },
   planPatientCell: { flex: 1.15, minWidth: 0, flexShrink: 1 },
   planDepartmentCell: { flex: 0.8, minWidth: 0, flexShrink: 1 },
   planOperationCell: { flex: 1, minWidth: 0, flexShrink: 1 },
@@ -6975,7 +7051,7 @@ const styles = StyleSheet.create({
   planPatientCellCompact: { flex: 1.75 },
   planDepartmentCellCompact: { flex: 0.52, textAlign: "center", paddingHorizontal: 1 },
   planOperationCellCompact: { flex: 1.08, paddingHorizontal: 2, fontSize: 9, lineHeight: 12 },
-  planPreviousCellCompact: { flex: 0.55 },
+	planPreviousCellCompact: { flex: 0.85 },
   planPreviousButton: {
     flex: 1,
     minHeight: 32,
@@ -6984,6 +7060,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     backgroundColor: colors.primarySoft
   },
+	planHistoryButtons: { flex: 1, gap: 3 },
   planPreviousButtonText: {
     color: colors.primary,
     fontSize: 10,

@@ -15,7 +15,7 @@ COPY . .
 RUN pnpm run typecheck && pnpm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
-ARG VERSION=0.1.0
+ARG VERSION=0.2.0
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="viewer-frontend" \
       org.opencontainers.image.description="Responsive clinical frontend for Viewer Backend and Hospital Agent" \

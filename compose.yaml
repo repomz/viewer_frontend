@@ -2,12 +2,12 @@ name: viewer-frontend
 
 services:
   frontend:
-    image: ${FRONTEND_IMAGE:-idrisovmarat/viewer_frontend:0.1.0}
+    image: ${FRONTEND_IMAGE:-idrisovmarat/viewer_frontend:0.2.0}
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        VERSION: ${IMAGE_VERSION:-0.1.0}
+        VERSION: ${IMAGE_VERSION:-0.2.0}
         VCS_REF: ${VCS_REF:-unknown}
     environment:
       BACKEND_URL: ${BACKEND_URL:-http://135.106.130.37:8080}
