@@ -46,7 +46,6 @@ import {
   getUserRequests,
   getUserRequest,
   saveOperationPlanDay,
-  saveVMPStatisticsConfig,
   searchStudies
 } from "./src/api";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
@@ -98,8 +97,7 @@ import type {
   ReportDocument,
   ReportOperation,
   Study,
-  UserRequest,
-  VMPStatisticsConfig
+  UserRequest
 } from "./src/types";
 import {
   Badge,
@@ -549,6 +547,7 @@ export default function App() {
   const [dayFilter, setDayFilter] = useState<DayFilter>(null);
   const [category, setCategory] = useState<StudyCategory>("all");
   const [studySort, setStudySort] = useState<StudySort>("time");
+  const [surgeonFilter, setSurgeonFilter] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
   const [xaStudies, setXaStudies] = useState<Study[]>([]);
@@ -708,20 +707,6 @@ export default function App() {
       setHistoricalStatistics(historical);
     } catch (error) {
       setStatisticsError(errorMessage(error));
-    } finally {
-      setStatisticsLoading(false);
-    }
-  }, []);
-
-  const updateVMPStatistics = useCallback(async (config: VMPStatisticsConfig) => {
-    setStatisticsLoading(true);
-    try {
-	  setStatistics(normalizeOperationStatistics(await saveVMPStatisticsConfig(config)));
-      setToast({ message: "Статистика ВМП обновлена", tone: "success" });
-      return true;
-    } catch (error) {
-      setToast({ message: errorMessage(error), tone: "danger" });
-      return false;
     } finally {
       setStatisticsLoading(false);
     }
@@ -1086,6 +1071,16 @@ export default function App() {
     [studies]
   );
 
+  const studySurgeons = useMemo(
+    () =>
+      [...new Set(
+        protocolStudies
+          .map((study) => study.surgeon.trim().toLocaleLowerCase("ru"))
+          .filter((surgeon) => surgeon && surgeon !== "не указано")
+      )].sort((left, right) => left.localeCompare(right, "ru")),
+    [protocolStudies]
+  );
+
   const filteredStudies = useMemo(() => {
     const query = search.trim().toLocaleLowerCase("ru");
     return protocolStudies.filter((study) => {
@@ -1094,6 +1089,10 @@ export default function App() {
       const isoWeekday = weekday === 0 ? 7 : weekday;
       if (dayFilter && isoWeekday !== Number(dayFilter)) return false;
       if (category !== "all" && studyCategory(study) !== category) return false;
+      if (
+        surgeonFilter &&
+        study.surgeon.trim().toLocaleLowerCase("ru") !== surgeonFilter
+      ) return false;
       if (!query) return true;
       return [
         study.patient,
@@ -1113,7 +1112,7 @@ export default function App() {
       );
       return operation || time;
     });
-  }, [category, dayFilter, protocolStudies, search, studySort]);
+  }, [category, dayFilter, protocolStudies, search, studySort, surgeonFilter]);
 
   const recordRequest = useCallback((request: UserRequest) => {
     setRequests((current) => {
@@ -1352,6 +1351,7 @@ export default function App() {
                   dayFilter={dayFilter}
                   category={category}
                   sort={studySort}
+                  surgeonFilter={surgeonFilter}
                   selected={selectedStudy}
                   onSearch={setSearch}
                   onDayFilter={(value) =>
@@ -1441,11 +1441,9 @@ export default function App() {
 				  compact={compact}
                   statistics={statistics}
                   historicalStatistics={historicalStatistics}
-                  studies={protocolStudies}
                   loading={statisticsLoading}
                   error={statisticsError}
                   onRetry={() => void loadStatistics()}
-                  onUpdate={updateVMPStatistics}
                 />
               ) : null}
               {activeTab === "settings" ? (
@@ -1522,9 +1520,12 @@ export default function App() {
           visible={filterOpen}
           selected={category}
           sort={studySort}
+          surgeon={surgeonFilter}
+          surgeons={studySurgeons}
           onClose={() => setFilterOpen(false)}
           onSelect={setCategory}
           onSort={setStudySort}
+          onSurgeon={setSurgeonFilter}
         />
         {toast ? (
           <Toast
@@ -2004,6 +2005,7 @@ function StudiesScreen({
   dayFilter,
   category,
   sort,
+  surgeonFilter,
   selected,
   onSearch,
   onDayFilter,
@@ -2025,6 +2027,7 @@ function StudiesScreen({
   dayFilter: DayFilter;
   category: StudyCategory;
   sort: StudySort;
+  surgeonFilter: string | null;
   selected: Study | null;
   onSearch: (value: string) => void;
   onDayFilter: (value: NonNullable<DayFilter>) => void;
@@ -2056,7 +2059,7 @@ function StudiesScreen({
           value={search}
           onChangeText={onSearch}
           placeholder={compact ? "Поиск пациента" : "Пациент, хирург, операция или ID"}
-          filterActive={category !== "all" || sort !== "time"}
+          filterActive={category !== "all" || sort !== "time" || Boolean(surgeonFilter)}
           onFilter={onFilter}
         />
         <ScrollView
@@ -3440,70 +3443,18 @@ function StatisticsScreen({
 	compact,
   statistics,
   historicalStatistics,
-  studies,
   loading,
   error,
-  onRetry,
-  onUpdate
+  onRetry
 }: {
 	compact: boolean;
   statistics: OperationStatistics | null;
   historicalStatistics: HistoricalStatistics | null;
-  studies: Study[];
   loading: boolean;
   error: string;
   onRetry: () => void;
-  onUpdate: (config: VMPStatisticsConfig) => Promise<boolean>;
 }) {
-  const [patientPickerOpen, setPatientPickerOpen] = useState(false);
-  const [patientSearch, setPatientSearch] = useState("");
 	const [mobileColumn, setMobileColumn] = useState("total");
-  const config = useMemo<VMPStatisticsConfig>(() => ({
-    operationTypes: statistics?.vmp_operation_types ?? [],
-    includedStudyIds: statistics?.included_study_ids ?? [],
-    excludedStudyIds: statistics?.excluded_study_ids ?? []
-  }), [statistics]);
-  const vmpIDs = useMemo(
-    () => new Set(statistics?.vmp_patients.map((item) => item.study_id) ?? []),
-    [statistics]
-  );
-  const availableStudies = useMemo(() => {
-    const query = patientSearch.trim().toLocaleLowerCase("ru");
-    return studies.filter((study) => {
-      if (vmpIDs.has(study.id)) return false;
-      if (!query) return true;
-      return `${study.patient} ${study.name_operation} ${study.surgeon}`
-        .toLocaleLowerCase("ru")
-        .includes(query);
-    });
-  }, [patientSearch, studies, vmpIDs]);
-  const toggleOperationType = (typeID: string) => {
-    const selected = config.operationTypes.includes(typeID);
-    void onUpdate({
-      ...config,
-      operationTypes: selected
-        ? config.operationTypes.filter((value) => value !== typeID)
-        : [...config.operationTypes, typeID]
-    });
-  };
-  const addPatient = async (study: Study) => {
-    const saved = await onUpdate({
-      ...config,
-      includedStudyIds: [...new Set([...config.includedStudyIds, study.id])],
-      excludedStudyIds: config.excludedStudyIds.filter((id) => id !== study.id)
-    });
-    if (saved) {
-      setPatientPickerOpen(false);
-      setPatientSearch("");
-    }
-  };
-  const removePatient = (studyID: string) => {
-    void onUpdate({
-      ...config,
-      includedStudyIds: config.includedStudyIds.filter((id) => id !== studyID),
-      excludedStudyIds: [...new Set([...config.excludedStudyIds, studyID])]
-    });
-  };
 
 	if (compact) {
 		return (
@@ -3568,7 +3519,6 @@ function StatisticsScreen({
                   {statistics.operation_types.map((type) => (
                     <Text key={type.id} style={styles.statisticsHeaderCell}>{type.label}</Text>
                   ))}
-                  <Text style={[styles.statisticsHeaderCell, styles.statisticsVMPHeader]}>ВМП</Text>
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsTotalHeader]}>Всего</Text>
                 </View>
                 <ScrollView style={styles.statisticsRowsScroll}>
@@ -3578,7 +3528,6 @@ function StatisticsScreen({
                       {statistics.operation_types.map((type) => (
                         <Text key={type.id} style={styles.statisticsCell}>{row.counts[type.id] ?? 0}</Text>
                       ))}
-                      <Text style={[styles.statisticsCell, styles.statisticsVMPCell]}>{row.vmp}</Text>
                       <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>{row.total}</Text>
                     </View>
                   ))}
@@ -3588,9 +3537,6 @@ function StatisticsScreen({
                   {statistics.operation_types.map((type) => (
                     <Text key={type.id} style={styles.statisticsCell}>{type.total}</Text>
                   ))}
-                  <Text style={[styles.statisticsCell, styles.statisticsVMPCell]}>
-                    {statistics.vmp_patients.length}
-                  </Text>
                   <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>
 					{statistics.surgeons.reduce((sum, row) => sum + row.total, 0)}
                   </Text>
@@ -3638,80 +3584,8 @@ function StatisticsScreen({
             )}
           </View>
           </View>
-          <View style={styles.vmpPanel}>
-            <View style={styles.vmpPanelHeader}>
-              <View style={styles.compactScreenHeading}>
-                <Text style={styles.vmpPanelTitle}>Операции ВМП</Text>
-                <Text style={styles.compactScreenMeta}>{statistics.vmp_patients.length} пациентов</Text>
-              </View>
-              <IconButton icon="add" label="Добавить пациента ВМП" onPress={() => setPatientPickerOpen(true)} />
-            </View>
-            <Text style={styles.vmpSectionLabel}>ТИПЫ ОПЕРАЦИЙ</Text>
-            <View style={styles.vmpTypeChoices}>
-              {statistics.operation_types.map((type) => (
-                <Chip
-                  key={type.id}
-                  label={type.label}
-                  selected={config.operationTypes.includes(type.id)}
-                  onPress={() => toggleOperationType(type.id)}
-                />
-              ))}
-            </View>
-            <Text style={styles.vmpSectionLabel}>АКТУАЛЬНЫЙ СПИСОК</Text>
-            <ScrollView style={styles.vmpPatientList} contentContainerStyle={styles.vmpPatientListContent}>
-              {statistics.vmp_patients.map((patient) => (
-                <View key={patient.study_id} style={styles.vmpPatientRow}>
-                  <View style={styles.vmpPatientCopy}>
-                    <Text numberOfLines={1} style={styles.vmpPatientName}>{patient.patient}</Text>
-                    <Text numberOfLines={2} style={styles.vmpPatientOperation}>
-                      {cleanClinicalText(patient.operation, true)}
-                    </Text>
-                    <Text style={styles.vmpPatientMeta}>
-                      {formatDate(patient.date)} · {patient.surgeon || "Хирург не указан"}
-                    </Text>
-                  </View>
-                  <IconButton
-                    icon="trash-outline"
-                    label={`Исключить ${patient.patient} из ВМП`}
-                    onPress={() => removePatient(patient.study_id)}
-                  />
-                </View>
-              ))}
-              {!statistics.vmp_patients.length ? (
-                <Text style={styles.vmpEmptyText}>Типы и пациенты ВМП пока не выбраны.</Text>
-              ) : null}
-            </ScrollView>
-          </View>
         </View>
       ) : null}
-      <Sheet
-        visible={patientPickerOpen}
-        title="Добавить пациента в ВМП"
-        onClose={() => setPatientPickerOpen(false)}
-        wide
-      >
-        <View style={styles.vmpPickerContent}>
-          <SearchField
-            value={patientSearch}
-            onChangeText={setPatientSearch}
-            placeholder="Пациент, операция или хирург"
-          />
-          <ScrollView style={styles.vmpPickerList} contentContainerStyle={styles.vmpPickerListContent}>
-            {availableStudies.map((study) => (
-              <Pressable key={study.id} onPress={() => void addPatient(study)} style={styles.vmpPickerRow}>
-                <View style={styles.vmpPatientCopy}>
-                  <Text style={styles.vmpPatientName}>{study.patient}</Text>
-                  <Text numberOfLines={2} style={styles.vmpPatientOperation}>
-                    {cleanClinicalText(study.name_operation, true)}
-                  </Text>
-                  <Text style={styles.vmpPatientMeta}>{formatDate(study.time_beginning)} · {study.surgeon}</Text>
-                </View>
-                <Icon name="add-circle-outline" color={colors.primary} />
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      </Sheet>
     </View>
   );
 }
@@ -4747,16 +4621,22 @@ function StudyFilterSheet({
   visible,
   selected,
   sort,
+  surgeon,
+  surgeons,
   onClose,
   onSelect,
-  onSort
+  onSort,
+  onSurgeon
 }: {
   visible: boolean;
   selected: StudyCategory;
   sort: StudySort;
+  surgeon: string | null;
+  surgeons: string[];
   onClose: () => void;
   onSelect: (value: StudyCategory) => void;
   onSort: (value: StudySort) => void;
+  onSurgeon: (value: string | null) => void;
 }) {
   return (
     <Sheet visible={visible} title="Фильтр и порядок" onClose={onClose}>
@@ -4773,6 +4653,22 @@ function StudyFilterSheet({
             selected={sort === "operation"}
             onPress={() => onSort("operation")}
           />
+        </View>
+        <Text style={styles.filterSectionTitle}>ХИРУРГ</Text>
+        <View style={styles.filterSortRow}>
+          <Chip
+            label="Все хирурги"
+            selected={!surgeon}
+            onPress={() => onSurgeon(null)}
+          />
+          {surgeons.map((value) => (
+            <Chip
+              key={value}
+              label={value.charAt(0).toLocaleUpperCase("ru") + value.slice(1)}
+              selected={surgeon === value}
+              onPress={() => onSurgeon(surgeon === value ? null : value)}
+            />
+          ))}
         </View>
         <Text style={styles.filterSectionTitle}>ТИП ОПЕРАЦИИ</Text>
         {studyCategories.map((value) => {
