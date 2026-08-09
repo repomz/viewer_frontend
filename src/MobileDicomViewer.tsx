@@ -108,7 +108,8 @@ export function MobileDicomViewer({
     playing: false
   });
   const videoElement = useRef<HTMLVideoElement | null>(null);
-  const autoPlayRequested = useRef(false);
+  const pendingAutoPlaySeries = useRef<number | null>(null);
+  const resolvedCineURL = useRef<string | null>(null);
   const cineFallbackUsed = useRef(false);
   const seriesSheetY = useRef(new Animated.Value(0)).current;
   const gallerySheetY = useRef(new Animated.Value(0)).current;
@@ -216,6 +217,8 @@ export function MobileDicomViewer({
       cachedPrepared ? manifestFrameMap(cachedPrepared) : new Map()
     );
     setSeriesIndex(0);
+    pendingAutoPlaySeries.current = null;
+    resolvedCineURL.current = null;
     setFrameIndex(0);
     setPlaying(false);
     setZoom(1);
@@ -335,6 +338,7 @@ export function MobileDicomViewer({
     setCineSource("");
     setPreciseMode(false);
     cineFallbackUsed.current = false;
+    resolvedCineURL.current = null;
     if (!selectedCineURL) return;
     void resolvePreparedCineSource(selectedCineURL)
       .then(({ source, local }) => {
@@ -343,6 +347,7 @@ export function MobileDicomViewer({
           return;
         }
         if (local) localSource = source;
+        resolvedCineURL.current = selectedCineURL;
         setCineSource(source);
       })
       .catch((reason: unknown) => {
@@ -441,6 +446,23 @@ export function MobileDicomViewer({
     if (!element || !selectedCineURL) return;
     element.playbackRate = 1;
   }, [selectedCineURL]);
+
+  useEffect(() => {
+    if (
+      pendingAutoPlaySeries.current !== seriesIndex ||
+      !cineReady ||
+      !cineSource ||
+      resolvedCineURL.current !== selectedCineURL ||
+      preciseMode
+    ) {
+      return;
+    }
+    const element = videoElement.current;
+    if (!element) return;
+    pendingAutoPlaySeries.current = null;
+    element.playbackRate = 1;
+    void element.play().catch(() => undefined);
+  }, [cineReady, cineSource, preciseMode, selectedCineURL, seriesIndex]);
 
   useEffect(() => {
     if (!selectedSeries || playing || !preciseMode || !frameReady) return;
@@ -570,18 +592,10 @@ export function MobileDicomViewer({
         onLoadedData: () => {
           setCineReady(true);
           if (!preciseMode) setFrameReady(true);
-          if (autoPlayRequested.current) {
-            autoPlayRequested.current = false;
-            void videoElement.current?.play().catch(() => undefined);
-          }
         },
         onCanPlay: () => {
           setCineReady(true);
           if (!preciseMode) setFrameReady(true);
-          if (autoPlayRequested.current) {
-            autoPlayRequested.current = false;
-            void videoElement.current?.play().catch(() => undefined);
-          }
         },
         onPlay: () => setPlaying(true),
         onPause: () => setPlaying(false),
@@ -986,7 +1000,7 @@ export function MobileDicomViewer({
   const selectSeries = (index: number, closeSheet = false) => {
     setPlaying(false);
     videoElement.current?.pause();
-    autoPlayRequested.current = true;
+    pendingAutoPlaySeries.current = index;
     setSeriesIndex(index);
     setFrameIndex(0);
     setZoom(1);
@@ -994,7 +1008,7 @@ export function MobileDicomViewer({
     setPreciseMode(false);
     if (closeSheet) setSeriesOpen(false);
     if (index === seriesIndex && cineReady && videoElement.current) {
-      autoPlayRequested.current = false;
+      pendingAutoPlaySeries.current = null;
       void videoElement.current.play().catch(() => undefined);
     }
   };
@@ -1010,6 +1024,69 @@ export function MobileDicomViewer({
         }
       ]}
     >
+      {desktop && !metadataLoading && !error && selectedSeries && selectedFrame ? (
+        <View style={styles.desktopControls}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={playing ? "Пауза" : "Воспроизвести cine"}
+            onPress={togglePlayback}
+            style={[styles.controlButton, styles.playButton]}
+          >
+            <Icon name={playing ? "pause" : "play"} size={21} color={darkColors.text} />
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Сбросить изображение" onPress={reset} style={styles.controlButton}>
+            <Icon name="refresh" size={19} color={darkColors.text} />
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Сохранить текущий кадр" onPress={() => void captureFrame()} style={styles.controlButton}>
+            <Icon name="camera-outline" size={19} color={darkColors.text} />
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Открыть сохранённые кадры" onPress={() => setGalleryOpen(true)} style={styles.controlButton}>
+            <Icon name="images-outline" size={19} color={darkColors.text} />
+            {captures.length ? (
+              <View style={styles.captureBadge}>
+                <Text style={styles.captureBadgeText}>{captures.length}</Text>
+              </View>
+            ) : null}
+          </Pressable>
+        </View>
+      ) : null}
+      <View
+        {...gestures.panHandlers}
+        onLayout={(event) =>
+          setViewportSize({
+            width: Math.max(1, event.nativeEvent.layout.width),
+            height: Math.max(1, event.nativeEvent.layout.height)
+          })
+        }
+        style={[styles.viewport, desktop && styles.viewportDesktop]}
+      >
+        {cineSource ? videoNode : null}
+        {frameSource ? imageNode : null}
+        {selectedFrame ? (
+          <>
+            <Text style={[styles.imageMeta, styles.resolutionMeta]}>
+              Разрешение: {columns || "—"}×{rows || "—"}
+            </Text>
+            <Text style={[styles.imageMeta, styles.windowMeta]}>
+              WW: {Math.round(windowWidth)} · WL: {Math.round(windowCenter)}
+            </Text>
+            <Text style={[styles.imageMeta, styles.seriesMeta]}>
+              Серия {seriesIndex + 1}/{series.length}
+            </Text>
+            <Text style={[styles.imageMeta, styles.frameMeta]}>
+              {frameIndex + 1}/{frameCount}
+            </Text>
+            {!playing ? (
+              <Text style={styles.gestureHint}>
+                {zoom > 1
+                  ? "Перетаскивайте увеличенную область"
+                  : "↑↓ кадры · масштаб двумя пальцами в нужной области"}
+              </Text>
+            ) : null}
+          </>
+        ) : null}
+      </View>
+
       {desktop && series.length ? (
         <View style={styles.desktopSeriesRail}>
           <Text style={styles.desktopSeriesTitle}>Серии · {series.length}</Text>
@@ -1045,76 +1122,8 @@ export function MobileDicomViewer({
               </Pressable>
             ))}
           </ScrollView>
-          {!metadataLoading && !error && selectedSeries && selectedFrame ? (
-            <View style={styles.desktopControls}>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={playing ? "Пауза" : "Воспроизвести cine"}
-                onPress={togglePlayback}
-                style={[styles.controlButton, styles.playButton]}
-              >
-                <Icon name={playing ? "pause" : "play"} size={21} color={darkColors.text} />
-              </Pressable>
-              <Pressable accessibilityRole="button" accessibilityLabel="Сбросить изображение" onPress={reset} style={styles.controlButton}>
-                <Icon name="refresh" size={19} color={darkColors.text} />
-              </Pressable>
-              <Pressable accessibilityRole="button" accessibilityLabel="Сохранить текущий кадр" onPress={() => void captureFrame()} style={styles.controlButton}>
-                <Icon name="camera-outline" size={19} color={darkColors.text} />
-              </Pressable>
-              <Pressable accessibilityRole="button" accessibilityLabel="Открыть сохранённые кадры" onPress={() => setGalleryOpen(true)} style={styles.controlButton}>
-                <Icon name="images-outline" size={19} color={darkColors.text} />
-                {captures.length ? (
-                  <View style={styles.captureBadge}>
-                    <Text style={styles.captureBadgeText}>{captures.length}</Text>
-                  </View>
-                ) : null}
-              </Pressable>
-            </View>
-          ) : null}
         </View>
       ) : null}
-      <View
-        {...gestures.panHandlers}
-        onLayout={(event) =>
-          setViewportSize({
-            width: Math.max(1, event.nativeEvent.layout.width),
-            height: Math.max(1, event.nativeEvent.layout.height)
-          })
-        }
-        style={[
-          styles.viewport,
-          desktop && styles.viewportDesktop,
-          desktop && rows > 0 && columns > 0
-            ? { aspectRatio: columns / rows }
-            : null
-        ]}
-      >
-        {cineSource ? videoNode : null}
-        {frameSource ? imageNode : null}
-        {selectedFrame ? (
-          <>
-            <Text style={[styles.imageMeta, styles.resolutionMeta]}>
-              Разрешение: {columns || "—"}×{rows || "—"}
-            </Text>
-            <Text style={[styles.imageMeta, styles.windowMeta]}>
-              WW: {Math.round(windowWidth)} · WL: {Math.round(windowCenter)}
-            </Text>
-            <Text style={[styles.imageMeta, styles.seriesMeta]}>
-              Серия {seriesIndex + 1}/{series.length}
-            </Text>
-            <Text style={[styles.imageMeta, styles.frameMeta]}>
-              {frameIndex + 1}/{frameCount}
-            </Text>
-            {!playing ? (
-              <Text style={styles.gestureHint}>
-                {zoom > 1
-                  ? "Перетаскивайте увеличенную область"
-                  : "↑↓ кадры · масштаб двумя пальцами в нужной области"}
-              </Text>
-            ) : null}
-          </>
-        ) : null}
-      </View>
 
       {metadataLoading ||
       (!preparedManifest && !cineReady && !frameSource && !error) ? (
@@ -1390,15 +1399,17 @@ const styles = StyleSheet.create({
   rootDesktop: {
     minHeight: 0,
     flexDirection: "row",
-    justifyContent: "flex-end",
     gap: 8,
     borderRadius: 18,
     overflow: "hidden"
   },
   desktopSeriesRail: {
-    width: 136,
-    minWidth: 136,
-    padding: 8,
+    width: 148,
+    minWidth: 148,
+    padding: 10,
+    paddingBottom: 10,
+    borderLeftWidth: 1,
+    borderLeftColor: darkColors.borderSoft,
     backgroundColor: "#12161B"
   },
   desktopSeriesTitle: {
@@ -1407,8 +1418,8 @@ const styles = StyleSheet.create({
     marginBottom: 9
   },
   desktopSeriesContent: {
-    gap: 7,
-    paddingBottom: 8
+    gap: 9,
+    paddingBottom: 14
   },
   desktopSeriesScroll: { flex: 1, minHeight: 0 },
   desktopSeriesTile: {
@@ -1434,11 +1445,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#1E2127"
   },
   viewportDesktop: {
-    flex: 0,
-    flexShrink: 1,
-    alignSelf: "center",
-    height: "96%",
-    marginHorizontal: 6,
+    flex: 1,
+    maxWidth: 720,
+    alignSelf: "stretch",
+    marginHorizontal: 0,
     marginTop: 0
   },
   state: {
@@ -1497,13 +1507,12 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(30,33,39,0.94)"
   },
   desktopControls: {
-    flexDirection: "row",
-    flexWrap: "wrap",
+    width: 52,
+    minWidth: 52,
+    flexDirection: "column",
+    alignItems: "center",
     justifyContent: "center",
-    gap: 7,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: darkColors.borderSoft
+    gap: 10
   },
   controlRow: {
     flexDirection: "row",
