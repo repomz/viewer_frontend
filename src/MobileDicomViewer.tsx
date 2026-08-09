@@ -1024,6 +1024,43 @@ export function MobileDicomViewer({
         }
       ]}
     >
+      {desktop && series.length ? (
+        <View style={styles.desktopSeriesRail}>
+          <Text style={styles.desktopSeriesTitle}>Серии · {series.length}</Text>
+          <ScrollView
+            style={styles.desktopSeriesScroll}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.desktopSeriesContent}
+          >
+            {series.map((item, index) => (
+              <Pressable
+                key={item.uid}
+                accessibilityRole="button"
+                accessibilityLabel={`Открыть серию ${index + 1}`}
+                onPress={() => selectSeries(index)}
+                style={[
+                  styles.desktopSeriesTile,
+                  index === seriesIndex && styles.seriesTileActive
+                ]}
+              >
+                {seriesPreviews[item.uid] ? (
+                  <RNImage
+                    source={{ uri: seriesPreviews[item.uid] }}
+                    resizeMode="cover"
+                    style={styles.seriesPreview}
+                  />
+                ) : (
+                  <View style={styles.previewPlaceholder}>
+                    <ActivityIndicator color={darkColors.textMuted} size="small" />
+                  </View>
+                )}
+                <Text style={styles.seriesNumber}>{index + 1}</Text>
+                <Text style={styles.seriesFrames}>{item.frames.length}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
       {desktop && !metadataLoading && !error && selectedSeries && selectedFrame ? (
         <View style={styles.desktopControls}>
           <Pressable
@@ -1086,44 +1123,6 @@ export function MobileDicomViewer({
           </>
         ) : null}
       </View>
-
-      {desktop && series.length ? (
-        <View style={styles.desktopSeriesRail}>
-          <Text style={styles.desktopSeriesTitle}>Серии · {series.length}</Text>
-          <ScrollView
-            style={styles.desktopSeriesScroll}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.desktopSeriesContent}
-          >
-            {series.map((item, index) => (
-              <Pressable
-                key={item.uid}
-                accessibilityRole="button"
-                accessibilityLabel={`Открыть серию ${index + 1}`}
-                onPress={() => selectSeries(index)}
-                style={[
-                  styles.desktopSeriesTile,
-                  index === seriesIndex && styles.seriesTileActive
-                ]}
-              >
-                {seriesPreviews[item.uid] ? (
-                  <RNImage
-                    source={{ uri: seriesPreviews[item.uid] }}
-                    resizeMode="cover"
-                    style={styles.seriesPreview}
-                  />
-                ) : (
-                  <View style={styles.previewPlaceholder}>
-                    <ActivityIndicator color={darkColors.textMuted} size="small" />
-                  </View>
-                )}
-                <Text style={styles.seriesNumber}>{index + 1}</Text>
-                <Text style={styles.seriesFrames}>{item.frames.length}</Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      ) : null}
 
       {metadataLoading ||
       (!preparedManifest && !cineReady && !frameSource && !error) ? (
@@ -1399,17 +1398,17 @@ const styles = StyleSheet.create({
   rootDesktop: {
     minHeight: 0,
     flexDirection: "row",
-    gap: 8,
     borderRadius: 18,
-    overflow: "hidden"
+    overflow: "hidden",
+    backgroundColor: "#12161B"
   },
   desktopSeriesRail: {
     width: 148,
     minWidth: 148,
     padding: 10,
     paddingBottom: 10,
-    borderLeftWidth: 1,
-    borderLeftColor: darkColors.borderSoft,
+    borderRightWidth: 1,
+    borderRightColor: darkColors.borderSoft,
     backgroundColor: "#12161B"
   },
   desktopSeriesTitle: {
@@ -1446,10 +1445,10 @@ const styles = StyleSheet.create({
   },
   viewportDesktop: {
     flex: 1,
-    maxWidth: 720,
     alignSelf: "stretch",
     marginHorizontal: 0,
-    marginTop: 0
+    marginTop: 0,
+    borderRadius: 16
   },
   state: {
     ...StyleSheet.absoluteFillObject,
@@ -1507,12 +1506,16 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(30,33,39,0.94)"
   },
   desktopControls: {
-    width: 52,
-    minWidth: 52,
+    width: 60,
+    minWidth: 60,
     flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10
+    gap: 10,
+    paddingHorizontal: 8,
+    borderRightWidth: 1,
+    borderRightColor: darkColors.borderSoft,
+    backgroundColor: "#12161B"
   },
   controlRow: {
     flexDirection: "row",
