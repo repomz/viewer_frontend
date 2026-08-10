@@ -11,6 +11,7 @@ const REQUESTS_KEY = "viewer.requests.v1";
 const REPORTS_KEY_PREFIX = "viewer.reports.v1";
 const PLAN_KEY_PREFIX = "viewer.operation-plan.v1";
 const STUDIES_KEY = "viewer.studies.v1";
+const XA_STUDIES_KEY = "viewer.xa-studies.v1";
 
 export const defaultSettings: AppSettings = {
   agentId: 2,
@@ -141,4 +142,24 @@ export function loadStudiesCache(): Study[] {
 export function saveStudiesCache(studies: Study[]): void {
   if (!hasStorage()) return;
   window.localStorage.setItem(STUDIES_KEY, JSON.stringify(studies.slice(0, 500)));
+}
+
+export function loadXAStudiesCache(): Study[] {
+  if (!hasStorage()) return [];
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(XA_STUDIES_KEY) ?? "[]"
+    );
+    return Array.isArray(stored) ? stored.slice(0, 200) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveXAStudiesCache(studies: Study[]): void {
+  if (!hasStorage()) return;
+  window.localStorage.setItem(
+    XA_STUDIES_KEY,
+    JSON.stringify(studies.slice(0, 200))
+  );
 }

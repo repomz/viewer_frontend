@@ -58,10 +58,12 @@ import {
   loadReportsCache,
   loadSettings,
   loadStudiesCache,
+  loadXAStudiesCache,
   saveOperationPlanCache,
   saveRequests,
   saveReportsCache,
   saveStudiesCache,
+  saveXAStudiesCache,
   saveSettings
 } from "./src/storage";
 import {
@@ -550,7 +552,7 @@ export default function App() {
   const [surgeonFilter, setSurgeonFilter] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
-  const [xaStudies, setXaStudies] = useState<Study[]>([]);
+  const [xaStudies, setXaStudies] = useState<Study[]>(loadXAStudiesCache);
   const [xaLoading, setXaLoading] = useState(false);
   const [xaError, setXaError] = useState("");
   const [requests, setRequests] = useState<UserRequest[]>(loadRequests);
@@ -625,21 +627,21 @@ export default function App() {
 
   const loadXAStudies = useCallback(async () => {
     setXaError("");
-    setXaLoading(true);
+    setXaLoading(loadXAStudiesCache().length === 0);
     try {
       const [xa, ct] = await Promise.all([
         searchStudies({ studyType: "xa" }),
         searchStudies({ studyType: "ct" })
       ]);
-      setXaStudies(
-        [...xa, ...ct]
+      const next = [...xa, ...ct]
           .filter(isPacsImagingStudy)
           .sort(
             (left, right) =>
               new Date(right.time_beginning).getTime() -
               new Date(left.time_beginning).getTime()
-          )
-      );
+          );
+      setXaStudies(next);
+      saveXAStudiesCache(next);
     } catch (error) {
       setXaError(errorMessage(error));
     } finally {
@@ -819,15 +821,19 @@ export default function App() {
     if (!compact) {
       setAutoDownloadStartAllowed(false);
     }
+    const canStartFromCache = compact && loadXAStudiesCache().length > 0;
+    if (canStartFromCache) {
+      timer = setTimeout(() => setAutoDownloadStartAllowed(true), 100);
+    }
+    void loadXAStudies().finally(() => {
+      if (cancelled || !compact || canStartFromCache) return;
+      timer = setTimeout(() => setAutoDownloadStartAllowed(true), 100);
+    });
     void Promise.allSettled([
       loadRequestHistory(),
       loadReports(),
-      loadPlan(0),
-      loadXAStudies()
-    ]).then(() => {
-      if (cancelled || !compact) return;
-      timer = setTimeout(() => setAutoDownloadStartAllowed(true), 300);
-    });
+      loadPlan(0)
+    ]);
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);

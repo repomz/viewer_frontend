@@ -239,6 +239,7 @@ export function getCachedPreparedXAManifest(
 }
 
 export function cachePreparedXAManifest(manifest: PreparedXAManifest): void {
+  if (manifest.status !== "ready") return;
   const manifests = readRecord<PreparedManifestIndex>(MANIFEST_KEY);
   manifests[manifest.study_uid] = manifest;
   writeRecord(MANIFEST_KEY, manifests);
@@ -672,12 +673,25 @@ export async function downloadStudyFirstSeriesForOffline(
   emit();
   try {
     await requestPersistentStorage();
-    const manifest =
-      getCachedPreparedXAManifest(studyUID) ??
-      (await getPreparedXAManifest(studyUID, {
-        wait: true,
+    let manifest = getCachedPreparedXAManifest(studyUID);
+    while (!manifest && !controller.signal.aborted) {
+      manifest = await getPreparedXAManifest(studyUID, {
         signal: controller.signal
-      }));
+      });
+      if (manifest && manifestCineURLs(manifest).length > 0) break;
+      manifest = null;
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(resolve, 1000);
+        controller.signal.addEventListener(
+          "abort",
+          () => {
+            window.clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+          },
+          { once: true }
+        );
+      });
+    }
     if (!manifest) return false;
     const cineURLs = manifestCineURLs(manifest);
     const firstCine = cineURLs[0];

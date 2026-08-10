@@ -20,7 +20,7 @@ export type PreparedXASeries = {
 };
 
 export type PreparedXAManifest = {
-  status: "ready";
+  status: "partial" | "ready";
   study_uid: string;
   prepared_at: string;
   frame_count: number;
@@ -93,7 +93,12 @@ export async function getPreparedXAManifest(
     if (!response.ok) {
       throw new Error(`Сервер подготовки XA вернул HTTP ${response.status}`);
     }
-    return (await response.json()) as PreparedXAManifest;
+    const manifest = (await response.json()) as PreparedXAManifest;
+    if (manifest.status === "partial" && options.wait) {
+      await sleep(1000, options.signal);
+      continue;
+    }
+    return manifest;
   }
   throw new DOMException("Aborted", "AbortError");
 }

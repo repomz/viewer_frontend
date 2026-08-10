@@ -262,6 +262,20 @@ export function MobileDicomViewer({
             setPreparedManifest(prepared);
             setPreparedFrames(manifestFrameMap(prepared));
           }
+          if (prepared.status === "partial") {
+            void getPreparedXAManifest(studyUID, {
+              wait: true,
+              signal: controller.signal
+            })
+              .then((complete) => {
+                if (cancelled || !complete) return;
+                if (persistentCacheEnabled) cachePreparedXAManifest(complete);
+                setSeries(manifestDicomSeries(complete, root));
+                setPreparedManifest(complete);
+                setPreparedFrames(manifestFrameMap(complete));
+              })
+              .catch(() => undefined);
+          }
           // Resolution/window metadata is useful, but must not delay the first cine.
           void fetch(`${root}/studies/${encodeURIComponent(studyUID)}/metadata`, {
             headers: { Accept: "application/dicom+json" },

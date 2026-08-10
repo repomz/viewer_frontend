@@ -34,12 +34,12 @@ docker compose up --build --wait
 Приложение откроется на [http://localhost:5173](http://localhost:5173).
 
 По умолчанию proxy подключается к действующему backend
-`http://135.106.130.37:8080`, а DICOMweb — напрямую к Orthanc PACS на
-`http://135.106.130.37:8042`. Эти значения можно изменить в `.env`:
+`https://135.106.130.37/api`, а DICOMweb — через тот же HTTPS-origin
+`https://135.106.130.37`. Эти значения можно изменить в `.env`:
 
 ```dotenv
-BACKEND_URL=http://SERVER:8080
-PACS_URL=http://SERVER:8042
+BACKEND_URL=https://135.106.130.37/api
+PACS_URL=https://135.106.130.37
 PACS_AUTHORIZATION=Basic BASE64_USER_PASSWORD
 FRONTEND_PORT=5173
 ```
@@ -64,8 +64,8 @@ docker.io/idrisovmarat/viewer_frontend:latest
 ```bash
 docker pull idrisovmarat/viewer_frontend:0.2.0
 docker run --rm -p 5173:8080 \
-  -e BACKEND_URL=http://135.106.130.37:8080 \
-  -e PACS_URL=http://135.106.130.37:8042 \
+  -e BACKEND_URL=https://135.106.130.37/api \
+  -e PACS_URL=https://135.106.130.37 \
   -e 'PACS_AUTHORIZATION=Basic bWFwZHI6Y2hhbmdlc3Ryb25ncGFzc3dvcmQ=' \
   idrisovmarat/viewer_frontend:0.2.0
 ```
