@@ -1,6 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   ActivityIndicator,
@@ -3455,6 +3455,16 @@ function StatisticsScreen({
   onRetry: () => void;
 }) {
 	const [mobileColumn, setMobileColumn] = useState("total");
+	const [mobileColumnOpen, setMobileColumnOpen] = useState(false);
+	const selectedMobileType = statistics?.operation_types.find(
+		(type) => type.id === mobileColumn
+	);
+	const mobileColumnLabel =
+		mobileColumn === "total" ? "Все операции" : selectedMobileType?.label ?? "Все операции";
+	const mobileColumnTotal =
+		mobileColumn === "total"
+			? statistics?.surgeons.reduce((sum, row) => sum + row.total, 0) ?? 0
+			: selectedMobileType?.total ?? 0;
 
 	if (compact) {
 		return (
@@ -3469,22 +3479,77 @@ function StatisticsScreen({
 				{error ? <InlineError message={error} onRetry={onRetry} /> : null}
 				{loading && !statistics ? <LoadingState label="Считаем операции…" /> : null}
 				{statistics ? (
-					<>
-						<ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.vmpTypeChoices}>
-							<Chip label="Итого" selected={mobileColumn === "total"} onPress={() => setMobileColumn("total")} />
-							{statistics.operation_types.map((type) => (
-								<Chip key={type.id} label={type.label} selected={mobileColumn === type.id} onPress={() => setMobileColumn(type.id)} />
-							))}
-						</ScrollView>
-						<ScrollView contentContainerStyle={styles.vmpPatientListContent}>
-							{statistics.surgeons.map((row) => (
-								<View key={row.surgeon} style={styles.vmpPatientRow}>
-									<Text numberOfLines={1} style={styles.vmpPatientName}>{row.surgeon}</Text>
-									<Text style={styles.statisticsTotalCell}>{mobileColumn === "total" ? row.total : (row.counts[mobileColumn] ?? 0)}</Text>
+					<ScrollView
+						style={styles.mobileStatisticsScroll}
+						contentContainerStyle={styles.mobileStatisticsContent}
+						showsVerticalScrollIndicator={false}
+					>
+						<View style={styles.mobileStatisticsSelectorCard}>
+							<Text style={styles.mobileStatisticsSelectorLabel}>Показатель</Text>
+							<Pressable
+								accessibilityRole="button"
+								accessibilityLabel="Выбрать показатель статистики"
+								onPress={() => setMobileColumnOpen((current) => !current)}
+								style={styles.mobileStatisticsSelector}
+							>
+								<Text numberOfLines={1} style={styles.mobileStatisticsSelectorValue}>
+									{mobileColumnLabel}
+								</Text>
+								<Icon
+									name={mobileColumnOpen ? "chevron-up" : "chevron-down"}
+									size={18}
+									color={colors.textDim}
+								/>
+							</Pressable>
+							{mobileColumnOpen ? (
+								<View style={styles.mobileStatisticsChoices}>
+									{[
+										{ id: "total", label: "Все операции" },
+										...statistics.operation_types
+									].map((type) => (
+										<Pressable
+											key={type.id}
+											onPress={() => {
+												setMobileColumn(type.id);
+												setMobileColumnOpen(false);
+											}}
+											style={[
+												styles.mobileStatisticsChoice,
+												mobileColumn === type.id && styles.mobileStatisticsChoiceActive
+											]}
+										>
+											<Text
+												style={[
+													styles.mobileStatisticsChoiceText,
+													mobileColumn === type.id && styles.mobileStatisticsChoiceTextActive
+												]}
+											>
+												{type.label}
+											</Text>
+										</Pressable>
+									))}
+								</View>
+							) : null}
+						</View>
+						<View style={styles.mobileStatisticsTable}>
+							<View style={styles.mobileStatisticsTableHeader}>
+								<Text style={styles.mobileStatisticsHeaderName}>Хирург</Text>
+								<Text style={styles.mobileStatisticsHeaderValue}>{mobileColumnLabel}</Text>
+							</View>
+							{statistics.surgeons.slice(0, 4).map((row) => (
+								<View key={row.surgeon} style={styles.mobileStatisticsTableRow}>
+									<Text numberOfLines={1} style={styles.mobileStatisticsSurgeon}>{row.surgeon}</Text>
+									<Text style={styles.mobileStatisticsValue}>
+										{mobileColumn === "total" ? row.total : row.counts[mobileColumn] ?? 0}
+									</Text>
 								</View>
 							))}
-						</ScrollView>
-					</>
+							<View style={[styles.mobileStatisticsTableRow, styles.mobileStatisticsSummary]}>
+								<Text style={styles.mobileStatisticsSummaryLabel}>Итого операций</Text>
+								<Text style={styles.mobileStatisticsSummaryValue}>{mobileColumnTotal}</Text>
+							</View>
+						</View>
+					</ScrollView>
 				) : null}
 			</View>
 		);
@@ -3492,6 +3557,11 @@ function StatisticsScreen({
 
   return (
     <View style={styles.statisticsScreen}>
+      <ScrollView
+        style={styles.statisticsPageScroll}
+        contentContainerStyle={styles.statisticsPageContent}
+        showsVerticalScrollIndicator={false}
+      >
       <View style={styles.compactScreenToolbar}>
         <View style={styles.compactScreenHeading}>
           <Text style={styles.compactScreenTitle}>Статистика операций</Text>
@@ -3521,7 +3591,7 @@ function StatisticsScreen({
                   ))}
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsTotalHeader]}>Всего</Text>
                 </View>
-                <ScrollView style={styles.statisticsRowsScroll}>
+                <View>
                   {statistics.surgeons.map((row) => (
                     <View key={row.surgeon} style={styles.statisticsTableRow}>
                       <Text numberOfLines={1} style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>{row.surgeon}</Text>
@@ -3531,7 +3601,7 @@ function StatisticsScreen({
                       <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>{row.total}</Text>
                     </View>
                   ))}
-                </ScrollView>
+                </View>
                 <View style={[styles.statisticsTableRow, styles.statisticsSummaryRow]}>
                   <Text style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>Всего</Text>
                   {statistics.operation_types.map((type) => (
@@ -3563,7 +3633,7 @@ function StatisticsScreen({
                     ))}
                     <Text style={styles.historyHeaderCell}>ВСЕГО</Text>
                   </View>
-                  <ScrollView style={styles.historyRowsScroll}>
+                  <View>
                     {historicalStatistics.years.map((row) => (
                       <View key={row.year} style={styles.historyTableRow}>
                         <Text style={[styles.historyCell, styles.historyYearCell]}>{row.year}</Text>
@@ -3573,7 +3643,7 @@ function StatisticsScreen({
                         <Text style={[styles.historyCell, styles.historyTotalCell]}>{row.total}</Text>
                       </View>
                     ))}
-                  </ScrollView>
+                  </View>
                 </View>
               </ScrollView>
             ) : (
@@ -3586,6 +3656,7 @@ function StatisticsScreen({
           </View>
         </View>
       ) : null}
+      </ScrollView>
     </View>
   );
 }
@@ -4075,13 +4146,20 @@ function PlanScreen({
   const [shareOpen, setShareOpen] = useState(false);
 	const [printOpen, setPrintOpen] = useState(false);
   const [previousProtocol, setPreviousProtocol] = useState<Study | null>(null);
+  const planEditorScrollRef = useRef<ScrollView>(null);
 
   const openDay = (date: string) => {
     const entries = plan?.days.find((day) => day.date === date)?.entries ?? [];
+    const existingEntries = sortPlanEntries(entries).map((entry) => ({
+      ...entry,
+      additions: entry.additions || ""
+    }));
     setDraft(
-      entries.length
-        ? sortPlanEntries(entries).map((entry) => ({ ...entry, additions: entry.additions || "" }))
-        : [newPlanEntry()]
+      compact
+        ? [newPlanEntry(), ...existingEntries]
+        : existingEntries.length
+          ? existingEntries
+          : [newPlanEntry()]
     );
     setSelectedDate(date);
     setPicker(null);
@@ -4094,6 +4172,17 @@ function PlanScreen({
         entryIndex === index ? { ...entry, ...patch } : entry
       )
     );
+
+  const addPlanEntry = () => {
+    setDraft((current) =>
+      compact ? [newPlanEntry(), ...current] : [...current, newPlanEntry()]
+    );
+    if (compact) {
+      requestAnimationFrame(() =>
+        planEditorScrollRef.current?.scrollTo({ y: 0, animated: true })
+      );
+    }
+  };
 
   const saveDay = async () => {
     if (!selectedDate) return;
@@ -4277,6 +4366,7 @@ function PlanScreen({
       >
         <View style={styles.planEditorShell}>
         <ScrollView
+          ref={planEditorScrollRef}
           style={styles.planEditorScroll}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={[
@@ -4295,8 +4385,8 @@ function PlanScreen({
             </View>
           ) : null}
           {draft.map((entry, index) => (
+            <Fragment key={index}>
             <View
-              key={index}
               style={[styles.planEditorRow, !compact && styles.planEditorRowDesktop]}
             >
               <View style={[styles.planEditorHeader, !compact && styles.planEditorHeaderDesktop]}>
@@ -4430,13 +4520,24 @@ function PlanScreen({
                 </View>
               ) : null}
             </View>
+            {compact && index === 0 ? (
+              <Button
+                label="Добавить ещё пациента"
+                icon="add"
+                variant="ghost"
+                onPress={addPlanEntry}
+              />
+            ) : null}
+            </Fragment>
           ))}
-          <Button
-            label="Добавить пациента"
-            icon="add"
-            variant="ghost"
-            onPress={() => setDraft((current) => [...current, newPlanEntry()])}
-          />
+          {!compact ? (
+            <Button
+              label="Добавить пациента"
+              icon="add"
+              variant="ghost"
+              onPress={addPlanEntry}
+            />
+          ) : null}
         </ScrollView>
         <View style={[styles.planEditorFooter, !compact && styles.planEditorFooterDesktop]}>
           {saveError ? <InlineError message={saveError} onRetry={saveDay} /> : null}
@@ -6258,9 +6359,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingBottom: 12
   },
+  statisticsPageScroll: { flex: 1, minHeight: 0 },
+  statisticsPageContent: { paddingBottom: 18 },
   statisticsWorkspace: {
-    flex: 1,
-    minHeight: 0,
     flexDirection: "row",
     gap: 14,
     marginTop: 10
@@ -6272,7 +6373,6 @@ const styles = StyleSheet.create({
     gap: 12
   },
   statisticsTableCard: {
-    flex: 1,
     minWidth: 0,
     borderRadius: radii.lg,
     borderWidth: 1,
@@ -6288,8 +6388,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.borderSoft
   },
   statisticsCardTitle: { ...typography.label, color: colors.text },
-  statisticsHorizontalScroll: { flex: 1 },
-  statisticsRowsScroll: { flexGrow: 0, maxHeight: 520 },
+  statisticsHorizontalScroll: { minWidth: 0, flexGrow: 0 },
   statisticsTableHeader: {
     minHeight: 54,
     flexDirection: "row",
@@ -6336,7 +6435,7 @@ const styles = StyleSheet.create({
   statisticsTotalCell: { fontWeight: "800" },
   statisticsSummaryRow: { backgroundColor: colors.canvasRaised },
   historicalStatisticsCard: {
-    height: 250,
+    minHeight: 220,
     minWidth: 0,
     borderRadius: radii.lg,
     borderWidth: 1,
@@ -6344,7 +6443,135 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     overflow: "hidden"
   },
-  historyRowsScroll: { maxHeight: 150 },
+  mobileStatisticsScroll: { flex: 1, minHeight: 0 },
+  mobileStatisticsContent: { paddingTop: 10, paddingBottom: 24, gap: 12 },
+  mobileStatisticsSelectorCard: {
+    padding: 12,
+    gap: 7,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  mobileStatisticsSelectorLabel: {
+    ...typography.meta,
+    color: colors.textDim,
+    fontWeight: "800",
+    textTransform: "uppercase"
+  },
+  mobileStatisticsSelector: {
+    minHeight: 46,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSoft
+  },
+  mobileStatisticsSelectorValue: {
+    flex: 1,
+    ...typography.label,
+    color: colors.text
+  },
+  mobileStatisticsChoices: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7,
+    paddingTop: 3
+  },
+  mobileStatisticsChoice: {
+    minHeight: 34,
+    maxWidth: "100%",
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.surfaceSoft
+  },
+  mobileStatisticsChoiceActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft
+  },
+  mobileStatisticsChoiceText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: "700"
+  },
+  mobileStatisticsChoiceTextActive: { color: colors.primary },
+  mobileStatisticsTable: {
+    overflow: "hidden",
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  mobileStatisticsTableHeader: {
+    minHeight: 44,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.canvasRaised
+  },
+  mobileStatisticsHeaderName: {
+    flex: 1,
+    ...typography.meta,
+    color: colors.textMuted,
+    fontWeight: "800",
+    textTransform: "uppercase"
+  },
+  mobileStatisticsHeaderValue: {
+    maxWidth: "48%",
+    ...typography.meta,
+    color: colors.textMuted,
+    fontWeight: "800",
+    textAlign: "right",
+    textTransform: "uppercase"
+  },
+  mobileStatisticsTableRow: {
+    minHeight: 50,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  mobileStatisticsSurgeon: {
+    flex: 1,
+    ...typography.label,
+    color: colors.text,
+    textTransform: "capitalize"
+  },
+  mobileStatisticsValue: {
+    minWidth: 54,
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: "800",
+    textAlign: "right"
+  },
+  mobileStatisticsSummary: {
+    borderBottomWidth: 0,
+    backgroundColor: colors.primarySoft
+  },
+  mobileStatisticsSummaryLabel: {
+    flex: 1,
+    ...typography.label,
+    color: colors.primary,
+    fontWeight: "800"
+  },
+  mobileStatisticsSummaryValue: {
+    minWidth: 54,
+    color: colors.primary,
+    fontSize: 19,
+    fontWeight: "900",
+    textAlign: "right"
+  },
   historyTableRow: {
     minHeight: 38,
     flexDirection: "row",
