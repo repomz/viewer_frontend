@@ -1345,9 +1345,7 @@ export default function App() {
                   studies={xaStudies}
                   loading={xaLoading}
                   error={xaError}
-                  persistentCacheEnabled={
-                    compact
-                  }
+                  persistentCacheEnabled
                   dicomCache={dicomCache}
                   onRetry={() => void loadXAStudies()}
                   onDeleteLocal={removeLocalAngiography}
@@ -2451,6 +2449,7 @@ function AngiographyScreen({
   const [studyFilter, setStudyFilter] = useState<"xa" | "ct">("xa");
   const [actionStudy, setActionStudy] = useState<Study | null>(null);
   const [pacsGuideOpen, setPacsGuideOpen] = useState(false);
+  const webCacheQueued = useRef(new Set<string>());
   useEffect(() => {
     if (!selected && studies[0]) setSelected(studies[0]);
   }, [selected, studies]);
@@ -2488,6 +2487,28 @@ function AngiographyScreen({
     if (compact) setMobileViewer(true);
     onInitialStudyHandled();
   }, [compact, initialStudyUID, onInitialStudyHandled, studies]);
+
+  useEffect(() => {
+    if (
+      compact ||
+      !persistentCacheEnabled ||
+      !selected ||
+      selected.study_type.toLowerCase() !== "xa" ||
+      webCacheQueued.current.has(selected.study_id)
+    ) {
+      return;
+    }
+
+    const studyUID = selected.study_id;
+    webCacheQueued.current.add(studyUID);
+    void (async () => {
+      const firstSeriesReady = await downloadStudyFirstSeriesForOffline(studyUID);
+      const complete = await downloadStudyForOffline(studyUID);
+      if (!firstSeriesReady && !complete) {
+        webCacheQueued.current.delete(studyUID);
+      }
+    })();
+  }, [compact, persistentCacheEnabled, selected]);
 
   return (
     <View style={styles.angioScreen}>
