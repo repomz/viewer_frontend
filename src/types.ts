@@ -123,6 +123,27 @@ export type PlanEntry = {
   additions: string;
   previous_operations?: Study[];
   completed_operation?: Study;
+  history_searched?: boolean;
+};
+
+export type DutyScheduleStaff = {
+  id: string;
+  name: string;
+  role?: string;
+  shifts: Record<string, string>;
+};
+
+export type DutyScheduleGroup = {
+  id: "surgeons" | "nurses" | "orderlies" | string;
+  label: string;
+  staff: DutyScheduleStaff[];
+};
+
+export type DutySchedule = {
+  month: string;
+  holidays: number[];
+  groups: DutyScheduleGroup[];
+  updated_at: string;
 };
 
 export type PlanDay = {
@@ -180,6 +201,7 @@ export type HistoricalStatisticsYear = {
 };
 
 export type HistoricalStatistics = {
+  schema_version: number;
   source: string;
   start_year: number;
   end_year: number;

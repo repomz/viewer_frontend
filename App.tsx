@@ -1,6 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import * as SplashScreen from "expo-splash-screen";
-import { Fragment, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
   ActivityIndicator,
@@ -30,7 +30,6 @@ import {
   ApiError,
   checkHealth,
   createUserRequest,
-  deleteAllUserRequests,
   deletePACSStudy,
   deleteReport,
   deleteStudy,
@@ -39,6 +38,7 @@ import {
   getAgents,
   generateReport,
   getHistoricalStatistics,
+  getDutySchedule,
   getOperationStatistics,
   getOperationPlan,
   getReports,
@@ -46,6 +46,7 @@ import {
   getUserRequests,
   getUserRequest,
   saveOperationPlanDay,
+  saveDutySchedule,
   searchStudies
 } from "./src/api";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
@@ -91,6 +92,7 @@ import type {
   AgentHealth,
   ApiHealth,
   AppSettings,
+  DutySchedule,
   HistoricalStatistics,
   OperationStatistics,
   OperationPlan,
@@ -121,7 +123,7 @@ if (Platform.OS !== "web") {
   void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 }
 
-type Tab = "studies" | "plan" | "angiography" | "requests" | "reports" | "statistics" | "logs" | "settings";
+type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statistics" | "logs" | "settings";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudySort = "time" | "operation";
@@ -156,16 +158,16 @@ const tabs: { id: Tab; label: string; shortLabel: string; icon: IconName }[] = [
     icon: "scan-outline"
   },
   {
-    id: "requests",
-    label: "Задания",
-    shortLabel: "Задания",
-    icon: "pulse-outline"
-  },
-  {
     id: "reports",
     label: "Отчёты",
     shortLabel: "Отчёты",
     icon: "document-text-outline"
+  },
+  {
+    id: "schedule",
+    label: "График",
+    shortLabel: "График",
+    icon: "time-outline"
   }
 ];
 
@@ -224,13 +226,8 @@ const commandLabels: Record<AgentCommand, string> = {
 };
 
 export const agentCommandOptions: AgentCommand[] = [
-  "find_study",
   "find_xa",
-  "find_ct",
-  "xa_polling_on",
-  "xa_polling_off",
-  "ct_polling_on",
-  "ct_polling_off"
+  "find_ct"
 ];
 
 const terminalStatuses = new Set(["completed", "error"]);
@@ -460,78 +457,6 @@ function confirmDeleteAll(message: string, action: () => void) {
   ]);
 }
 
-function SwipeableCard({
-  children,
-  onDelete,
-  onForward
-}: {
-  children: ReactNode;
-  onDelete: () => void;
-  onForward: () => void;
-}) {
-  const translateX = useRef(new Animated.Value(0)).current;
-  const [cardWidth, setCardWidth] = useState(360);
-  const pan = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gesture) =>
-          gesture.dx < -12 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
-        onPanResponderMove: (_event, gesture) => {
-          translateX.setValue(Math.max(-cardWidth, Math.min(0, gesture.dx)));
-        },
-        onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dx < -cardWidth * 0.72) {
-            Animated.timing(translateX, {
-              toValue: -cardWidth,
-              duration: 180,
-              useNativeDriver: Platform.OS !== "web"
-            }).start(onDelete);
-            return;
-          }
-          Animated.spring(translateX, {
-            toValue: gesture.dx < -cardWidth * 0.18 ? -132 : 0,
-            useNativeDriver: Platform.OS !== "web"
-          }).start();
-        }
-      }),
-    [cardWidth, onDelete, translateX]
-  );
-  const close = () =>
-    Animated.spring(translateX, {
-      toValue: 0,
-      useNativeDriver: Platform.OS !== "web"
-    }).start();
-  return (
-    <View
-      onLayout={(event) => setCardWidth(event.nativeEvent.layout.width)}
-      style={styles.swipeContainer}
-    >
-      <View style={styles.swipeActions}>
-        <Pressable style={styles.swipeForward} onPress={() => {
-          close();
-          onForward();
-        }}>
-          <Icon name="share-outline" color="#fff" />
-          <Text style={styles.swipeActionText}>Переслать</Text>
-        </Pressable>
-        <Pressable style={styles.swipeDelete} onPress={() => {
-          close();
-          onDelete();
-        }}>
-          <Icon name="trash-outline" color="#fff" />
-          <Text style={styles.swipeActionText}>Удалить</Text>
-        </Pressable>
-      </View>
-      <Animated.View
-        {...pan.panHandlers}
-        style={[styles.swipeForeground, { transform: [{ translateX }] }]}
-      >
-        {children}
-      </Animated.View>
-    </View>
-  );
-}
-
 export default function App() {
   const { width } = useWindowDimensions();
   const compact = width < layout.mobileBreakpoint;
@@ -567,6 +492,7 @@ export default function App() {
     Record<number, AgentHealth>
   >({});
   const [commandOpen, setCommandOpen] = useState(false);
+  const [commandModality, setCommandModality] = useState<"find_xa" | "find_ct">("find_xa");
   const [menuOpen, setMenuOpen] = useState(false);
   const [plan, setPlan] = useState<OperationPlan | null>(() =>
     loadOperationPlanCache(operationPlanWeekStart(0))
@@ -578,6 +504,9 @@ export default function App() {
   const [historicalStatistics, setHistoricalStatistics] = useState<HistoricalStatistics | null>(null);
   const [statisticsLoading, setStatisticsLoading] = useState(false);
   const [statisticsError, setStatisticsError] = useState("");
+  const [dutySchedule, setDutySchedule] = useState<DutySchedule | null>(null);
+  const [dutyScheduleLoading, setDutyScheduleLoading] = useState(false);
+  const [dutyScheduleError, setDutyScheduleError] = useState("");
   const [requestedXAStudyUID, setRequestedXAStudyUID] = useState<string | null>(null);
   const processedCompletions = useRef(
     new Set(
@@ -586,6 +515,13 @@ export default function App() {
         .map((request) => request.id)
     )
   );
+  const automaticImportSources = useRef(new Set<string>());
+  const automaticImportUIDs = useRef(new Set(
+    requests
+      .filter((request) => ["get_xa", "get_ct"].includes(request.command))
+      .map((request) => String(parseObject(request.payload).study_uid ?? ""))
+      .filter(Boolean)
+  ));
   const preloadStarted = useRef(false);
   const autoDownloadRunning = useRef(false);
   const autoDownloadAllowedRef = useRef(false);
@@ -711,6 +647,19 @@ export default function App() {
       setStatisticsError(errorMessage(error));
     } finally {
       setStatisticsLoading(false);
+    }
+  }, []);
+
+  const loadDutySchedule = useCallback(async () => {
+    const month = new Date().toISOString().slice(0, 7);
+    setDutyScheduleLoading(true);
+    setDutyScheduleError("");
+    try {
+      setDutySchedule(await getDutySchedule(month));
+    } catch (error) {
+      setDutyScheduleError(errorMessage(error));
+    } finally {
+      setDutyScheduleLoading(false);
     }
   }, []);
 
@@ -867,12 +816,16 @@ export default function App() {
     if (activeTab === "statistics") {
       void loadStatistics();
     }
+    if (activeTab === "schedule") {
+      void loadDutySchedule();
+    }
   }, [
     activeTab,
     authenticated,
     loadPlan,
     loadReports,
     loadStatistics,
+    loadDutySchedule,
     loadXAStudies,
     planWeekOffset,
     compact
@@ -1138,7 +1091,6 @@ export default function App() {
           payload
         });
         recordRequest(created);
-        setCommandOpen(false);
         setToast({
           message: "Запрос отправлен",
           tone: "success"
@@ -1151,6 +1103,33 @@ export default function App() {
     },
     [recordRequest, settings]
   );
+
+  useEffect(() => {
+    const completedSearches = requests.filter(
+      (request) =>
+        request.status === "completed" &&
+        ["find_xa", "find_ct"].includes(request.command) &&
+        !automaticImportSources.current.has(request.id)
+    );
+    completedSearches.forEach((request) => {
+      const pacsStudies = objectArray(parseObject(request.result).studies);
+      if (pacsStudies.length !== 1) return;
+      automaticImportSources.current.add(request.id);
+      const onlyStudy = pacsStudies[0]!;
+      const uid = String(
+        onlyStudy.uid ?? onlyStudy.study_uid ?? onlyStudy.StudyInstanceUID ?? ""
+      );
+      if (
+        !uid ||
+        automaticImportUIDs.current.has(uid) ||
+        studies.some((study) => study.study_id === uid)
+      ) return;
+      automaticImportUIDs.current.add(uid);
+      void submitCommand(request.command === "find_ct" ? "get_ct" : "get_xa", {
+        study_uid: uid
+      });
+    });
+  }, [requests, studies, submitCommand]);
 
   const saveAppSettings = useCallback(
     (next: AppSettings) => {
@@ -1178,17 +1157,6 @@ export default function App() {
     },
     []
   );
-
-  const removeStudy = useCallback(async (study: Study) => {
-    try {
-      await deleteStudy(study.id);
-      setStudies((current) => current.filter((item) => item.id !== study.id));
-      setSelectedStudy(null);
-      setToast({ message: "Протокол удалён", tone: "success" });
-    } catch (error) {
-      setToast({ message: errorMessage(error), tone: "danger" });
-    }
-  }, []);
 
   const removeLocalAngiography = useCallback(async (study: Study) => {
     try {
@@ -1369,7 +1337,6 @@ export default function App() {
                   onRefresh={() => void loadStudies()}
                   angiographies={xaStudies}
                   onOpenXA={openStudyAngiography}
-                  onDelete={(study) => void removeStudy(study)}
                 />
               ) : null}
               {activeTab === "angiography" ? (
@@ -1387,35 +1354,9 @@ export default function App() {
                   onDeletePACS={removePACSAngiography}
                   initialStudyUID={requestedXAStudyUID}
                   onInitialStudyHandled={() => setRequestedXAStudyUID(null)}
-                />
-              ) : null}
-              {activeTab === "requests" ? (
-                <RequestsScreen
-                  compact={compact}
-                  requests={requests}
-                  studies={studies}
-                  onCommand={() => setCommandOpen(true)}
-                  onSubmit={submitCommand}
-                  onRefresh={async (item) => {
-                    try {
-                      recordRequest(await getUserRequest(item.id));
-                      void loadStudies();
-                      void loadXAStudies();
-                    } catch (error) {
-                      setToast({
-                        message: errorMessage(error),
-                        tone: "danger"
-                      });
-                    }
-                  }}
-                  onDeleteAll={async () => {
-                    try {
-                      await deleteAllUserRequests(settings.userId, settings.agentId);
-                      setRequests([]);
-                      saveRequests([]);
-                    } catch (error) {
-                      setToast({ message: errorMessage(error), tone: "danger" });
-                    }
+                  onSearch={(modality) => {
+                    setCommandModality(modality === "ct" ? "find_ct" : "find_xa");
+                    setCommandOpen(true);
                   }}
                 />
               ) : null}
@@ -1450,6 +1391,18 @@ export default function App() {
                   loading={statisticsLoading}
                   error={statisticsError}
                   onRetry={() => void loadStatistics()}
+                />
+              ) : null}
+              {activeTab === "schedule" ? (
+                <DutyScheduleScreen
+                  compact={compact}
+                  schedule={dutySchedule}
+                  loading={dutyScheduleLoading}
+                  error={dutyScheduleError}
+                  onRetry={loadDutySchedule}
+                  onSave={async (next) => {
+                    setDutySchedule(await saveDutySchedule(next.month, next));
+                  }}
                 />
               ) : null}
               {activeTab === "settings" ? (
@@ -1504,6 +1457,9 @@ export default function App() {
         <CommandSheet
           visible={commandOpen}
           settings={settings}
+          initialCommand={commandModality}
+          requests={requests}
+          studies={studies}
           onClose={() => setCommandOpen(false)}
           onSubmit={submitCommand}
         />
@@ -2020,8 +1976,7 @@ function StudiesScreen({
   onRetry,
   onRefresh,
   angiographies,
-  onOpenXA,
-  onDelete
+  onOpenXA
 }: {
   compact: boolean;
   inlineDetail: boolean;
@@ -2043,7 +1998,6 @@ function StudiesScreen({
   onRefresh: () => void;
   angiographies: Study[];
   onOpenXA: (study: Study) => void;
-  onDelete: (study: Study) => void;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const patientXA = (study: Study) => angiographies.find((item) =>
@@ -2108,11 +2062,7 @@ function StudiesScreen({
               {studies.map((study, index) => {
                 const hasXA = hasAvailableXA(study);
                 return (
-                <SwipeableCard key={study.id} onDelete={() => onDelete(study)}
-                  onForward={() => void Share.share({
-                    title: `Протокол операции — ${study.patient}`,
-                    message: `${study.patient}\n${study.name_operation}\n\n${study.descr_operation}`
-                  })}>
+                <View key={study.id}>
                   <StudyRow
                     study={study}
                     index={index}
@@ -2122,7 +2072,7 @@ function StudiesScreen({
                     onOpenXA={() => onOpenXA(study)}
                     onPress={() => choose(study)}
                   />
-                </SwipeableCard>
+                </View>
                 );
               })}
             </ScrollView>
@@ -2478,6 +2428,7 @@ function AngiographyScreen({
   onRetry,
   onDeleteLocal,
   onDeletePACS,
+  onSearch,
   initialStudyUID,
   onInitialStudyHandled
 }: {
@@ -2490,6 +2441,7 @@ function AngiographyScreen({
   onRetry: () => void;
   onDeleteLocal: (study: Study) => Promise<void>;
   onDeletePACS: (study: Study) => Promise<void>;
+  onSearch: (modality: "xa" | "ct") => void;
   initialStudyUID: string | null;
   onInitialStudyHandled: () => void;
 }) {
@@ -2540,47 +2492,47 @@ function AngiographyScreen({
   return (
     <View style={styles.angioScreen}>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
+      <View
+        style={[styles.angioFilters, compact && styles.angioFiltersCompact]}
+      >
+        {(["xa", "ct"] as const).map((value) => (
+          <Pressable
+            key={value}
+            onPress={() => setStudyFilter(value)}
+            style={[
+              styles.angioFilter,
+              studyFilter === value && styles.angioFilterActive
+            ]}
+          >
+            <Text style={[
+              styles.angioFilterText,
+              studyFilter === value && styles.angioFilterTextActive
+            ]}>
+              {value.toUpperCase()}
+            </Text>
+          </Pressable>
+        ))}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Найти ${studyFilter.toUpperCase()}`}
+          onPress={() => onSearch(studyFilter)}
+          style={styles.angioGuideButton}
+        >
+          <Icon name="add" size={22} color={darkColors.primary} />
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Как подключить RadiAnt"
+          onPress={() => setPacsGuideOpen(true)}
+          style={styles.angioGuideButton}
+        >
+          <Icon name="alert-circle-outline" size={20} color={darkColors.primary} />
+        </Pressable>
+      </View>
       {loading && !studies.length ? (
         <LoadingState label="Проверяем XA-исследования…" />
       ) : studies.length ? (
         <>
-          <View
-            style={[
-              styles.angioFilters,
-              compact && styles.angioFiltersCompact
-            ]}
-          >
-            {([
-              ["xa", "XA"],
-              ["ct", "CT"]
-            ] as const).map(([value, label]) => (
-              <Pressable
-                key={value}
-                onPress={() => setStudyFilter(value)}
-                style={[
-                  styles.angioFilter,
-                  studyFilter === value && styles.angioFilterActive
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.angioFilterText,
-                    studyFilter === value && styles.angioFilterTextActive
-                  ]}
-                >
-                  {label}
-                </Text>
-              </Pressable>
-            ))}
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Как подключить RadiAnt"
-              onPress={() => setPacsGuideOpen(true)}
-              style={styles.angioGuideButton}
-            >
-              <Icon name="alert-circle-outline" size={20} color={darkColors.primary} />
-            </Pressable>
-          </View>
           <View
             style={[
               styles.angioWorkspace,
@@ -2847,84 +2799,6 @@ function AngiographyScreen({
   );
 }
 
-function RequestsScreen({
-  compact,
-  requests,
-  studies,
-  onCommand,
-  onSubmit,
-  onRefresh,
-  onDeleteAll
-}: {
-  compact: boolean;
-  requests: UserRequest[];
-  studies: Study[];
-  onCommand: () => void;
-  onSubmit: (
-    command: AgentCommand,
-    payload: Record<string, unknown>
-  ) => Promise<boolean>;
-  onRefresh: (request: UserRequest) => void;
-  onDeleteAll: () => void;
-}) {
-  return (
-    <View style={[styles.screen, compact && styles.screenCompact]}>
-      <View
-        style={[
-          styles.compactScreenToolbar,
-          compact && styles.compactScreenToolbarMobile
-        ]}
-      >
-        <View style={styles.compactScreenHeading}>
-          <Text style={styles.compactScreenTitle}>История заданий</Text>
-          <Text style={styles.compactScreenMeta}>{requests.length} записей</Text>
-        </View>
-        <View style={styles.compactToolbarActions}>
-          <IconButton icon="add" label="Новое задание" onPress={onCommand} />
-        {requests.length ? (
-          <IconButton
-            icon="trash-outline"
-            label="Очистить историю заданий"
-            onPress={() => confirmDeleteAll(
-              "Удалить всю историю заданий этого пользователя?",
-              onDeleteAll
-            )}
-          />
-        ) : null}
-        </View>
-      </View>
-      <ScrollView
-        style={styles.flexScroll}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.requestScrollContent}
-      >
-        {requests.length ? (
-        <View style={styles.requestList}>
-          {requests.map((request) => (
-            <View key={request.id}>
-              <RequestCard
-                compact={compact}
-                request={request}
-                studies={studies}
-                onSubmit={onSubmit}
-                onRefresh={() => onRefresh(request)}
-              />
-            </View>
-          ))}
-        </View>
-      ) : (
-        <EmptyState
-          icon="pulse-outline"
-          title="Заданий пока нет"
-          description="Создайте запрос на поиск протокола, XA/CT или получение отчёта."
-          action={<Button label="Создать задание" onPress={onCommand} />}
-        />
-        )}
-      </ScrollView>
-    </View>
-  );
-}
-
 function RequestCard({
   compact,
   request,
@@ -2942,7 +2816,6 @@ function RequestCard({
   onRefresh: () => void;
 }) {
   const [resultOpen, setResultOpen] = useState(false);
-  const automaticImportStarted = useRef(false);
   const meta = statusMeta(request.status);
   const payload = parseObject(request.payload);
   const result = parseObject(request.result);
@@ -2953,25 +2826,6 @@ function RequestCard({
     String(payload.patient ?? payload.patient_name ?? payload.study_uid ?? "") ||
     "Без дополнительных параметров";
 
-  useEffect(() => {
-    if (
-      automaticImportStarted.current ||
-      request.status !== "completed" ||
-      !["find_xa", "find_ct"].includes(request.command) ||
-      pacsStudies.length !== 1
-    ) {
-      return;
-    }
-    const onlyStudy = pacsStudies[0]!;
-    const uid = String(
-      onlyStudy.uid ?? onlyStudy.study_uid ?? onlyStudy.StudyInstanceUID ?? ""
-    );
-    if (!uid || studies.some((study) => study.study_id === uid)) return;
-    automaticImportStarted.current = true;
-    void onSubmit(request.command === "find_ct" ? "get_ct" : "get_xa", {
-      study_uid: uid
-    });
-  }, [onSubmit, pacsStudies, request.command, request.status, studies]);
 
   return (
     <View style={styles.requestCard}>
@@ -3593,7 +3447,7 @@ function StatisticsScreen({
                 <View style={styles.statisticsTableHeader}>
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsSurgeonCell]}>Хирург</Text>
                   {statistics.operation_types.map((type) => (
-                    <Text key={type.id} style={styles.statisticsHeaderCell}>{type.label}</Text>
+                    <Text key={type.id} numberOfLines={1} style={styles.statisticsHeaderCell}>{type.label}</Text>
                   ))}
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsTotalHeader]}>Всего</Text>
                 </View>
@@ -3624,18 +3478,18 @@ function StatisticsScreen({
             <View style={styles.statisticsCardHeading}>
               <Text style={styles.statisticsCardTitle}>Операции по годам</Text>
               <Text style={styles.compactScreenMeta}>
-                {historicalStatistics?.years.length
+                {historicalStatistics?.schema_version === 2 && historicalStatistics.years.length
                   ? `${historicalStatistics.start_year}–${historicalStatistics.end_year}`
                   : "Архив ещё не импортирован"}
               </Text>
             </View>
-            {historicalStatistics?.years.length ? (
+            {historicalStatistics?.schema_version === 2 && historicalStatistics.years.length ? (
               <ScrollView horizontal showsHorizontalScrollIndicator>
                 <View>
                   <View style={styles.historyTableRow}>
                     <Text style={[styles.historyHeaderCell, styles.historyYearCell]}>ГОД</Text>
                     {historicalStatistics.operation_types.map((type) => (
-                      <Text key={type} style={styles.historyHeaderCell}>{type}</Text>
+                      <Text key={type} numberOfLines={1} style={styles.historyHeaderCell}>{type}</Text>
                     ))}
                     <Text style={styles.historyHeaderCell}>ВСЕГО</Text>
                   </View>
@@ -3890,6 +3744,182 @@ function ReportSection({
   );
 }
 
+const monthKey = (offset = 0) => {
+  const date = new Date();
+  date.setDate(1);
+  date.setMonth(date.getMonth() + offset);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+};
+
+const monthTitle = (month: string) =>
+  new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric" }).format(
+    new Date(`${month}-01T12:00:00`)
+  );
+
+const daysInMonth = (month: string) => {
+  const [year, value] = month.split("-").map(Number);
+  return new Date(year!, value!, 0).getDate();
+};
+
+function DutyScheduleScreen({
+  compact,
+  schedule,
+  loading,
+  error,
+  onRetry,
+  onSave
+}: {
+  compact: boolean;
+  schedule: DutySchedule | null;
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+  onSave: (schedule: DutySchedule) => Promise<void>;
+}) {
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [current, setCurrent] = useState<DutySchedule | null>(schedule);
+  const [groupID, setGroupID] = useState("surgeons");
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [holidayText, setHolidayText] = useState("");
+  const selectedMonth = monthKey(monthOffset);
+
+  useEffect(() => {
+    if (monthOffset === 0 && schedule) setCurrent(schedule);
+  }, [monthOffset, schedule]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (monthOffset === 0 && schedule?.month === selectedMonth) return;
+    void getDutySchedule(selectedMonth).then((value) => {
+      if (!cancelled) setCurrent(value);
+    }).catch(() => {
+      if (!cancelled) setCurrent(null);
+    });
+    return () => { cancelled = true; };
+  }, [monthOffset, schedule, selectedMonth]);
+
+  const activeGroup = current?.groups.find((group) => group.id === groupID)
+    ?? current?.groups[0];
+  const today = new Date();
+  const todayDay = today.getDate();
+  const isCurrentMonth = selectedMonth === monthKey(0);
+  const onDuty = current?.groups.flatMap((group) =>
+    group.staff
+      .filter((staff) => Boolean(staff.shifts[String(todayDay)]))
+      .map((staff) => ({ ...staff, group: group.label }))
+  ) ?? [];
+  const days = Array.from({ length: daysInMonth(selectedMonth) }, (_, index) => index + 1);
+
+  const changeShift = (staffID: string, day: number) => {
+    if (!current || !editing) return;
+    const cycle = ["", "24", "6", "8", "16", "18"];
+    setCurrent({
+      ...current,
+      groups: current.groups.map((group) => ({
+        ...group,
+        staff: group.staff.map((staff) => {
+          if (staff.id !== staffID) return staff;
+          const shifts = { ...staff.shifts };
+          const index = cycle.indexOf(shifts[String(day)] ?? "");
+          const next = cycle[(index + 1) % cycle.length]!;
+          if (next) shifts[String(day)] = next;
+          else delete shifts[String(day)];
+          return { ...staff, shifts };
+        })
+      }))
+    });
+  };
+
+  const save = async () => {
+    if (!current) return;
+    const holidays = holidayText
+      .split(/[\s,;]+/)
+      .map(Number)
+      .filter((day) => Number.isInteger(day) && day >= 1 && day <= days.length);
+    const next = { ...current, holidays: [...new Set(holidays)] };
+    setSaving(true);
+    try {
+      await onSave(next);
+      setCurrent(next);
+      setEditing(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <View style={[styles.scheduleScreen, compact && styles.screenCompact]}>
+      <View style={styles.scheduleToolbar}>
+        <View>
+          <Text style={styles.compactScreenTitle}>График смен</Text>
+          <Text style={styles.compactScreenMeta}>{monthTitle(selectedMonth)}</Text>
+        </View>
+        <View style={styles.scheduleMonthButtons}>
+          <Button label="Текущий" compact variant={monthOffset === 0 ? "primary" : "ghost"} onPress={() => { setMonthOffset(0); setEditing(false); }} />
+          <Button label="Следующий" compact variant={monthOffset === 1 ? "primary" : "ghost"} onPress={() => { setMonthOffset(1); setEditing(false); }} />
+        </View>
+      </View>
+      {error && monthOffset === 0 ? <InlineError message={error} onRetry={onRetry} /> : null}
+      {loading && !current ? <LoadingState label="Открываем график…" /> : null}
+      {current ? (
+        <ScrollView style={styles.schedulePage} contentContainerStyle={styles.schedulePageContent}>
+          {isCurrentMonth ? (
+            <View style={styles.dutyTodayCard}>
+              <Text style={styles.dutyTodayTitle}>Дежурная смена сегодня</Text>
+              {onDuty.length ? onDuty.map((staff) => (
+                <View key={`${staff.group}-${staff.id}`} style={styles.dutyTodayRow}>
+                  <Text style={styles.dutyTodayName}>{staff.name}</Text>
+                  <Text style={styles.dutyTodayMeta}>{staff.group} · {staff.shifts[String(todayDay)]}</Text>
+                </View>
+              )) : <Text style={styles.compactScreenMeta}>На сегодня смены ещё не внесены.</Text>}
+            </View>
+          ) : null}
+          <View style={styles.scheduleGroupTabs}>
+            {current.groups.map((group) => (
+              <Chip key={group.id} label={group.label} selected={activeGroup?.id === group.id} onPress={() => setGroupID(group.id)} />
+            ))}
+          </View>
+          {!compact && monthOffset === 1 ? (
+            <View style={styles.scheduleEditorTools}>
+              <Field label="Праздничные дни" value={holidayText} onChangeText={setHolidayText} placeholder="Например: 1, 9, 12" hint="Укажите числа месяца через запятую." />
+              <Button label={editing ? "Сохранить" : "Заполнить график"} icon={editing ? "checkmark" : "create-outline"} loading={saving} onPress={() => editing ? void save() : setEditing(true)} />
+            </View>
+          ) : null}
+          <ScrollView horizontal showsHorizontalScrollIndicator>
+            <View style={styles.scheduleGrid}>
+              <View style={styles.scheduleGridRow}>
+                <Text style={[styles.scheduleCell, styles.scheduleNameCell]}>Сотрудник</Text>
+                {days.map((day) => {
+                  const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
+                  const weekend = date.getDay() === 0 || date.getDay() === 6;
+                  const holiday = current.holidays.includes(day);
+                  return <Text key={day} style={[styles.scheduleCell, styles.scheduleDayHeader, (weekend || holiday) && styles.scheduleHolidayCell]}>{day}</Text>;
+                })}
+              </View>
+              {activeGroup?.staff.length ? activeGroup.staff.map((staff) => (
+                <View key={staff.id} style={styles.scheduleGridRow}>
+                  <View style={[styles.scheduleCell, styles.scheduleNameCell]}>
+                    <Text numberOfLines={1} style={styles.scheduleStaffName}>{staff.name}</Text>
+                    <Text style={styles.scheduleStaffRole}>{staff.role || activeGroup.label}</Text>
+                  </View>
+                  {days.map((day) => (
+                    <Pressable key={day} onPress={() => changeShift(staff.id, day)} style={[styles.scheduleCell, styles.scheduleShiftCell]}>
+                      <Text style={styles.scheduleShiftText}>{staff.shifts[String(day)] ?? ""}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )) : (
+                <View style={styles.scheduleEmptyGroup}><Text style={styles.compactScreenMeta}>Список сотрудников будет заполнен при создании графика.</Text></View>
+              )}
+            </View>
+          </ScrollView>
+        </ScrollView>
+      ) : null}
+    </View>
+  );
+}
+
 const planDepartments = [
   "кардио 1",
   "кардио 2",
@@ -3974,6 +4004,16 @@ const weekdayTitle = (date: string) =>
   new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "2-digit" })
     .format(new Date(`${date}T12:00:00`))
     .replace(".", "");
+
+const formatShortNumericDate = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit"
+  }).format(date);
+};
 
 async function sharePlanSnapshot(
   plan: OperationPlan,
@@ -4334,13 +4374,17 @@ function PlanScreen({
 							<View style={styles.planHistoryButtons}>
 							  {entry.previous_operations.slice(0, 3).map((protocol) => (
 								<Pressable key={protocol.id} onPress={(event) => { event.stopPropagation?.(); setPreviousProtocol(protocol); }} style={styles.planPreviousButton}>
-								  <Text numberOfLines={2} style={styles.planPreviousButtonText}>{`${formatDate(protocol.time_beginning)} · ${cleanClinicalText(protocol.name_operation, true)}`}</Text>
+								  <Text numberOfLines={1} style={styles.planPreviousButtonText}>{formatShortNumericDate(protocol.time_beginning)}</Text>
 								</Pressable>
 							  ))}
 							</View>
                           ) : (
                             <Text style={styles.planPrimaryText}>
-                              {entry ? (compact ? "перв" : "Первичная") : "—"}
+                              {entry
+                                ? entry.history_searched === false
+                                  ? (compact ? "нет поиска" : "Поиск не проведён")
+                                  : (compact ? "перв" : "Первичная")
+                                : "—"}
                             </Text>
                           )}
                         </View>
@@ -4416,11 +4460,14 @@ function PlanScreen({
                 <TextInput
                   value={entry.patient}
                   onChangeText={(patient) => updateEntry(index, { patient })}
-                  placeholder="Фамилия или ФИО"
+                  placeholder="Петров ИВ"
                   placeholderTextColor={colors.textDim}
                   autoCapitalize="words"
                   style={[styles.planPatientInput, !compact && styles.planDesktopControl]}
                 />
+                {compact ? (
+                  <Text style={styles.planInputHint}>Фамилия и две инициалы без точек — для поиска истории.</Text>
+                ) : null}
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorDepartmentField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Отделение</Text> : null}
@@ -4519,8 +4566,8 @@ function PlanScreen({
                   <View style={[styles.planEditorHistoryValue, styles.planDesktopControl]}>
                     <Text numberOfLines={2} style={styles.planEditorHistoryText}>
 					  {entry.previous_operations?.length
-						? entry.previous_operations.slice(0, 3).map((study) => `${formatDate(study.time_beginning)} · ${cleanClinicalText(study.name_operation, true)}`).join("; ")
-                        : "Первичная"}
+						? entry.previous_operations.slice(0, 3).map((study) => formatShortNumericDate(study.time_beginning)).join(" · ")
+                        : entry.history_searched === false ? "Поиск не проведён" : "Первичная"}
                     </Text>
                   </View>
                 </View>
@@ -5033,24 +5080,34 @@ function SettingsScreen({
 function CommandSheet({
   visible,
   settings,
+  initialCommand,
+  requests,
+  studies,
   onClose,
   onSubmit
 }: {
   visible: boolean;
   settings: AppSettings;
+  initialCommand: "find_xa" | "find_ct";
+  requests: UserRequest[];
+  studies: Study[];
   onClose: () => void;
   onSubmit: (
     command: AgentCommand,
     payload: Record<string, unknown>
   ) => Promise<boolean>;
 }) {
-  const [command, setCommand] = useState<AgentCommand>("find_study");
+  const [command, setCommand] = useState<AgentCommand>(initialCommand);
   const [patient, setPatient] = useState("");
   const [searchPeriod, setSearchPeriod] = useState("today");
   const [submitting, setSubmitting] = useState(false);
   const needsPatient = ["find_study", "find_xa", "find_ct"].includes(command);
   const needsPacsPeriod = ["find_xa", "find_ct"].includes(command);
   const valid = !needsPatient || patient.trim().length >= 2;
+  useEffect(() => setCommand(initialCommand), [initialCommand, visible]);
+  const relevantRequests = requests
+    .filter((request) => request.command === command)
+    .slice(0, 5);
 
   const submit = async () => {
     if (!valid) return;
@@ -5071,7 +5128,7 @@ function CommandSheet({
   return (
     <Sheet
       visible={visible}
-      title="Новое задание агенту"
+      title={`Найти ${command === "find_ct" ? "CT" : "XA"}`}
       onClose={onClose}
       fullScreen
     >
@@ -5082,38 +5139,13 @@ function CommandSheet({
             Агент {settings.agentId} · пользователь {settings.userId}
           </Text>
         </View>
-        <Text style={styles.commandGroupLabel}>КОМАНДА</Text>
-        <View style={styles.commandOptions}>
-          {agentCommandOptions.map((item) => (
-            <Pressable
-              key={item}
-              onPress={() => setCommand(item)}
-              style={[
-                styles.commandOption,
-                command === item && styles.commandOptionSelected
-              ]}
-            >
-              <View style={[styles.radio, command === item && styles.radioSelected]}>
-                {command === item ? <View style={styles.radioCore} /> : null}
-              </View>
-              <Text
-                style={[
-                  styles.commandOptionText,
-                  command === item && styles.commandOptionTextSelected
-                ]}
-              >
-                {commandLabels[item]}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
         {needsPatient ? (
           <Field
             label="Фамилия пациента"
             value={patient}
             onChangeText={setPatient}
             placeholder="Например, Иванов"
-            hint="Результат появится во вкладке «Задания»."
+            hint="При одном точном совпадении загрузка начнётся автоматически."
           />
         ) : null}
         {needsPacsPeriod ? (
@@ -5158,13 +5190,28 @@ function CommandSheet({
         <View style={styles.commandActions}>
           <Button label="Отмена" variant="ghost" onPress={onClose} />
           <Button
-            label="Отправить задание"
+            label="Найти"
             icon="send-outline"
             disabled={!valid}
             loading={submitting}
             onPress={() => void submit()}
           />
         </View>
+        {relevantRequests.length ? (
+          <View style={styles.requestList}>
+            <Text style={styles.commandGroupLabel}>ПОСЛЕДНИЕ РЕЗУЛЬТАТЫ</Text>
+            {relevantRequests.map((request) => (
+              <RequestCard
+                key={request.id}
+                compact
+                request={request}
+                studies={studies}
+                onSubmit={onSubmit}
+                onRefresh={() => undefined}
+              />
+            ))}
+          </View>
+        ) : null}
       </ScrollView>
     </Sheet>
   );
@@ -5363,7 +5410,7 @@ const styles = StyleSheet.create({
   },
   mainDark: { backgroundColor: darkColors.canvas },
   content: { flex: 1, minHeight: 0, backgroundColor: colors.canvas },
-  contentCompact: { paddingBottom: 48 },
+  contentCompact: { paddingBottom: 66 },
   contentDark: { backgroundColor: darkColors.canvas },
   mobileHeaderFloat: {
     minHeight: 58,
@@ -7277,6 +7324,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.canvasRaised,
     fontSize: 15
   },
+  planInputHint: {
+    marginTop: 5,
+    ...typography.meta,
+    color: colors.textDim
+  },
   planAdditionsInput: {
     minHeight: 74,
     paddingTop: 11,
@@ -7450,7 +7502,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     left: 0,
     right: 0,
-    bottom: 6,
+    bottom: 10,
     zIndex: 50,
     elevation: 20,
     backgroundColor: colors.canvas,
@@ -7494,5 +7546,58 @@ const styles = StyleSheet.create({
     color: colors.textDim
   },
   mobileNavTextDark: { color: darkColors.textDim },
-  mobileNavTextActive: { color: darkColors.primary }
+  mobileNavTextActive: { color: darkColors.primary },
+  scheduleScreen: { flex: 1, minHeight: 0, backgroundColor: colors.canvas },
+  scheduleToolbar: {
+    minHeight: 62,
+    paddingHorizontal: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12
+  },
+  scheduleMonthButtons: { flexDirection: "row", alignItems: "center", gap: 6 },
+  schedulePage: { flex: 1, minHeight: 0 },
+  schedulePageContent: { paddingHorizontal: 18, paddingBottom: 30, gap: 14 },
+  dutyTodayCard: {
+    padding: 16,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: 8
+  },
+  dutyTodayTitle: { ...typography.title, color: colors.text, marginBottom: 2 },
+  dutyTodayRow: { flexDirection: "row", justifyContent: "space-between", gap: 12 },
+  dutyTodayName: { ...typography.label, color: colors.text },
+  dutyTodayMeta: { ...typography.meta, color: colors.primary },
+  scheduleGroupTabs: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  scheduleEditorTools: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: 16,
+    padding: 14,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface
+  },
+  scheduleGrid: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, overflow: "hidden" },
+  scheduleGridRow: { flexDirection: "row", minHeight: 42 },
+  scheduleCell: {
+    width: 42,
+    minHeight: 42,
+    borderRightWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: colors.borderSoft,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  scheduleNameCell: { width: 158, paddingHorizontal: 9, alignItems: "flex-start" },
+  scheduleDayHeader: { ...typography.meta, color: colors.textMuted, textAlign: "center", paddingTop: 13 },
+  scheduleHolidayCell: { backgroundColor: "rgba(11,132,179,0.12)", color: colors.primary },
+  scheduleStaffName: { ...typography.label, color: colors.text, maxWidth: "100%" },
+  scheduleStaffRole: { ...typography.meta, color: colors.textDim },
+  scheduleShiftCell: { backgroundColor: colors.surface },
+  scheduleShiftText: { ...typography.label, color: colors.primary },
+  scheduleEmptyGroup: { width: 420, padding: 20 }
 });

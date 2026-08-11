@@ -5,6 +5,7 @@ import type {
   OperationPlan,
   PlanDay,
   PlanEntry,
+  DutySchedule,
   ReportDocument,
   Study,
   UserRequest,
@@ -254,6 +255,20 @@ export async function saveOperationPlanDay(
         additions
       }))
     })
+  });
+}
+
+export async function getDutySchedule(month: string): Promise<DutySchedule> {
+  return request<DutySchedule>(`/duty-schedule/${encodeURIComponent(month)}`);
+}
+
+export async function saveDutySchedule(
+  month: string,
+  schedule: DutySchedule
+): Promise<DutySchedule> {
+  return request<DutySchedule>(`/duty-schedule/${encodeURIComponent(month)}`, {
+    method: "PUT",
+    body: JSON.stringify(schedule)
   });
 }
 

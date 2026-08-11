@@ -107,12 +107,12 @@ const splashHead = `
         inset: 0;
         background: rgba(5, 12, 21, .24);
       }
-      @media (display-mode: standalone) {
+      @media (max-width: 767px), (display-mode: standalone) {
         #mobile-navigation {
           position: fixed !important;
           left: 0 !important;
           right: 0 !important;
-          bottom: max(6px, env(safe-area-inset-bottom, 0px)) !important;
+          bottom: 10px !important;
         }
       }
     </style>`;
