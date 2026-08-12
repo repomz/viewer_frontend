@@ -1108,6 +1108,9 @@ export function MobileDicomViewer({
       ) : null}
       {desktop && !metadataLoading && !error && selectedSeries && selectedFrame ? (
         <View style={styles.desktopControls}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Предыдущая серия" disabled={series.length < 2} onPress={() => selectSeries((seriesIndex - 1 + series.length) % series.length)} style={[styles.controlButton, series.length < 2 && styles.controlButtonDisabled]}>
+            <Icon name="chevron-up" size={20} color={darkColors.text} />
+          </Pressable>
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={playing ? "Пауза" : "Воспроизвести cine"}
@@ -1115,6 +1118,9 @@ export function MobileDicomViewer({
             style={[styles.controlButton, styles.playButton]}
           >
             <Icon name={playing ? "pause" : "play"} size={21} color={darkColors.text} />
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Следующая серия" disabled={series.length < 2} onPress={() => selectSeries((seriesIndex + 1) % series.length)} style={[styles.controlButton, series.length < 2 && styles.controlButtonDisabled]}>
+            <Icon name="chevron-down" size={20} color={darkColors.text} />
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Сбросить изображение" onPress={reset} style={styles.controlButton}>
             <Icon name="refresh" size={19} color={darkColors.text} />
@@ -1195,6 +1201,15 @@ export function MobileDicomViewer({
             <View style={styles.controlRow}>
               <Pressable
                 accessibilityRole="button"
+                accessibilityLabel="Предыдущая серия"
+                disabled={series.length < 2}
+                onPress={() => selectSeries((seriesIndex - 1 + series.length) % series.length)}
+                style={[styles.controlButton, series.length < 2 && styles.controlButtonDisabled]}
+              >
+                <Icon name="play-skip-back" size={19} color={darkColors.text} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
                 accessibilityLabel="Открыть серии"
                 onPress={() => {
                   setPlaying(false);
@@ -1206,6 +1221,15 @@ export function MobileDicomViewer({
                 ]}
               >
                 <Icon name="layers-outline" size={20} color={darkColors.text} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Следующая серия"
+                disabled={series.length < 2}
+                onPress={() => selectSeries((seriesIndex + 1) % series.length)}
+                style={[styles.controlButton, series.length < 2 && styles.controlButtonDisabled]}
+              >
+                <Icon name="play-skip-forward" size={19} color={darkColors.text} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -1581,6 +1605,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: darkColors.surface
   },
+  controlButtonDisabled: { opacity: 0.35 },
   controlButtonActive: {
     borderWidth: 1,
     borderColor: darkColors.primary,

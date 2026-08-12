@@ -26,6 +26,7 @@ function localDate(value: string): string {
 
 export function protocolMatchesAngiography(protocol: Study, imaging: Study): boolean {
   if (imaging.study_type.toLowerCase() !== "xa") return false;
+  if (protocol.dicom_link.includes(imaging.study_id)) return true;
   const protocolSurname = latinPatientSurname(protocol.patient);
   const imagingSurname = latinPatientSurname(imaging.patient);
   if (protocolSurname.length < 3 || imagingSurname.length < 3) return false;

@@ -19,6 +19,7 @@ type CacheEntry = {
   studyUID: string;
   bytes: number;
   kind?: "frame" | "cine";
+  cachedAt?: string;
 };
 
 type CacheIndex = Record<string, CacheEntry>;
@@ -251,7 +252,7 @@ function emit(): void {
 
 function recordFrame(url: string, studyUID: string, bytes: number): void {
   const index = readRecord<CacheIndex>(INDEX_KEY);
-  index[url] = { studyUID, bytes, kind: "frame" };
+  index[url] = { studyUID, bytes, kind: "frame", cachedAt: new Date().toISOString() };
   writeRecord(INDEX_KEY, index);
   emit();
 }
@@ -261,7 +262,7 @@ function recordCines(
 ): void {
   const index = readRecord<CacheIndex>(INDEX_KEY);
   cines.forEach((cine) => {
-    index[cine.url] = { ...cine, kind: "cine" };
+    index[cine.url] = { ...cine, kind: "cine", cachedAt: new Date().toISOString() };
   });
   writeRecord(INDEX_KEY, index);
   emit();
@@ -336,7 +337,7 @@ function recordFrames(
 ): void {
   const index = readRecord<CacheIndex>(INDEX_KEY);
   frames.forEach((frame) => {
-    index[frame.url] = { studyUID: frame.studyUID, bytes: frame.bytes };
+    index[frame.url] = { studyUID: frame.studyUID, bytes: frame.bytes, kind: "frame", cachedAt: new Date().toISOString() };
   });
   writeRecord(INDEX_KEY, index);
   emit();
@@ -765,6 +766,38 @@ export async function pruneDicomCache(validStudyUIDs: Iterable<string>): Promise
       .filter((studyUID) => !valid.has(studyUID))
       .map((studyUID) => deleteStudyFromDevice(studyUID))
   );
+}
+
+export async function pruneExpiredDicomFrames(maxAgeHours = 12): Promise<void> {
+  if (!supported()) return;
+  const index = readRecord<CacheIndex>(INDEX_KEY);
+  const cutoff = Date.now() - maxAgeHours * 60 * 60 * 1000;
+  const urls = Object.entries(index)
+    .filter(
+      ([, entry]) =>
+        entry.kind !== "cine" &&
+        (!entry.cachedAt || new Date(entry.cachedAt).getTime() < cutoff)
+    )
+    .map(([url]) => url);
+  if (!urls.length) return;
+  if (hasCacheAPI()) {
+    const cache = await window.caches.open(CACHE_NAME).catch(() => null);
+    if (cache) await Promise.all(urls.map((url) => cache.delete(url)));
+  }
+  if (hasIndexedDB()) {
+    const database = await openFrameDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("frames", "readwrite");
+      const store = transaction.objectStore("frames");
+      urls.forEach((url) => store.delete(url));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  }
+  urls.forEach((url) => delete index[url]);
+  writeRecord(INDEX_KEY, index);
+  emit();
 }
 
 export async function clearDicomCache(): Promise<void> {

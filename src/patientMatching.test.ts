@@ -17,4 +17,12 @@ describe("patient angiography matching", () => {
     expect(protocolMatchesAngiography(protocol, study("NEDOPEKIN", "xa", "2026-08-03T11:00:00+07:00"))).toBe(true);
     expect(protocolMatchesAngiography(protocol, study("NEDOPEKIN", "xa", "2026-08-04T11:00:00+07:00"))).toBe(false);
   });
+
+  it("keeps an explicit XA link independently of name and date matching", () => {
+    const protocol = study("Иванов Иван", "каг", "2025-01-01T10:00:00+07:00");
+    protocol.dicom_link = "xa://study/1.2.840.10008";
+    const xa = study("OTHER", "xa", "2026-08-03T11:00:00+07:00");
+    xa.study_id = "1.2.840.10008";
+    expect(protocolMatchesAngiography(protocol, xa)).toBe(true);
+  });
 });

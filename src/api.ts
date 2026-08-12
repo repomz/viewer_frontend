@@ -104,6 +104,23 @@ export async function getStudies(): Promise<Study[]> {
   return Array.isArray(response) ? response : [];
 }
 
+export async function suggestProtocolStudies(patient: string): Promise<Study[]> {
+  const params = new URLSearchParams({ patient, limit: "20" });
+  const response = await request<Study[]>(`/studies/suggest?${params.toString()}`);
+  return Array.isArray(response) ? response : [];
+}
+
+export async function linkStudyAngiography(
+  studyID: string,
+  xaStudyUID: string
+): Promise<Study> {
+  return request<Study>(`/studies/${encodeURIComponent(studyID)}/dicom-link`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dicom_link: `xa://study/${xaStudyUID}` })
+  });
+}
+
 export async function searchStudies(filters: {
   studyType?: string;
   surgeon?: string;

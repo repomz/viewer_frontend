@@ -43,11 +43,13 @@ import {
   getOperationPlan,
   getReports,
   getStudies,
+  linkStudyAngiography,
   getUserRequests,
   getUserRequest,
   saveOperationPlanDay,
   saveDutySchedule,
-  searchStudies
+  searchStudies,
+  suggestProtocolStudies
 } from "./src/api";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import { isPacsImagingStudy } from "./src/studyClassification";
@@ -59,11 +61,13 @@ import {
   loadReportsCache,
   loadSettings,
   loadStudiesCache,
+  loadPinnedProtocols,
   loadXAStudiesCache,
   saveOperationPlanCache,
   saveRequests,
   saveReportsCache,
   saveStudiesCache,
+  pinProtocol,
   saveXAStudiesCache,
   saveSettings
 } from "./src/storage";
@@ -71,6 +75,7 @@ import {
   cancelDicomDownloads,
   clearDicomCache,
   pruneDicomCache,
+  pruneExpiredDicomFrames,
   deleteStudyFromDevice,
   downloadStudyFirstSeriesForOffline,
   downloadStudyForOffline,
@@ -472,6 +477,8 @@ export default function App() {
   const [studiesLoading, setStudiesLoading] = useState(() => loadStudiesCache().length === 0);
   const [studiesError, setStudiesError] = useState("");
   const [search, setSearch] = useState("");
+  const [archiveSuggestions, setArchiveSuggestions] = useState<Study[]>([]);
+  const [archiveSearchLoading, setArchiveSearchLoading] = useState(false);
   const [dayFilter, setDayFilter] = useState<DayFilter>(null);
   const [category, setCategory] = useState<StudyCategory>("all");
   const [studySort, setStudySort] = useState<StudySort>("time");
@@ -516,6 +523,7 @@ export default function App() {
         .map((request) => request.id)
     )
   );
+  const linkingAngiographies = useRef(new Set<string>());
   const automaticImportSources = useRef(new Set<string>());
   const automaticImportUIDs = useRef(new Set(
     requests
@@ -544,9 +552,12 @@ export default function App() {
     setStudiesLoading(cached.length === 0);
     try {
       const response = await getStudies();
-      setStudies(response);
-	  saveStudiesCache(response);
-      const protocols = response.filter((study) => !isPacsImagingStudy(study));
+      const pinned = loadPinnedProtocols();
+      const responseIDs = new Set(response.map((study) => study.id));
+      const nextStudies = [...response, ...pinned.filter((study) => !responseIDs.has(study.id))];
+      setStudies(nextStudies);
+	  saveStudiesCache(nextStudies);
+      const protocols = nextStudies.filter((study) => !isPacsImagingStudy(study));
       setSelectedStudy((current) => {
         if (!current) return protocols[0] ?? null;
         return (
@@ -579,19 +590,12 @@ export default function App() {
           );
       setXaStudies(next);
       saveXAStudiesCache(next);
-      if (compact) {
-        void pruneDicomCache(
-          next
-            .filter((study) => study.study_type.toLowerCase() === "xa")
-            .map((study) => study.study_id)
-        );
-      }
     } catch (error) {
       setXaError(errorMessage(error));
     } finally {
       setXaLoading(false);
     }
-  }, [compact]);
+  }, []);
 
   const loadRequestHistory = useCallback(async () => {
     try {
@@ -726,6 +730,47 @@ export default function App() {
     void updateServerHealth();
     void updateAgentHealth();
   }, [updateAgentHealth, updateServerHealth]);
+
+  useEffect(() => {
+    if (authenticated && compact) void pruneExpiredDicomFrames();
+  }, [authenticated, compact]);
+
+  useEffect(() => {
+    if (!authenticated || !compact || !studies.length) return;
+    const protocols = studies.filter((study) => !isPacsImagingStudy(study));
+    const activeXA = xaStudies
+      .filter(
+        (angiography) =>
+          angiography.study_type.toLowerCase() === "xa" &&
+          protocols.some((protocol) => protocolMatchesAngiography(protocol, angiography))
+      )
+      .map((angiography) => angiography.study_id);
+    void pruneDicomCache(activeXA);
+  }, [authenticated, compact, studies, xaStudies]);
+
+  useEffect(() => {
+    if (!authenticated || !xaStudies.length) return;
+    studies
+      .filter((study) => !isPacsImagingStudy(study) && !study.dicom_link.trim())
+      .forEach((protocol) => {
+        const angiography = xaStudies.find((item) =>
+          protocolMatchesAngiography(protocol, item)
+        );
+        if (!angiography || linkingAngiographies.current.has(protocol.id)) return;
+        linkingAngiographies.current.add(protocol.id);
+        void linkStudyAngiography(protocol.id, angiography.study_id)
+          .then((updated) => {
+            setStudies((current) => {
+              const next = current.map((item) =>
+                item.id === updated.id ? updated : item
+              );
+              saveStudiesCache(next);
+              return next;
+            });
+          })
+          .finally(() => linkingAngiographies.current.delete(protocol.id));
+      });
+  }, [authenticated, studies, xaStudies]);
 
   useEffect(() => {
     const timer = setTimeout(() => setLaunchDelayElapsed(true), 600);
@@ -1081,6 +1126,36 @@ export default function App() {
     });
   }, [category, dayFilter, protocolStudies, search, studySort, surgeonFilter]);
 
+  useEffect(() => {
+    const query = search.trim();
+    if (query.length < 2) {
+      setArchiveSuggestions([]);
+      setArchiveSearchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setArchiveSearchLoading(true);
+      void suggestProtocolStudies(query)
+        .then((items) => {
+          if (!cancelled) {
+            const localIDs = new Set(protocolStudies.map((study) => study.id));
+            setArchiveSuggestions(items.filter((study) => !localIDs.has(study.id)));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setArchiveSuggestions([]);
+        })
+        .finally(() => {
+          if (!cancelled) setArchiveSearchLoading(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [protocolStudies, search]);
+
   const recordRequest = useCallback((request: UserRequest) => {
     setRequests((current) => {
       const next = [request, ...current.filter((item) => item.id !== request.id)];
@@ -1330,6 +1405,8 @@ export default function App() {
                   loading={studiesLoading}
                   error={studiesError}
                   search={search}
+                  archiveSuggestions={archiveSuggestions}
+                  archiveSearchLoading={archiveSearchLoading}
                   dayFilter={dayFilter}
                   category={category}
                   sort={studySort}
@@ -1340,7 +1417,17 @@ export default function App() {
                     setDayFilter((current) => current === value ? null : value)
                   }
                   onFilter={() => setFilterOpen(true)}
-                  onSelect={setSelectedStudy}
+                  onSelect={(study) => {
+                    setSelectedStudy(study);
+                    if (study && !studies.some((item) => item.id === study.id)) {
+                      pinProtocol(study);
+                      setStudies((current) => {
+                        const next = [study, ...current];
+                        saveStudiesCache(next);
+                        return next;
+                      });
+                    }
+                  }}
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
                   angiographies={xaStudies}
@@ -1971,6 +2058,8 @@ function StudiesScreen({
   loading,
   error,
   search,
+  archiveSuggestions,
+  archiveSearchLoading,
   dayFilter,
   category,
   sort,
@@ -1993,6 +2082,8 @@ function StudiesScreen({
   loading: boolean;
   error: string;
   search: string;
+  archiveSuggestions: Study[];
+  archiveSearchLoading: boolean;
   dayFilter: DayFilter;
   category: StudyCategory;
   sort: StudySort;
@@ -2055,6 +2146,33 @@ function StudiesScreen({
       </View>
 
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
+
+      {search.trim().length >= 2 && (archiveSearchLoading || archiveSuggestions.length) ? (
+        <View style={styles.studySuggestions}>
+          <Text style={styles.studySuggestionsTitle}>Протоколы в базе</Text>
+          {archiveSearchLoading ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : archiveSuggestions.slice(0, 8).map((study) => (
+            <Pressable
+              key={study.id}
+              accessibilityRole="button"
+              accessibilityLabel={`Открыть архивный протокол ${study.patient}`}
+              onPress={() => choose(study)}
+              style={styles.studySuggestionRow}
+            >
+              <View style={styles.studySuggestionCopy}>
+                <Text numberOfLines={1} style={styles.studySuggestionPatient}>
+                  {shortPatientName(study.patient)}{study.age ? ` ${study.age}` : ""}
+                </Text>
+                <Text numberOfLines={1} style={styles.studySuggestionOperation}>
+                  {shortOperationName(study.name_operation)}
+                </Text>
+              </View>
+              <Text style={styles.studySuggestionDate}>{formatShortNumericDate(study.time_beginning)}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       <View style={styles.studyWorkspace}>
         <View style={styles.studyListPane}>
@@ -2197,19 +2315,20 @@ function StudyRow({
       </View>
       <View style={styles.studyTrailing}>
         <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={hasXA ? "Открыть XA пациента" : "XA пациента отсутствует"}
-          disabled={!hasXA}
-          hitSlop={6}
-          onPress={(event) => {
-            event.stopPropagation();
-            onOpenXA();
-          }}
-          style={[styles.xaState, !hasXA && styles.xaStateInactive]}
-        >
-          <Text style={[styles.xaStateText, !hasXA && styles.xaStateTextInactive]}>XA</Text>
-        </Pressable>
+        {hasXA ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Открыть XA пациента"
+            hitSlop={6}
+            onPress={(event) => {
+              event.stopPropagation();
+              onOpenXA();
+            }}
+            style={styles.xaState}
+          >
+            <Text style={styles.xaStateText}>XA</Text>
+          </Pressable>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -4019,8 +4138,8 @@ const planDepartments = [
 ] as const;
 
 const defaultPlanOperations: Record<string, string> = {
-  "кардио 1": "каг + стент",
-  "кардио 2": "каг + стент",
+  "кардио 1": "каг стент",
+  "кардио 2": "каг стент",
   рсц: "цаг",
   неврология: "цаг",
   "нейро/х": "цаг",
@@ -4044,7 +4163,7 @@ const vascularOperations = [
 
 const planOperationsFor = (department: string): string[] => {
   if (department.startsWith("кардио")) {
-    return ["каг + стент", "каг диагностика", "ЭКС"];
+    return ["каг стент", "каг диагностика", "ЭКС"];
   }
   if (department === "сосуды") return vascularOperations;
   return [defaultPlanOperations[department] ?? ""];
@@ -4468,7 +4587,7 @@ function PlanScreen({
                             <Text style={styles.planPrimaryText}>
                               {entry
                                 ? entry.history_searched === false
-                                  ? (compact ? "нет поиска" : "Поиск не проведён")
+                                  ? (compact ? "—" : "Поиск не проведён")
                                   : (compact ? "перв" : "Первичная")
                                 : "—"}
                             </Text>
@@ -5814,6 +5933,23 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8
   },
+  studySuggestions: {
+    maxHeight: 210,
+    marginBottom: 10,
+    padding: 8,
+    gap: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.surface,
+    ...shadow
+  },
+  studySuggestionsTitle: { fontSize: 11, fontWeight: "800", color: colors.textDim, paddingHorizontal: 6, paddingVertical: 3 },
+  studySuggestionRow: { minHeight: 46, paddingHorizontal: 8, paddingVertical: 6, borderRadius: 10, flexDirection: "row", alignItems: "center", gap: 10, backgroundColor: colors.surfaceSoft },
+  studySuggestionCopy: { flex: 1, minWidth: 0 },
+  studySuggestionPatient: { fontSize: 14, fontWeight: "800", color: colors.text },
+  studySuggestionOperation: { marginTop: 2, fontSize: 11, color: colors.textDim },
+  studySuggestionDate: { fontSize: 11, fontWeight: "700", color: colors.primary },
   mobileChipsScroll: { width: "100%", flexGrow: 0 },
   weekdayChipsDesktop: { flexGrow: 0, maxWidth: 440 },
   chips: { gap: 7 },
@@ -7361,10 +7497,10 @@ const styles = StyleSheet.create({
   planAdditionsCell: { flex: 1, minWidth: 0, flexShrink: 1 },
   planPreviousCell: { flex: 1.2, minWidth: 0, flexShrink: 1 },
   planDayCellCompact: { flex: 0.58 },
-  planPatientCellCompact: { flex: 1.75 },
+  planPatientCellCompact: { flex: 1.65 },
   planDepartmentCellCompact: { flex: 0.52, textAlign: "center", paddingHorizontal: 1 },
-  planOperationCellCompact: { flex: 1.08, paddingHorizontal: 2, fontSize: 9, lineHeight: 12 },
-	planPreviousCellCompact: { flex: 0.85 },
+  planOperationCellCompact: { flex: 1, paddingHorizontal: 2, fontSize: 9, lineHeight: 12 },
+	planPreviousCellCompact: { flex: 1.15, minWidth: 64 },
   planPreviousButton: {
     flex: 1,
     minHeight: 32,

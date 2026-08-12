@@ -12,6 +12,17 @@ const REPORTS_KEY_PREFIX = "viewer.reports.v1";
 const PLAN_KEY_PREFIX = "viewer.operation-plan.v1";
 const STUDIES_KEY = "viewer.studies.v1";
 const XA_STUDIES_KEY = "viewer.xa-studies.v1";
+const PINNED_PROTOCOLS_KEY = "viewer.pinned-protocols.v1";
+
+type PinnedProtocol = { study: Study; expiresAt: string };
+
+function nextClinicalCleanup(): Date {
+  const date = new Date();
+  const daysUntilMonday = ((8 - date.getDay()) % 7) || 7;
+  date.setDate(date.getDate() + daysUntilMonday);
+  date.setHours(9, 0, 0, 0);
+  return date;
+}
 
 export const defaultSettings: AppSettings = {
   agentId: 2,
@@ -142,6 +153,29 @@ export function loadStudiesCache(): Study[] {
 export function saveStudiesCache(studies: Study[]): void {
   if (!hasStorage()) return;
   window.localStorage.setItem(STUDIES_KEY, JSON.stringify(studies.slice(0, 500)));
+}
+
+export function loadPinnedProtocols(): Study[] {
+  if (!hasStorage()) return [];
+  try {
+    const now = Date.now();
+    const stored = JSON.parse(window.localStorage.getItem(PINNED_PROTOCOLS_KEY) ?? "[]") as PinnedProtocol[];
+    const current = stored.filter((item) => item?.study && new Date(item.expiresAt).getTime() > now);
+    window.localStorage.setItem(PINNED_PROTOCOLS_KEY, JSON.stringify(current));
+    return current.map((item) => item.study);
+  } catch {
+    return [];
+  }
+}
+
+export function pinProtocol(study: Study): void {
+  if (!hasStorage()) return;
+  const current = loadPinnedProtocols().filter((item) => item.id !== study.id);
+  const entries: PinnedProtocol[] = [study, ...current].slice(0, 30).map((item) => ({
+    study: item,
+    expiresAt: nextClinicalCleanup().toISOString()
+  }));
+  window.localStorage.setItem(PINNED_PROTOCOLS_KEY, JSON.stringify(entries));
 }
 
 export function loadXAStudiesCache(): Study[] {
