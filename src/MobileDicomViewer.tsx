@@ -175,18 +175,24 @@ export function MobileDicomViewer({
   );
 
   const loadRenderedFrame = useCallback(
-    (url: string): Promise<string> => {
+    (url: string, signal?: AbortSignal): Promise<string> => {
       let pending = renderedCache.current.get(url);
       if (!pending) {
         pending = loadRenderedFrameBlob(url, {
           studyUID,
-          persist: persistentCacheEnabled
+          persist: persistentCacheEnabled,
+          signal
         }).then((blob) => {
           const objectURL = URL.createObjectURL(blob);
           blobURLs.current.add(objectURL);
           return objectURL;
         });
         renderedCache.current.set(url, pending);
+        void pending.catch(() => {
+          if (renderedCache.current.get(url) === pending) {
+            renderedCache.current.delete(url);
+          }
+        });
       }
       return pending;
     },
@@ -413,7 +419,12 @@ export function MobileDicomViewer({
   useEffect(() => {
     if (!selectedSeries?.frames.length) return;
     if (selectedCineURL && !cineReady) return;
+    // Desktop playback uses MP4 and fetches an exact JPEG only when paused or
+    // capturing. Downloading every JPEG in advance competes with the cine on
+    // the same internet connection and makes the web viewer appear frozen.
+    if (desktop) return;
     let cancelled = false;
+    const controller = new AbortController();
     let nextIndex = 0;
     const frames = selectedSeries.frames;
     const worker = async () => {
@@ -424,7 +435,7 @@ export function MobileDicomViewer({
           preparedFrames.get(
             preparedFrameKey(frame.instanceUID, frame.frameIndex + 1)
           ) ?? renderedFrameURL(frame);
-        await loadRenderedFrame(url).catch(() => undefined);
+        await loadRenderedFrame(url, controller.signal).catch(() => undefined);
       }
     };
     // Let the MP4 establish playback before JPEG precision frames begin using
@@ -434,13 +445,15 @@ export function MobileDicomViewer({
     }, 1200);
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
-  }, [cineReady, loadRenderedFrame, preparedFrames, selectedCineURL, selectedSeries]);
+  }, [cineReady, desktop, loadRenderedFrame, preparedFrames, selectedCineURL, selectedSeries]);
 
   useEffect(() => {
     if (selectedCineURL && !cineReady) return;
     let cancelled = false;
+    const controller = new AbortController();
     void (async () => {
       for (const item of series) {
         if (cancelled) break;
@@ -451,7 +464,8 @@ export function MobileDicomViewer({
             ) ?? renderedFrameURL(firstFrame)
           : "";
         try {
-          const source = await loadRenderedFrame(previewURL);
+          if (!previewURL) continue;
+          const source = await loadRenderedFrame(previewURL, controller.signal);
           if (!cancelled) {
             setSeriesPreviews((current) => ({
               ...current,
@@ -465,6 +479,7 @@ export function MobileDicomViewer({
     })();
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [cineReady, loadRenderedFrame, preparedFrames, selectedCineURL, series]);
 

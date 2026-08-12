@@ -493,7 +493,10 @@ export async function loadRenderedFrameBlob(
     signal?: AbortSignal;
   }
 ): Promise<Blob> {
-  const pending = inFlight.get(url);
+  // Cancellable background preloads must not share a fetch with a visible
+  // frame. Otherwise changing a patient can either leave the old transfer
+  // running or abort the frame the user is currently waiting for.
+  const pending = options.signal ? undefined : inFlight.get(url);
   if (pending) return pending;
 
   const load = (async () => {
@@ -532,11 +535,11 @@ export async function loadRenderedFrameBlob(
     return blob;
   })();
 
-  inFlight.set(url, load);
+  if (!options.signal) inFlight.set(url, load);
   try {
     return await load;
   } finally {
-    inFlight.delete(url);
+    if (!options.signal) inFlight.delete(url);
   }
 }
 
