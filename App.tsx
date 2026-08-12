@@ -815,11 +815,19 @@ export default function App() {
     void Promise.allSettled([
       loadStudies(),
       updateServerHealth(),
-      updateAgentHealth()
+      updateAgentHealth(),
+      loadPlan(0),
+      loadReports(),
+      loadStatistics(),
+      loadDutySchedule()
     ]);
     return () => clearTimeout(readyTimer);
   }, [
     loadStudies,
+    loadPlan,
+    loadReports,
+    loadStatistics,
+    loadDutySchedule,
     updateAgentHealth,
     updateServerHealth
   ]);
