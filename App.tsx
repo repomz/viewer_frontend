@@ -3981,7 +3981,7 @@ function DutyScheduleScreen({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [holidayText, setHolidayText] = useState("");
-  const [shiftTool, setShiftTool] = useState("8");
+  const [shiftTool, setShiftTool] = useState("6");
   const selectedMonth = monthKey(monthOffset);
 
   useEffect(() => {
@@ -3990,7 +3990,7 @@ function DutyScheduleScreen({
 
   useEffect(() => {
     setHolidayText(current?.holidays.join(", ") ?? "");
-  }, [current?.month]);
+  }, [current?.holidays, current?.month]);
 
   useEffect(() => {
     let cancelled = false;
@@ -4060,11 +4060,10 @@ function DutyScheduleScreen({
     if (!printWindow) return;
     const header = days.map((day) => `<th>${day}</th>`).join("");
     const rows = activeGroup.staff.flatMap((staff) => (["day", "duty"] as const).map((row, index) => {
-      const total = rowTotal(staff, row);
       const cells = days.map((day) => `<td>${escapePrintHTML(shiftValue(staff, day, row))}</td>`).join("");
-      return `<tr>${index === 0 ? `<td rowspan="2">${escapePrintHTML(staff.name)}</td>` : ""}<td>${row === "day" ? "День" : "Деж."}</td>${cells}<td class="${total >= monthlyNorm ? "ok" : ""}">${total}</td></tr>`;
+      return `<tr${index === 1 ? ' class="staff-end"' : ""}>${index === 0 ? `<td rowspan="2" class="staff">${escapePrintHTML(staff.name)}</td>` : ""}${cells}</tr>`;
     })).join("");
-    printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>График</title><style>@page{size:A4 landscape;margin:7mm}body{font-family:Arial,sans-serif}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 10px}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #9eabb3;text-align:center;padding:3px;font-size:8px}th:first-child{width:100px}.ok{background:#d9f2ee;color:#087d70;font-weight:700}</style></head><body><h1>График хирургов</h1><p>${escapePrintHTML(monthTitle(selectedMonth))} · норма ${monthlyNorm} ч</p><table><thead><tr><th>Хирург</th><th>Строка</th>${header}<th>Σ</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
+    printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>График</title><style>@page{size:A4 landscape;margin:7mm}body{font-family:Arial,sans-serif;color:#18313f}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 10px;color:#607482}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #9eabb3;text-align:center;padding:3px;font-size:8px;height:18px}th:first-child{width:108px}.staff{font-weight:700;text-align:left;padding-left:6px}.staff-end td{border-bottom-width:2px;border-bottom-color:#6f9db2}</style></head><body><h1>График хирургов</h1><p>${escapePrintHTML(monthTitle(selectedMonth))}</p><table><thead><tr><th>Хирург</th>${header}</tr></thead><tbody>${rows}</tbody></table></body></html>`);
     printWindow.document.close();
     printWindow.addEventListener("load", () => printWindow.print(), { once: true });
   };
@@ -4086,41 +4085,66 @@ function DutyScheduleScreen({
       {loading && !current ? <LoadingState label="Открываем график…" /> : null}
       {current ? (
         <ScrollView style={styles.schedulePage} contentContainerStyle={styles.schedulePageContent}>
-          {!compact ? (
-            <View style={styles.scheduleEditorTools}>
-              <View style={styles.scheduleHolidayTools}>
-                <Field label="Праздничные дни" value={holidayText} onChangeText={setHolidayText} placeholder="1, 9, 12" hint="Числа месяца через запятую." />
-                <Button label="Применить" compact variant="secondary" onPress={applyHolidays} />
-              </View>
-              <Text style={styles.scheduleNorm}>Норма месяца: {monthlyNorm} ч</Text>
-              <Button label={editing ? "Внести изменения" : "Заполнить график"} icon={editing ? "checkmark" : "create-outline"} loading={saving} onPress={() => editing ? void save() : setEditing(true)} />
+          {!compact && !editing ? (
+            <View style={styles.scheduleViewActions}>
+              <Button label="Заполнить график" icon="create-outline" onPress={() => setEditing(true)} />
             </View>
           ) : null}
           {editing && !compact ? (
-            <View style={styles.scheduleShiftTools}>
-              {["8", "16", "24", "О", "Б"].map((value) => <Chip key={value} label={value} selected={shiftTool === value} onPress={() => setShiftTool(value)} />)}
-              <Text style={styles.compactScreenMeta}>8 — рабочий день · 16/24 — дежурство · О — отпуск · Б — больничный</Text>
+            <View style={styles.scheduleEditorPanel}>
+              <View style={styles.scheduleEditorTopRow}>
+                <View style={styles.scheduleHolidayTools}>
+                  <Field label="Праздничные дни" value={holidayText} onChangeText={setHolidayText} placeholder="1, 9, 12" hint="Числа месяца через запятую." />
+                  <Button label="Применить" compact variant="secondary" onPress={applyHolidays} />
+                </View>
+                <View style={styles.scheduleEditorActions}>
+                  <View style={styles.scheduleNormBadge}>
+                    <Text style={styles.scheduleNormLabel}>Норма месяца</Text>
+                    <Text style={styles.scheduleNorm}>{monthlyNorm} ч</Text>
+                  </View>
+                  <Button label="Внести изменения" icon="checkmark" loading={saving} onPress={() => void save()} />
+                </View>
+              </View>
+              <View style={styles.scheduleShiftTools}>
+                <Text style={styles.scheduleToolsTitle}>Значение для ячейки</Text>
+                <View style={styles.scheduleToolChips}>
+                  {["6", "18", "24", "О", "Б"].map((value) => <Chip key={value} label={value} selected={shiftTool === value} onPress={() => setShiftTool(value)} />)}
+                </View>
+                <View style={styles.scheduleLegend}>
+                  <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>6</Text> — дневные часы</Text>
+                  <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>18</Text> — ночное дежурство</Text>
+                  <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>24</Text> — суточное дежурство</Text>
+                  <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>О</Text> — отпуск</Text>
+                  <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>Б</Text> — больничный</Text>
+                </View>
+              </View>
             </View>
           ) : null}
-          <ScrollView horizontal showsHorizontalScrollIndicator>
-            <View style={styles.scheduleGrid}>
-              <View style={styles.scheduleGridRow}>
-                <Text style={[styles.scheduleCell, styles.scheduleNameCell]}>Сотрудник</Text>
+          <View style={styles.scheduleGridShell}>
+            <View style={[styles.scheduleNamesColumn, compact && styles.scheduleNamesColumnCompact]}>
+              <View style={[styles.scheduleCell, styles.scheduleNameHeader]}>
+                <Text style={styles.scheduleNameHeaderText}>Хирург</Text>
+              </View>
+              {activeGroup?.staff.map((staff) => (
+                <View key={staff.id} style={styles.scheduleStaffBlock}>
+                  <Text numberOfLines={2} style={styles.scheduleStaffName}>{staff.name}</Text>
+                </View>
+              ))}
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator style={styles.scheduleTimelineScroll} contentContainerStyle={styles.scheduleTimelineContent}>
+              <View style={styles.scheduleTimelineGrid}>
+                <View style={styles.scheduleGridRow}>
                 {days.map((day) => {
                   const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
                   const weekend = date.getDay() === 0 || date.getDay() === 6;
                   const holiday = current.holidays.includes(day);
                   return <Text key={day} style={[styles.scheduleCell, styles.scheduleDayHeader, (weekend || holiday) && styles.scheduleHolidayCell]}>{day}</Text>;
                 })}
-                <Text style={[styles.scheduleCell, styles.scheduleTotalHeader]}>Σ</Text>
+                {editing && !compact ? <Text style={[styles.scheduleCell, styles.scheduleTotalHeader]}>Σ</Text> : null}
               </View>
               {activeGroup?.staff.length ? activeGroup.staff.flatMap((staff) => (["day", "duty"] as const).map((row, rowIndex) => {
                 const total = rowTotal(staff, row);
-                return <View key={`${staff.id}-${row}`} style={styles.scheduleGridRow}>
-                  <View style={[styles.scheduleCell, styles.scheduleNameCell]}>
-                    <Text numberOfLines={1} style={styles.scheduleStaffName}>{rowIndex === 0 ? staff.name : ""}</Text>
-                    <Text style={styles.scheduleStaffRole}>{row === "day" ? "День" : "Дежурство"}</Text>
-                  </View>
+                return <View key={`${staff.id}-${row}`} style={[styles.scheduleGridRow, rowIndex === 1 && styles.scheduleSurgeonEndRow]}>
                   {days.map((day) => {
                     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
                     const marked = date.getDay() === 0 || date.getDay() === 6 || current.holidays.includes(day);
@@ -4128,13 +4152,14 @@ function DutyScheduleScreen({
                       <Text style={styles.scheduleShiftText}>{shiftValue(staff, day, row)}</Text>
                     </Pressable>;
                   })}
-                  <View style={[styles.scheduleCell, styles.scheduleTotalCell, total >= monthlyNorm && styles.scheduleTotalReached]}><Text style={styles.scheduleShiftText}>{total}</Text></View>
+                  {editing && !compact ? <View style={[styles.scheduleCell, styles.scheduleTotalCell, total >= monthlyNorm && styles.scheduleTotalReached]}><Text style={styles.scheduleShiftText}>{total}</Text></View> : null}
                 </View>;
               })) : (
                 <View style={styles.scheduleEmptyGroup}><Text style={styles.compactScreenMeta}>Список сотрудников будет заполнен при создании графика.</Text></View>
               )}
-            </View>
-          </ScrollView>
+              </View>
+            </ScrollView>
+          </View>
         </ScrollView>
       ) : null}
     </View>
@@ -7873,20 +7898,31 @@ const styles = StyleSheet.create({
   dutyTodayName: { ...typography.label, color: colors.text },
   dutyTodayMeta: { ...typography.meta, color: colors.primary },
   scheduleGroupTabs: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  scheduleEditorTools: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    gap: 16,
-    padding: 14,
-    borderRadius: radii.md,
-    backgroundColor: colors.surface
-  },
+  scheduleViewActions: { flexDirection: "row", justifyContent: "flex-end" },
+  scheduleEditorPanel: { gap: 12, padding: 14, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
+  scheduleEditorTopRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 14 },
   scheduleHolidayTools: { flex: 1, maxWidth: 430, flexDirection: "row", alignItems: "flex-end", gap: 8 },
-  scheduleNorm: { ...typography.label, color: colors.primary, paddingBottom: 10 },
-  scheduleShiftTools: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7, padding: 10, borderRadius: radii.md, backgroundColor: colors.surface },
-  scheduleGrid: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, overflow: "hidden" },
+  scheduleEditorActions: { flexDirection: "row", alignItems: "center", gap: 12 },
+  scheduleNormBadge: { minWidth: 116, paddingHorizontal: 12, paddingVertical: 8, borderRadius: radii.md, backgroundColor: colors.primarySoft },
+  scheduleNormLabel: { ...typography.meta, color: colors.textDim },
+  scheduleNorm: { ...typography.label, color: colors.primary, marginTop: 2 },
+  scheduleShiftTools: { gap: 9, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.borderSoft },
+  scheduleToolsTitle: { ...typography.label, color: colors.text },
+  scheduleToolChips: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7 },
+  scheduleLegend: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  scheduleLegendItem: { ...typography.meta, color: colors.textMuted, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 9, backgroundColor: colors.surfaceSoft },
+  scheduleLegendValue: { fontWeight: "800", color: colors.primary },
+  scheduleGridShell: { flexDirection: "row", width: "100%", minHeight: 0, paddingBottom: 12, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, overflow: "hidden", backgroundColor: colors.surfaceSoft },
+  scheduleNamesColumn: { width: 142, flexShrink: 0, borderRightWidth: 2, borderRightColor: "rgba(11,132,179,0.30)" },
+  scheduleNamesColumnCompact: { width: 116 },
+  scheduleNameHeader: { width: "100%", paddingHorizontal: 10, alignItems: "flex-start", backgroundColor: colors.surfaceSoft },
+  scheduleNameHeaderText: { ...typography.meta, fontWeight: "800", color: colors.textMuted },
+  scheduleStaffBlock: { height: 84, paddingHorizontal: 10, justifyContent: "center", borderBottomWidth: 2, borderBottomColor: "rgba(11,132,179,0.24)", backgroundColor: colors.surface },
+  scheduleTimelineScroll: { flex: 1, minWidth: 0 },
+  scheduleTimelineContent: { paddingBottom: 12 },
+  scheduleTimelineGrid: { overflow: "hidden" },
   scheduleGridRow: { flexDirection: "row", minHeight: 42 },
+  scheduleSurgeonEndRow: { borderBottomWidth: 2, borderBottomColor: "rgba(11,132,179,0.24)" },
   scheduleCell: {
     width: 42,
     minHeight: 42,
@@ -7896,11 +7932,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
-  scheduleNameCell: { width: 158, paddingHorizontal: 9, alignItems: "flex-start" },
   scheduleDayHeader: { ...typography.meta, color: colors.textMuted, textAlign: "center", paddingTop: 13 },
   scheduleHolidayCell: { backgroundColor: "rgba(11,132,179,0.12)", color: colors.primary },
-  scheduleStaffName: { ...typography.label, color: colors.text, maxWidth: "100%" },
-  scheduleStaffRole: { ...typography.meta, color: colors.textDim },
+  scheduleStaffName: { ...typography.label, color: colors.text, maxWidth: "100%", lineHeight: 17 },
   scheduleShiftCell: { backgroundColor: colors.surface },
   scheduleShiftText: { ...typography.label, color: colors.primary },
   scheduleTotalHeader: { width: 54, ...typography.meta, color: colors.textMuted, paddingTop: 13 },
