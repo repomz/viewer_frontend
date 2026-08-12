@@ -55,19 +55,19 @@ Orthanc остаётся PACS, отдельный OHIF-контейнер не �
 `arm64`:
 
 ```text
-docker.io/idrisovmarat/viewer_frontend:0.2.0
+docker.io/idrisovmarat/viewer_frontend:0.2.1
 docker.io/idrisovmarat/viewer_frontend:latest
 ```
 
 Проверка и запуск без локальной сборки:
 
 ```bash
-docker pull idrisovmarat/viewer_frontend:0.2.0
+docker pull idrisovmarat/viewer_frontend:0.2.1
 docker run --rm -p 5173:8080 \
   -e BACKEND_URL=https://135.106.130.37/api \
   -e PACS_URL=https://135.106.130.37 \
   -e 'PACS_AUTHORIZATION=Basic bWFwZHI6Y2hhbmdlc3Ryb25ncGFzc3dvcmQ=' \
-  idrisovmarat/viewer_frontend:0.2.0
+  idrisovmarat/viewer_frontend:0.2.1
 ```
 
 Workflow `.github/workflows/docker-publish.yml` автоматически собирает

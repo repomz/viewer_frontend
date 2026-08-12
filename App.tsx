@@ -70,6 +70,7 @@ import {
 import {
   cancelDicomDownloads,
   clearDicomCache,
+  pruneDicomCache,
   deleteStudyFromDevice,
   downloadStudyFirstSeriesForOffline,
   downloadStudyForOffline,
@@ -369,7 +370,7 @@ function reportShareText(report: ReportDocument): string {
   const groups: [string, ReportOperation[]][] = [
     ["Экстренные", data.emergency_operations ?? []],
     ["Плановые", data.planned_operations ?? []],
-    ["План на сегодня", data.today_planned_operations ?? []]
+    ["План сегодня", data.today_planned_operations ?? []]
   ];
   const lines = [
     `Отчёт дежурства · ${data.date ?? formatDate(report.generated_at)}`,
@@ -578,12 +579,19 @@ export default function App() {
           );
       setXaStudies(next);
       saveXAStudiesCache(next);
+      if (compact) {
+        void pruneDicomCache(
+          next
+            .filter((study) => study.study_type.toLowerCase() === "xa")
+            .map((study) => study.study_id)
+        );
+      }
     } catch (error) {
       setXaError(errorMessage(error));
     } finally {
       setXaLoading(false);
     }
-  }, []);
+  }, [compact]);
 
   const loadRequestHistory = useCallback(async () => {
     try {
@@ -1336,6 +1344,7 @@ export default function App() {
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
                   angiographies={xaStudies}
+                  dicomCache={dicomCache}
                   onOpenXA={openStudyAngiography}
                 />
               ) : null}
@@ -1974,6 +1983,7 @@ function StudiesScreen({
   onRetry,
   onRefresh,
   angiographies,
+  dicomCache,
   onOpenXA
 }: {
   compact: boolean;
@@ -1995,6 +2005,7 @@ function StudiesScreen({
   onRetry: () => void;
   onRefresh: () => void;
   angiographies: Study[];
+  dicomCache: DicomCacheSnapshot;
   onOpenXA: (study: Study) => void;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
@@ -2004,6 +2015,10 @@ function StudiesScreen({
   const hasAvailableXA = (study: Study) => {
     const angiography = patientXA(study);
 	return Boolean(angiography);
+  };
+  const xaIsCached = (study: Study) => {
+    const angiography = patientXA(study);
+    return Boolean(angiography && dicomCache.studies[angiography.study_id]?.complete);
   };
   const choose = (study: Study) => {
     onSelect(study);
@@ -2093,6 +2108,7 @@ function StudiesScreen({
               <StudyDetails
                 study={selected}
                 hasXA={hasAvailableXA(selected)}
+                xaCached={xaIsCached(selected)}
                 onOpenXA={() => onOpenXA(selected)}
               />
             ) : (
@@ -2119,6 +2135,7 @@ function StudiesScreen({
               <StudyDetails
                 study={selected}
                 hasXA={hasAvailableXA(selected)}
+                xaCached={xaIsCached(selected)}
                 onOpenXA={() => {
                   setDetailOpen(false);
                   onOpenXA(selected);
@@ -2339,10 +2356,12 @@ function ProtocolDescription({ description, recommendation: directRecommendation
 function StudyDetails({
   study,
   hasXA,
+  xaCached,
   onOpenXA
 }: {
   study: Study;
   hasXA: boolean;
+  xaCached: boolean;
   onOpenXA: () => void;
 }) {
   return (
@@ -2395,13 +2414,14 @@ function StudyDetails({
           onPress={() => void shareStudyProtocol(study)}
           style={styles.flexButton}
         />
-        <Button
-          label="Открыть XA"
-          icon="scan-outline"
-          disabled={!hasXA}
-          onPress={onOpenXA}
-          style={styles.flexButton}
-        />
+        {hasXA ? (
+          <Button
+            label={xaCached ? "Открыть XA" : "Загрузить XA"}
+            icon={xaCached ? "scan-outline" : "cloud-download-outline"}
+            onPress={onOpenXA}
+            style={styles.flexButton}
+          />
+        ) : null}
       </View>
     </View>
   );
@@ -2533,22 +2553,24 @@ function AngiographyScreen({
             </Text>
           </Pressable>
         ))}
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Найти ${studyFilter.toUpperCase()}`}
-          onPress={() => onSearch(studyFilter)}
-          style={styles.angioGuideButton}
-        >
-          <Icon name="add" size={22} color={darkColors.primary} />
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Как подключить RadiAnt"
-          onPress={() => setPacsGuideOpen(true)}
-          style={styles.angioGuideButton}
-        >
-          <Icon name="alert-circle-outline" size={20} color={darkColors.primary} />
-        </Pressable>
+        <View style={styles.angioHeaderActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Найти ${studyFilter.toUpperCase()}`}
+            onPress={() => onSearch(studyFilter)}
+            style={styles.angioGuideButton}
+          >
+            <Icon name="add" size={22} color={darkColors.primary} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Как подключить RadiAnt"
+            onPress={() => setPacsGuideOpen(true)}
+            style={styles.angioGuideButton}
+          >
+            <Icon name="alert-circle-outline" size={20} color={darkColors.primary} />
+          </Pressable>
+        </View>
       </View>
       {loading && !studies.length ? (
         <LoadingState label="Проверяем XA-исследования…" />
@@ -3690,7 +3712,7 @@ function ReportDetail({ report }: { report: ReportDocument }) {
         <ReportStat label="Плановые" value={data.planned_count ?? 0}
           active={section === "planned"} onPress={() => setSection("planned")} />
         <ReportStat
-          label="План на сегодня"
+          label="План сегодня"
           value={data.today_planned_count ?? 0}
           active={section === "today"}
           onPress={() => setSection("today")}
@@ -3700,7 +3722,7 @@ function ReportDetail({ report }: { report: ReportDocument }) {
         operations={data.emergency_operations ?? []} /> : null}
       {section === "planned" ? <ReportSection title="Плановые операции"
         operations={data.planned_operations ?? []} /> : null}
-      {section === "today" ? <ReportSection title="План на сегодня"
+      {section === "today" ? <ReportSection title="План сегодня"
         operations={data.today_planned_operations ?? []} /> : null}
     </View>
   );
@@ -3726,14 +3748,34 @@ function ReportSection({
   operations: ReportOperation[];
 }) {
   if (!operations.length) return null;
+  const category = (operation: ReportOperation) => {
+    const value = `${operation.operation ?? ""}`.toLocaleLowerCase("ru").replace(/ё/g, "е");
+    if (/(тромбэкстрак|тромбаспир|\bта\b)/.test(value)) return "Тромбэкстракции";
+    if (/(аневризм|эмболизац.*аневр)/.test(value)) return "Аневризма";
+    if (/каг/.test(value) && /стент/.test(value)) return "КАГ + стент";
+    if (/каг|коронарограф/.test(value)) return "КАГ";
+    if (/цаг|церебральн.*ангиограф/.test(value)) return "ЦАГ";
+    return "Другие";
+  };
+  const groups = ["КАГ", "КАГ + стент", "ЦАГ", "Тромбэкстракции", "Аневризма", "Другие"]
+    .map((label) => ({ label, operations: operations.filter((operation) => category(operation) === label) }))
+    .filter((group) => group.operations.length);
+  let absoluteIndex = 0;
   return (
     <View style={styles.reportSection}>
       <Text style={styles.reportSectionTitle}>
         {title} · {operations.length}
       </Text>
       <View style={styles.operationTable}>
-        {operations.map((operation, index) => (
-          <View key={`${operation.patient}-${index}`} style={styles.operationRow}>
+        {groups.map((group) => (
+          <View key={group.label}>
+            <View style={styles.reportOperationGroupHeader}>
+              <Text style={styles.reportOperationGroupTitle}>{group.label}</Text>
+              <Text style={styles.reportOperationGroupCount}>{group.operations.length}</Text>
+            </View>
+            {group.operations.map((operation) => {
+              const index = absoluteIndex++;
+              return <View key={`${operation.patient}-${index}`} style={styles.operationRow}>
             <Text style={styles.operationNumber}>
               {String(index + 1).padStart(2, "0")}
             </Text>
@@ -3758,6 +3800,8 @@ function ReportSection({
                 </Text>
               </View>
             </View>
+          </View>;
+            })}
           </View>
         ))}
       </View>
@@ -3799,15 +3843,19 @@ function DutyScheduleScreen({
 }) {
   const [monthOffset, setMonthOffset] = useState(0);
   const [current, setCurrent] = useState<DutySchedule | null>(schedule);
-  const [groupID, setGroupID] = useState("surgeons");
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [holidayText, setHolidayText] = useState("");
+  const [shiftTool, setShiftTool] = useState("8");
   const selectedMonth = monthKey(monthOffset);
 
   useEffect(() => {
     if (monthOffset === 0 && schedule) setCurrent(schedule);
   }, [monthOffset, schedule]);
+
+  useEffect(() => {
+    setHolidayText(current?.holidays.join(", ") ?? "");
+  }, [current?.month]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3820,21 +3868,22 @@ function DutyScheduleScreen({
     return () => { cancelled = true; };
   }, [monthOffset, schedule, selectedMonth]);
 
-  const activeGroup = current?.groups.find((group) => group.id === groupID)
+  const activeGroup = current?.groups.find((group) => group.id === "surgeons")
     ?? current?.groups[0];
-  const today = new Date();
-  const todayDay = today.getDate();
-  const isCurrentMonth = selectedMonth === monthKey(0);
-  const onDuty = current?.groups.flatMap((group) =>
-    group.staff
-      .filter((staff) => Boolean(staff.shifts[String(todayDay)]))
-      .map((staff) => ({ ...staff, group: group.label }))
-  ) ?? [];
   const days = Array.from({ length: daysInMonth(selectedMonth) }, (_, index) => index + 1);
+  const workingDays = days.filter((day) => {
+    const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
+    return date.getDay() !== 0 && date.getDay() !== 6 && !current?.holidays.includes(day);
+  });
+  const monthlyNorm = workingDays.length * 8;
+  const shiftKey = (day: number, row: "day" | "duty") => `${day}:${row}`;
+  const shiftValue = (staff: DutySchedule["groups"][number]["staff"][number], day: number, row: "day" | "duty") =>
+    staff.shifts[shiftKey(day, row)] ?? (row === "day" ? staff.shifts[String(day)] ?? "" : "");
+  const rowTotal = (staff: DutySchedule["groups"][number]["staff"][number], row: "day" | "duty") =>
+    days.reduce((sum, day) => sum + (Number(shiftValue(staff, day, row)) || 0), 0);
 
-  const changeShift = (staffID: string, day: number) => {
+  const changeShift = (staffID: string, day: number, row: "day" | "duty") => {
     if (!current || !editing) return;
-    const cycle = ["", "24", "6", "8", "16", "18"];
     setCurrent({
       ...current,
       groups: current.groups.map((group) => ({
@@ -3842,31 +3891,47 @@ function DutyScheduleScreen({
         staff: group.staff.map((staff) => {
           if (staff.id !== staffID) return staff;
           const shifts = { ...staff.shifts };
-          const index = cycle.indexOf(shifts[String(day)] ?? "");
-          const next = cycle[(index + 1) % cycle.length]!;
-          if (next) shifts[String(day)] = next;
-          else delete shifts[String(day)];
+          const key = shiftKey(day, row);
+          if (shifts[key] === shiftTool) delete shifts[key];
+          else shifts[key] = shiftTool;
+          delete shifts[String(day)];
           return { ...staff, shifts };
         })
       }))
     });
   };
 
+  const applyHolidays = () => {
+    if (!current) return;
+    const holidays = holidayText.split(/[\s,;]+/).map(Number)
+      .filter((day) => Number.isInteger(day) && day >= 1 && day <= days.length);
+    setCurrent({ ...current, holidays: [...new Set(holidays)].sort((a, b) => a - b) });
+  };
+
   const save = async () => {
     if (!current) return;
-    const holidays = holidayText
-      .split(/[\s,;]+/)
-      .map(Number)
-      .filter((day) => Number.isInteger(day) && day >= 1 && day <= days.length);
-    const next = { ...current, holidays: [...new Set(holidays)] };
     setSaving(true);
     try {
-      await onSave(next);
-      setCurrent(next);
+      await onSave(current);
       setEditing(false);
     } finally {
       setSaving(false);
     }
+  };
+
+  const printSchedule = () => {
+    if (Platform.OS !== "web" || !current || !activeGroup) return;
+    const printWindow = window.open("", "_blank", "width=1200,height=820");
+    if (!printWindow) return;
+    const header = days.map((day) => `<th>${day}</th>`).join("");
+    const rows = activeGroup.staff.flatMap((staff) => (["day", "duty"] as const).map((row, index) => {
+      const total = rowTotal(staff, row);
+      const cells = days.map((day) => `<td>${escapePrintHTML(shiftValue(staff, day, row))}</td>`).join("");
+      return `<tr>${index === 0 ? `<td rowspan="2">${escapePrintHTML(staff.name)}</td>` : ""}<td>${row === "day" ? "День" : "Деж."}</td>${cells}<td class="${total >= monthlyNorm ? "ok" : ""}">${total}</td></tr>`;
+    })).join("");
+    printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>График</title><style>@page{size:A4 landscape;margin:7mm}body{font-family:Arial,sans-serif}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 10px}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #9eabb3;text-align:center;padding:3px;font-size:8px}th:first-child{width:100px}.ok{background:#d9f2ee;color:#087d70;font-weight:700}</style></head><body><h1>График хирургов</h1><p>${escapePrintHTML(monthTitle(selectedMonth))} · норма ${monthlyNorm} ч</p><table><thead><tr><th>Хирург</th><th>Строка</th>${header}<th>Σ</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
+    printWindow.document.close();
+    printWindow.addEventListener("load", () => printWindow.print(), { once: true });
   };
 
   return (
@@ -3879,32 +3944,27 @@ function DutyScheduleScreen({
         <View style={styles.scheduleMonthButtons}>
           <Button label="Текущий" compact variant={monthOffset === 0 ? "primary" : "ghost"} onPress={() => { setMonthOffset(0); setEditing(false); }} />
           <Button label="Следующий" compact variant={monthOffset === 1 ? "primary" : "ghost"} onPress={() => { setMonthOffset(1); setEditing(false); }} />
+          {!compact ? <Button label="Распечатать" compact icon="print-outline" variant="ghost" onPress={printSchedule} /> : null}
         </View>
       </View>
       {error && monthOffset === 0 ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !current ? <LoadingState label="Открываем график…" /> : null}
       {current ? (
         <ScrollView style={styles.schedulePage} contentContainerStyle={styles.schedulePageContent}>
-          {isCurrentMonth ? (
-            <View style={styles.dutyTodayCard}>
-              <Text style={styles.dutyTodayTitle}>Дежурная смена сегодня</Text>
-              {onDuty.length ? onDuty.map((staff) => (
-                <View key={`${staff.group}-${staff.id}`} style={styles.dutyTodayRow}>
-                  <Text style={styles.dutyTodayName}>{staff.name}</Text>
-                  <Text style={styles.dutyTodayMeta}>{staff.group} · {staff.shifts[String(todayDay)]}</Text>
-                </View>
-              )) : <Text style={styles.compactScreenMeta}>На сегодня смены ещё не внесены.</Text>}
+          {!compact ? (
+            <View style={styles.scheduleEditorTools}>
+              <View style={styles.scheduleHolidayTools}>
+                <Field label="Праздничные дни" value={holidayText} onChangeText={setHolidayText} placeholder="1, 9, 12" hint="Числа месяца через запятую." />
+                <Button label="Применить" compact variant="secondary" onPress={applyHolidays} />
+              </View>
+              <Text style={styles.scheduleNorm}>Норма месяца: {monthlyNorm} ч</Text>
+              <Button label={editing ? "Внести изменения" : "Заполнить график"} icon={editing ? "checkmark" : "create-outline"} loading={saving} onPress={() => editing ? void save() : setEditing(true)} />
             </View>
           ) : null}
-          <View style={styles.scheduleGroupTabs}>
-            {current.groups.map((group) => (
-              <Chip key={group.id} label={group.label} selected={activeGroup?.id === group.id} onPress={() => setGroupID(group.id)} />
-            ))}
-          </View>
-          {!compact && monthOffset === 1 ? (
-            <View style={styles.scheduleEditorTools}>
-              <Field label="Праздничные дни" value={holidayText} onChangeText={setHolidayText} placeholder="Например: 1, 9, 12" hint="Укажите числа месяца через запятую." />
-              <Button label={editing ? "Сохранить" : "Заполнить график"} icon={editing ? "checkmark" : "create-outline"} loading={saving} onPress={() => editing ? void save() : setEditing(true)} />
+          {editing && !compact ? (
+            <View style={styles.scheduleShiftTools}>
+              {["8", "16", "24", "О", "Б"].map((value) => <Chip key={value} label={value} selected={shiftTool === value} onPress={() => setShiftTool(value)} />)}
+              <Text style={styles.compactScreenMeta}>8 — рабочий день · 16/24 — дежурство · О — отпуск · Б — больничный</Text>
             </View>
           ) : null}
           <ScrollView horizontal showsHorizontalScrollIndicator>
@@ -3917,20 +3977,25 @@ function DutyScheduleScreen({
                   const holiday = current.holidays.includes(day);
                   return <Text key={day} style={[styles.scheduleCell, styles.scheduleDayHeader, (weekend || holiday) && styles.scheduleHolidayCell]}>{day}</Text>;
                 })}
+                <Text style={[styles.scheduleCell, styles.scheduleTotalHeader]}>Σ</Text>
               </View>
-              {activeGroup?.staff.length ? activeGroup.staff.map((staff) => (
-                <View key={staff.id} style={styles.scheduleGridRow}>
+              {activeGroup?.staff.length ? activeGroup.staff.flatMap((staff) => (["day", "duty"] as const).map((row, rowIndex) => {
+                const total = rowTotal(staff, row);
+                return <View key={`${staff.id}-${row}`} style={styles.scheduleGridRow}>
                   <View style={[styles.scheduleCell, styles.scheduleNameCell]}>
-                    <Text numberOfLines={1} style={styles.scheduleStaffName}>{staff.name}</Text>
-                    <Text style={styles.scheduleStaffRole}>{staff.role || activeGroup.label}</Text>
+                    <Text numberOfLines={1} style={styles.scheduleStaffName}>{rowIndex === 0 ? staff.name : ""}</Text>
+                    <Text style={styles.scheduleStaffRole}>{row === "day" ? "День" : "Дежурство"}</Text>
                   </View>
-                  {days.map((day) => (
-                    <Pressable key={day} onPress={() => changeShift(staff.id, day)} style={[styles.scheduleCell, styles.scheduleShiftCell]}>
-                      <Text style={styles.scheduleShiftText}>{staff.shifts[String(day)] ?? ""}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              )) : (
+                  {days.map((day) => {
+                    const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
+                    const marked = date.getDay() === 0 || date.getDay() === 6 || current.holidays.includes(day);
+                    return <Pressable key={day} onPress={() => changeShift(staff.id, day, row)} style={[styles.scheduleCell, styles.scheduleShiftCell, marked && styles.scheduleHolidayCell]}>
+                      <Text style={styles.scheduleShiftText}>{shiftValue(staff, day, row)}</Text>
+                    </Pressable>;
+                  })}
+                  <View style={[styles.scheduleCell, styles.scheduleTotalCell, total >= monthlyNorm && styles.scheduleTotalReached]}><Text style={styles.scheduleShiftText}>{total}</Text></View>
+                </View>;
+              })) : (
                 <View style={styles.scheduleEmptyGroup}><Text style={styles.compactScreenMeta}>Список сотрудников будет заполнен при создании графика.</Text></View>
               )}
             </View>
@@ -4156,8 +4221,8 @@ function printOperationPlan(plan: OperationPlan, selectedDate?: string) {
         <td>${escapePrintHTML(entry?.department || "—")}</td>
         <td>${escapePrintHTML(entry?.operation || "—")}</td>
         <td>${escapePrintHTML(entry?.additions || "—")}</td>
-		<td>${escapePrintHTML(entry?.previous_operations?.length
-			? entry.previous_operations.map((study) => `${formatDate(study.time_beginning)} ${cleanClinicalText(study.name_operation, true)}`).join("; ")
+        <td>${escapePrintHTML(entry?.previous_operations?.length
+			? entry.previous_operations.map((study) => formatShortNumericDate(study.time_beginning)).join("; ")
 			: "Первичная")}</td>
       </tr>`
     );
@@ -4206,7 +4271,7 @@ function PlanScreen({
   const [draft, setDraft] = useState<PlanEntry[]>([newPlanEntry()]);
   const [picker, setPicker] = useState<{
     index: number;
-    type: "department" | "operation";
+    type: "department" | "operation" | "additional-operation";
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -4531,24 +4596,34 @@ function PlanScreen({
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorOperationField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Операция</Text> : null}
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Выбрать операцию пациента ${index + 1}`}
-                  disabled={planOperationsFor(entry.department).length < 2}
-                  onPress={() =>
-                    setPicker(
-                      picker?.index === index && picker.type === "operation"
-                        ? null
-                        : { index, type: "operation" }
-                    )
-                  }
-                  style={[styles.planSelect, !compact && styles.planDesktopControl]}
-                >
-                  <Text style={styles.planSelectText}>{entry.operation}</Text>
-                  {planOperationsFor(entry.department).length > 1 ? (
-                    <Icon name="chevron-down" size={17} color={colors.textDim} />
-                  ) : null}
-                </Pressable>
+                <View style={styles.planOperationControlRow}>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Выбрать операцию пациента ${index + 1}`}
+                    disabled={planOperationsFor(entry.department).length < 2}
+                    onPress={() =>
+                      setPicker(
+                        picker?.index === index && picker.type === "operation"
+                          ? null
+                          : { index, type: "operation" }
+                      )
+                    }
+                    style={[styles.planSelect, styles.planOperationSelect, !compact && styles.planDesktopControl]}
+                  >
+                    <Text numberOfLines={2} style={styles.planSelectText}>{entry.operation}</Text>
+                    {planOperationsFor(entry.department).length > 1 ? (
+                      <Icon name="chevron-down" size={17} color={colors.textDim} />
+                    ) : null}
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Добавить вторую операцию пациенту ${index + 1}`}
+                    onPress={() => setPicker({ index, type: "additional-operation" })}
+                    style={styles.planAddOperationButton}
+                  >
+                    <Icon name="add" size={20} color={colors.primary} />
+                  </Pressable>
+                </View>
                 {picker?.index === index && picker.type === "operation" ? (
                   <View style={styles.planOptions}>
                     {planOperationsFor(entry.department).map((operation) => (
@@ -4558,6 +4633,29 @@ function PlanScreen({
                         accessibilityLabel={`Операция ${operation}`}
                         onPress={() => {
                           updateEntry(index, { operation });
+                          setPicker(null);
+                        }}
+                        style={styles.planOption}
+                      >
+                        <Text style={styles.planOptionText}>{operation}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                ) : null}
+                {picker?.index === index && picker.type === "additional-operation" ? (
+                  <View style={styles.planOptions}>
+                    {planOperationsFor(entry.department).map((operation) => (
+                      <Pressable
+                        key={operation}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Добавить операцию ${operation}`}
+                        onPress={() => {
+                          const operations = entry.operation.split(" + ").map((value) => value.trim());
+                          updateEntry(index, {
+                            operation: operations.includes(operation)
+                              ? entry.operation
+                              : `${entry.operation} + ${operation}`
+                          });
                           setPicker(null);
                         }}
                         style={styles.planOption}
@@ -4635,6 +4733,7 @@ function PlanScreen({
             <StudyDetails
               study={previousProtocol}
               hasXA={false}
+              xaCached={false}
               onOpenXA={() => undefined}
             />
           </ScrollView>
@@ -5898,10 +5997,15 @@ const styles = StyleSheet.create({
   },
   angioFilterText: { ...typography.meta, color: darkColors.textMuted },
   angioFilterTextActive: { color: darkColors.primary, fontWeight: "700" },
+  angioHeaderActions: {
+    marginLeft: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
+  },
   angioGuideButton: {
     width: 40,
     height: 40,
-    marginLeft: "auto",
     borderRadius: 20,
     borderWidth: 1,
     borderColor: darkColors.borderSoft,
@@ -6845,6 +6949,18 @@ const styles = StyleSheet.create({
   },
   reportSection: { gap: 8 },
   reportSectionTitle: { ...typography.title, fontSize: 16, color: colors.text },
+  reportOperationGroupHeader: {
+    minHeight: 30,
+    paddingHorizontal: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.primarySoft,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  reportOperationGroupTitle: { ...typography.label, color: colors.primary },
+  reportOperationGroupCount: { ...typography.meta, color: colors.primary },
   operationTable: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -7381,6 +7497,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600"
   },
+  planOperationControlRow: { flexDirection: "row", alignItems: "stretch", gap: 6 },
+  planOperationSelect: { flex: 1, minWidth: 0 },
+  planAddOperationButton: {
+    width: 38,
+    minHeight: 38,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center"
+  },
   planOptions: {
     overflow: "hidden",
     borderRadius: radii.md,
@@ -7602,6 +7730,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.surface
   },
+  scheduleHolidayTools: { flex: 1, maxWidth: 430, flexDirection: "row", alignItems: "flex-end", gap: 8 },
+  scheduleNorm: { ...typography.label, color: colors.primary, paddingBottom: 10 },
+  scheduleShiftTools: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 7, padding: 10, borderRadius: radii.md, backgroundColor: colors.surface },
   scheduleGrid: { borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, overflow: "hidden" },
   scheduleGridRow: { flexDirection: "row", minHeight: 42 },
   scheduleCell: {
@@ -7620,5 +7751,8 @@ const styles = StyleSheet.create({
   scheduleStaffRole: { ...typography.meta, color: colors.textDim },
   scheduleShiftCell: { backgroundColor: colors.surface },
   scheduleShiftText: { ...typography.label, color: colors.primary },
+  scheduleTotalHeader: { width: 54, ...typography.meta, color: colors.textMuted, paddingTop: 13 },
+  scheduleTotalCell: { width: 54, backgroundColor: colors.surface },
+  scheduleTotalReached: { backgroundColor: "rgba(11,132,179,0.14)" },
   scheduleEmptyGroup: { width: 420, padding: 20 }
 });

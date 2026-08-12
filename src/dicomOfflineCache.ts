@@ -756,6 +756,17 @@ export async function deleteStudyFromDevice(studyUID: string): Promise<void> {
   emit();
 }
 
+export async function pruneDicomCache(validStudyUIDs: Iterable<string>): Promise<void> {
+  if (!supported()) return;
+  const valid = new Set(validStudyUIDs);
+  const cached = Object.keys(getDicomCacheSnapshot().studies);
+  await Promise.all(
+    cached
+      .filter((studyUID) => !valid.has(studyUID))
+      .map((studyUID) => deleteStudyFromDevice(studyUID))
+  );
+}
+
 export async function clearDicomCache(): Promise<void> {
   if (!supported()) return;
   if (hasCacheAPI()) {
