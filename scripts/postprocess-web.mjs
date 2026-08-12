@@ -152,7 +152,15 @@ html = html.replace(
   `<script>
     if ('serviceWorker' in navigator && window.isSecureContext) {
       window.addEventListener('load', function () {
-        navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+        var reloadingForUpdate = false;
+        navigator.serviceWorker.addEventListener('controllerchange', function () {
+          if (reloadingForUpdate) return;
+          reloadingForUpdate = true;
+          window.location.reload();
+        });
+        navigator.serviceWorker.register('/sw.js', { scope: '/' })
+          .then(function (registration) { return registration.update(); })
+          .catch(function () {});
       });
     }
   </script></body>`
@@ -202,13 +210,12 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      caches.match("/").then((cached) => {
-        const refresh = fetch(request).then((response) => {
+      fetch(request)
+        .then((response) => {
           if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put("/", response.clone()));
           return response;
-        });
-        return cached || refresh;
-      })
+        })
+        .catch(() => caches.match("/"))
     );
     return;
   }
