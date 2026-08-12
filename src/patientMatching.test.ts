@@ -1,4 +1,4 @@
-import { latinPatientSurname, protocolMatchesAngiography } from "./patientMatching";
+import { findProtocolAngiography, latinPatientSurname, protocolMatchesAngiography } from "./patientMatching";
 import type { Study } from "./types";
 
 const study = (patient: string, type: string, date: string): Study => ({
@@ -24,5 +24,19 @@ describe("patient angiography matching", () => {
     const xa = study("OTHER", "xa", "2026-08-03T11:00:00+07:00");
     xa.study_id = "1.2.840.10008";
     expect(protocolMatchesAngiography(protocol, xa)).toBe(true);
+  });
+
+  it("uses additional surname letters when three-letter candidates collide", () => {
+    const protocol = study("Байгулов Иван", "каг", "2026-08-13T10:00:00+07:00");
+    const bajgulov = study("BAJGULOV", "xa", "2026-08-13T11:00:00+07:00");
+    const bajborodov = study("BAJBORODOV", "xa", "2026-08-13T12:00:00+07:00");
+    expect(findProtocolAngiography(protocol, [bajborodov, bajgulov])).toBe(bajgulov);
+  });
+
+  it("does not guess when five letters still leave multiple candidates", () => {
+    const protocol = study("Иванов Иван", "каг", "2026-08-13T10:00:00+07:00");
+    const first = study("IVANOV", "xa", "2026-08-13T11:00:00+07:00");
+    const second = study("IVANOVA", "xa", "2026-08-13T12:00:00+07:00");
+    expect(findProtocolAngiography(protocol, [first, second])).toBeUndefined();
   });
 });

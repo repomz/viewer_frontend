@@ -73,9 +73,12 @@ export async function getPreparedXAManifest(
   options: {
     wait?: boolean;
     signal?: AbortSignal;
+    maxWaitMs?: number;
   } = {}
 ): Promise<PreparedXAManifest | null> {
   const encoded = encodeURIComponent(studyUID);
+  const startedAt = Date.now();
+  let partialManifest: PreparedXAManifest | null = null;
   while (!options.signal?.aborted) {
     const response = await fetch(`/api/xa-cache/${encoded}/manifest`, {
       headers: { Accept: "application/json" },
@@ -87,6 +90,7 @@ export async function getPreparedXAManifest(
         throw new Error(status.error || "Сервер не смог подготовить XA");
       }
       if (!options.wait) return null;
+      if (Date.now() - startedAt >= (options.maxWaitMs ?? 30_000)) return partialManifest;
       await sleep(1500, options.signal);
       continue;
     }
@@ -95,7 +99,9 @@ export async function getPreparedXAManifest(
     }
     const manifest = (await response.json()) as PreparedXAManifest;
     if (manifest.status === "partial" && options.wait) {
-      await sleep(1000, options.signal);
+      partialManifest = manifest;
+      if (Date.now() - startedAt >= (options.maxWaitMs ?? 30_000)) return manifest;
+      await sleep(5000, options.signal);
       continue;
     }
     return manifest;

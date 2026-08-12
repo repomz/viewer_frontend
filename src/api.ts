@@ -90,13 +90,7 @@ function parseJSON(value: string): unknown {
 }
 
 export async function checkHealth(): Promise<string> {
-  const response = await fetch(`${API_ROOT}/`, {
-    headers: { Accept: "text/plain" }
-  });
-  if (!response.ok) {
-    throw new ApiError(`Сервер вернул ошибку ${response.status}`, response.status);
-  }
-  return response.text();
+  return request<string>("/", { headers: { Accept: "text/plain" } }, 5_000);
 }
 
 export async function getStudies(): Promise<Study[]> {

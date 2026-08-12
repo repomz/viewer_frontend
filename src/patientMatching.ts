@@ -33,3 +33,35 @@ export function protocolMatchesAngiography(protocol: Study, imaging: Study): boo
   return protocolSurname.slice(0, 3) === imagingSurname.slice(0, 3) &&
     localDate(protocol.time_beginning) === localDate(imaging.time_beginning);
 }
+
+export function findProtocolAngiography(
+  protocol: Study,
+  imagingStudies: Study[]
+): Study | undefined {
+  const explicitlyLinked = imagingStudies.find(
+    (study) =>
+      study.study_type.toLowerCase() === "xa" &&
+      protocol.dicom_link.includes(study.study_id)
+  );
+  if (explicitlyLinked) return explicitlyLinked;
+
+  const protocolSurname = latinPatientSurname(protocol.patient);
+  if (protocolSurname.length < 3) return undefined;
+  const candidates = imagingStudies.filter((study) => {
+    if (study.study_type.toLowerCase() !== "xa") return false;
+    const surname = latinPatientSurname(study.patient);
+    return surname.length >= 3 &&
+      surname.slice(0, 3) === protocolSurname.slice(0, 3) &&
+      localDate(protocol.time_beginning) === localDate(study.time_beginning);
+  });
+  if (candidates.length === 1) return candidates[0];
+  for (const length of [4, 5]) {
+    const narrowed = candidates.filter((study) => {
+      const surname = latinPatientSurname(study.patient);
+      return protocolSurname.length >= length && surname.length >= length &&
+        surname.slice(0, length) === protocolSurname.slice(0, length);
+    });
+    if (narrowed.length === 1) return narrowed[0];
+  }
+  return undefined;
+}

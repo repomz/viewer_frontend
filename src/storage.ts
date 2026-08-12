@@ -1,5 +1,8 @@
 import type {
   AppSettings,
+  DutySchedule,
+  HistoricalStatistics,
+  OperationStatistics,
   OperationPlan,
   ReportDocument,
   Study,
@@ -13,6 +16,9 @@ const PLAN_KEY_PREFIX = "viewer.operation-plan.v1";
 const STUDIES_KEY = "viewer.studies.v1";
 const XA_STUDIES_KEY = "viewer.xa-studies.v1";
 const PINNED_PROTOCOLS_KEY = "viewer.pinned-protocols.v1";
+const OPERATION_STATISTICS_KEY = "viewer.operation-statistics.v1";
+const HISTORICAL_STATISTICS_KEY = "viewer.historical-statistics.v1";
+const DUTY_SCHEDULE_KEY_PREFIX = "viewer.duty-schedule.v1";
 
 type PinnedProtocol = { study: Study; expiresAt: string };
 
@@ -138,6 +144,47 @@ export function saveOperationPlanCache(plan: OperationPlan): void {
     `${PLAN_KEY_PREFIX}.${plan.week_start}`,
     JSON.stringify(plan)
   );
+}
+
+export function loadOperationStatisticsCache(): OperationStatistics | null {
+  if (!hasStorage()) return null;
+  try {
+    return JSON.parse(window.localStorage.getItem(OPERATION_STATISTICS_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+export function saveOperationStatisticsCache(value: OperationStatistics): void {
+  if (hasStorage()) window.localStorage.setItem(OPERATION_STATISTICS_KEY, JSON.stringify(value));
+}
+
+export function loadHistoricalStatisticsCache(): HistoricalStatistics | null {
+  if (!hasStorage()) return null;
+  try {
+    return JSON.parse(window.localStorage.getItem(HISTORICAL_STATISTICS_KEY) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+export function saveHistoricalStatisticsCache(value: HistoricalStatistics): void {
+  if (hasStorage()) window.localStorage.setItem(HISTORICAL_STATISTICS_KEY, JSON.stringify(value));
+}
+
+export function loadDutyScheduleCache(month: string): DutySchedule | null {
+  if (!hasStorage()) return null;
+  try {
+    return JSON.parse(window.localStorage.getItem(`${DUTY_SCHEDULE_KEY_PREFIX}.${month}`) ?? "null");
+  } catch {
+    return null;
+  }
+}
+
+export function saveDutyScheduleCache(value: DutySchedule): void {
+  if (hasStorage()) {
+    window.localStorage.setItem(`${DUTY_SCHEDULE_KEY_PREFIX}.${value.month}`, JSON.stringify(value));
+  }
 }
 
 export function loadStudiesCache(): Study[] {

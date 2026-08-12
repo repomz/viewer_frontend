@@ -53,10 +53,13 @@ import {
 } from "./src/api";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import { isPacsImagingStudy } from "./src/studyClassification";
-import { protocolMatchesAngiography } from "./src/patientMatching";
+import { findProtocolAngiography } from "./src/patientMatching";
 import {
   defaultSettings,
   loadOperationPlanCache,
+  loadOperationStatisticsCache,
+  loadHistoricalStatisticsCache,
+  loadDutyScheduleCache,
   loadRequests,
   loadReportsCache,
   loadSettings,
@@ -64,6 +67,9 @@ import {
   loadPinnedProtocols,
   loadXAStudiesCache,
   saveOperationPlanCache,
+  saveOperationStatisticsCache,
+  saveHistoricalStatisticsCache,
+  saveDutyScheduleCache,
   saveRequests,
   saveReportsCache,
   saveStudiesCache,
@@ -516,11 +522,16 @@ export default function App() {
   const [planWeekOffset, setPlanWeekOffset] = useState<0 | 1>(0);
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState("");
-  const [statistics, setStatistics] = useState<OperationStatistics | null>(null);
-  const [historicalStatistics, setHistoricalStatistics] = useState<HistoricalStatistics | null>(null);
+  const [statistics, setStatistics] = useState<OperationStatistics | null>(() => {
+    const cached = loadOperationStatisticsCache();
+    return cached ? normalizeOperationStatistics(cached) : null;
+  });
+  const [historicalStatistics, setHistoricalStatistics] = useState<HistoricalStatistics | null>(loadHistoricalStatisticsCache);
   const [statisticsLoading, setStatisticsLoading] = useState(false);
   const [statisticsError, setStatisticsError] = useState("");
-  const [dutySchedule, setDutySchedule] = useState<DutySchedule | null>(null);
+  const [dutySchedule, setDutySchedule] = useState<DutySchedule | null>(() =>
+    loadDutyScheduleCache(new Date().toISOString().slice(0, 7))
+  );
   const [dutyScheduleLoading, setDutyScheduleLoading] = useState(false);
   const [dutyScheduleError, setDutyScheduleError] = useState("");
   const [requestedXAStudyUID, setRequestedXAStudyUID] = useState<string | null>(null);
@@ -654,15 +665,22 @@ export default function App() {
   }, []);
 
   const loadStatistics = useCallback(async () => {
+    const cachedCurrent = loadOperationStatisticsCache();
+    const cachedHistorical = loadHistoricalStatisticsCache();
+    if (cachedCurrent) setStatistics(normalizeOperationStatistics(cachedCurrent));
+    if (cachedHistorical) setHistoricalStatistics(cachedHistorical);
     setStatisticsError("");
-    setStatisticsLoading(true);
+    setStatisticsLoading(!cachedCurrent && !cachedHistorical);
     try {
       const [current, historical] = await Promise.all([
         getOperationStatistics(),
         getHistoricalStatistics()
       ]);
-	  setStatistics(normalizeOperationStatistics(current));
+      const normalized = normalizeOperationStatistics(current);
+	  setStatistics(normalized);
       setHistoricalStatistics(historical);
+      saveOperationStatisticsCache(normalized);
+      saveHistoricalStatisticsCache(historical);
     } catch (error) {
       setStatisticsError(errorMessage(error));
     } finally {
@@ -672,10 +690,14 @@ export default function App() {
 
   const loadDutySchedule = useCallback(async () => {
     const month = new Date().toISOString().slice(0, 7);
-    setDutyScheduleLoading(true);
+    const cached = loadDutyScheduleCache(month);
+    if (cached) setDutySchedule(cached);
+    setDutyScheduleLoading(!cached);
     setDutyScheduleError("");
     try {
-      setDutySchedule(await getDutySchedule(month));
+      const response = await getDutySchedule(month);
+      setDutySchedule(response);
+      saveDutyScheduleCache(response);
     } catch (error) {
       setDutyScheduleError(errorMessage(error));
     } finally {
@@ -751,7 +773,9 @@ export default function App() {
         (angiography) =>
           angiography.study_type.toLowerCase() === "xa" &&
           (isInActiveClinicalWindow(angiography.time_beginning) ||
-            protocols.some((protocol) => protocolMatchesAngiography(protocol, angiography)))
+            protocols.some(
+              (protocol) => findProtocolAngiography(protocol, xaStudies)?.id === angiography.id
+            ))
       )
       .map((angiography) => angiography.study_id);
     void pruneDicomCache(activeXA);
@@ -762,9 +786,7 @@ export default function App() {
     studies
       .filter((study) => !isPacsImagingStudy(study) && !study.dicom_link.trim())
       .forEach((protocol) => {
-        const angiography = xaStudies.find((item) =>
-          protocolMatchesAngiography(protocol, item)
-        );
+        const angiography = findProtocolAngiography(protocol, xaStudies);
         if (!angiography || linkingAngiographies.current.has(protocol.id)) return;
         linkingAngiographies.current.add(protocol.id);
         void linkStudyAngiography(protocol.id, angiography.study_id)
@@ -1304,9 +1326,7 @@ export default function App() {
   }, []);
 
   const openStudyAngiography = useCallback((protocol: Study) => {
-    const angiography = xaStudies.find(
-	  (study) => protocolMatchesAngiography(protocol, study)
-    );
+    const angiography = findProtocolAngiography(protocol, xaStudies);
     if (!angiography) return;
     setRequestedXAStudyUID(angiography.study_id);
     setActiveTab("angiography");
@@ -1505,7 +1525,9 @@ export default function App() {
                   error={dutyScheduleError}
                   onRetry={loadDutySchedule}
                   onSave={async (next) => {
-                    setDutySchedule(await saveDutySchedule(next.month, next));
+                    const saved = await saveDutySchedule(next.month, next);
+                    setDutySchedule(saved);
+                    saveDutyScheduleCache(saved);
                   }}
                 />
               ) : null}
@@ -2110,9 +2132,7 @@ function StudiesScreen({
   onOpenXA: (study: Study) => void;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
-  const patientXA = (study: Study) => angiographies.find((item) =>
-	protocolMatchesAngiography(study, item)
-  );
+  const patientXA = (study: Study) => findProtocolAngiography(study, angiographies);
   const hasAvailableXA = (study: Study) => {
     const angiography = patientXA(study);
 	return Boolean(angiography);
