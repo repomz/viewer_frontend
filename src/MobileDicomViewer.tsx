@@ -386,7 +386,7 @@ export function MobileDicomViewer({
   }, [selectedCineURL]);
 
   useEffect(() => {
-    if (!frameURL || (selectedCineURL && !preciseMode)) {
+    if (!frameURL || (selectedCineURL && !preciseMode && cineReady)) {
       return;
     }
     let cancelled = false;
@@ -408,7 +408,7 @@ export function MobileDicomViewer({
     return () => {
       cancelled = true;
     };
-  }, [frameURL, loadRenderedFrame, preciseMode, selectedCineURL]);
+  }, [cineReady, frameURL, loadRenderedFrame, preciseMode, selectedCineURL]);
 
   useEffect(() => {
     if (!selectedSeries?.frames.length) return;
@@ -593,11 +593,12 @@ export function MobileDicomViewer({
           touchAction: "none",
           userSelect: "none",
           pointerEvents: "none",
-          opacity: preciseMode ? 1 : 0
+          opacity: frameSource && (preciseMode || !cineReady) ? 1 : 0
         }
       }),
     [
       frameSource,
+      cineReady,
       panOffset.x,
       panOffset.y,
       preciseMode,
@@ -665,11 +666,12 @@ export function MobileDicomViewer({
           touchAction: "none",
           userSelect: "none",
           pointerEvents: "none",
-          opacity: preciseMode && frameSource ? 0 : 1
+          opacity: !cineReady || (preciseMode && frameSource) ? 0 : 1
         }
       }),
     [
       cineSource,
+      cineReady,
       frameCount,
       frameSource,
       panOffset.x,
