@@ -297,6 +297,14 @@ function operationPlanWeekStart(offsetWeeks = 0): string {
   return `${year}-${month}-${day}`;
 }
 
+function isInActiveClinicalWindow(value: string): boolean {
+  const studyDate = new Date(value);
+  if (Number.isNaN(studyDate.getTime())) return false;
+  const windowStart = new Date(`${operationPlanWeekStart(0)}T00:00:00`);
+  windowStart.setDate(windowStart.getDate() - 2);
+  return studyDate >= windowStart;
+}
+
 function formatDuration(minutes: number): string {
   if (!minutes) return "не указана";
   if (minutes < 60) return `${minutes} мин`;
@@ -742,7 +750,8 @@ export default function App() {
       .filter(
         (angiography) =>
           angiography.study_type.toLowerCase() === "xa" &&
-          protocols.some((protocol) => protocolMatchesAngiography(protocol, angiography))
+          (isInActiveClinicalWindow(angiography.time_beginning) ||
+            protocols.some((protocol) => protocolMatchesAngiography(protocol, angiography)))
       )
       .map((angiography) => angiography.study_id);
     void pruneDicomCache(activeXA);
@@ -1036,6 +1045,7 @@ export default function App() {
     const studiesToDownload = xaStudies.filter(
       (study) =>
         study.study_type.toLocaleLowerCase() === "xa" &&
+        isInActiveClinicalWindow(study.time_beginning) &&
         (!cachedStudies[study.study_id]?.complete ||
           !getCachedPreparedXAManifest(study.study_id))
     );
