@@ -276,32 +276,9 @@ export function MobileDicomViewer({
               })
               .catch(() => undefined);
           }
-          // Resolution/window metadata is useful, but must not delay the first cine.
-          void fetch(`${root}/studies/${encodeURIComponent(studyUID)}/metadata`, {
-            headers: { Accept: "application/dicom+json" },
-            signal: controller.signal
-          })
-            .then(async (response) => {
-              if (!response.ok) return [];
-              return buildDicomSeries(
-                (await response.json()) as DicomMetadata[],
-                studyUID,
-                root
-              );
-            })
-            .then((metadataSeries) => {
-              if (!cancelled && metadataSeries.length) {
-                const metadataByUID = new Map(
-                  metadataSeries.map((item) => [item.uid, item] as const)
-                );
-                setSeries(
-                  preparedSeries.map(
-                    (item) => metadataByUID.get(item.uid) ?? item
-                  )
-                );
-              }
-            })
-            .catch(() => undefined);
+          // The prepared manifest is the playback source of truth. Asking
+          // Orthanc for the full DICOM metadata here used to compete with MP4
+          // delivery and also failed after an archived study left PACS.
           return;
         }
 
@@ -450,9 +427,14 @@ export function MobileDicomViewer({
         await loadRenderedFrame(url).catch(() => undefined);
       }
     };
-    void Promise.all(Array.from({ length: 2 }, () => worker()));
+    // Let the MP4 establish playback before JPEG precision frames begin using
+    // the same connection. This keeps the first visible cine responsive.
+    const timer = window.setTimeout(() => {
+      if (!cancelled) void Promise.all(Array.from({ length: 2 }, () => worker()));
+    }, 1200);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [cineReady, loadRenderedFrame, preparedFrames, selectedCineURL, selectedSeries]);
 

@@ -234,13 +234,14 @@ export function getCachedPreparedXAManifest(
   studyUID: string
 ): PreparedXAManifest | null {
   const manifest = readRecord<PreparedManifestIndex>(MANIFEST_KEY)[studyUID];
-  return manifest?.status === "ready" && manifest.study_uid === studyUID
+  return manifest?.study_uid === studyUID &&
+    manifest.series.some((series) => Boolean(series.cine_path))
     ? manifest
     : null;
 }
 
 export function cachePreparedXAManifest(manifest: PreparedXAManifest): void {
-  if (manifest.status !== "ready") return;
+  if (!manifest.series.some((series) => Boolean(series.cine_path))) return;
   const manifests = readRecord<PreparedManifestIndex>(MANIFEST_KEY);
   manifests[manifest.study_uid] = manifest;
   writeRecord(MANIFEST_KEY, manifests);
