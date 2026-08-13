@@ -4122,18 +4122,18 @@ function DutyScheduleScreen({
           ) : null}
           <View style={styles.scheduleGridShell}>
             <View style={[styles.scheduleNamesColumn, compact && styles.scheduleNamesColumnCompact]}>
-              <View style={[styles.scheduleCell, styles.scheduleNameHeader]}>
+              <View testID="schedule-name-header" style={[styles.scheduleCell, styles.scheduleNameHeader]}>
                 <Text style={styles.scheduleNameHeaderText}>Хирург</Text>
               </View>
               {activeGroup?.staff.map((staff) => (
-                <View key={staff.id} style={styles.scheduleStaffBlock}>
+                <View key={staff.id} testID={`schedule-name-${staff.id}`} style={styles.scheduleStaffBlock}>
                   <Text numberOfLines={2} style={styles.scheduleStaffName}>{staff.name}</Text>
                 </View>
               ))}
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator style={styles.scheduleTimelineScroll} contentContainerStyle={styles.scheduleTimelineContent}>
               <View style={styles.scheduleTimelineGrid}>
-                <View style={styles.scheduleGridRow}>
+                <View testID="schedule-days-header" style={styles.scheduleGridRow}>
                 {days.map((day) => {
                   const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
                   const weekend = date.getDay() === 0 || date.getDay() === 6;
@@ -4144,15 +4144,15 @@ function DutyScheduleScreen({
               </View>
               {activeGroup?.staff.length ? activeGroup.staff.flatMap((staff) => (["day", "duty"] as const).map((row, rowIndex) => {
                 const total = rowTotal(staff, row);
-                return <View key={`${staff.id}-${row}`} style={[styles.scheduleGridRow, rowIndex === 1 && styles.scheduleSurgeonEndRow]}>
+                return <View key={`${staff.id}-${row}`} testID={`schedule-row-${staff.id}-${row}`} style={styles.scheduleGridRow}>
                   {days.map((day) => {
                     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
                     const marked = date.getDay() === 0 || date.getDay() === 6 || current.holidays.includes(day);
-                    return <Pressable key={day} onPress={() => changeShift(staff.id, day, row)} style={[styles.scheduleCell, styles.scheduleShiftCell, marked && styles.scheduleHolidayCell]}>
+                    return <Pressable key={day} onPress={() => changeShift(staff.id, day, row)} style={[styles.scheduleCell, styles.scheduleShiftCell, marked && styles.scheduleHolidayCell, rowIndex === 1 && styles.scheduleSurgeonEndCell]}>
                       <Text style={styles.scheduleShiftText}>{shiftValue(staff, day, row)}</Text>
                     </Pressable>;
                   })}
-                  {editing && !compact ? <View style={[styles.scheduleCell, styles.scheduleTotalCell, total >= monthlyNorm && styles.scheduleTotalReached]}><Text style={styles.scheduleShiftText}>{total}</Text></View> : null}
+                  {editing && !compact ? <View style={[styles.scheduleCell, styles.scheduleTotalCell, total >= monthlyNorm && styles.scheduleTotalReached, rowIndex === 1 && styles.scheduleSurgeonEndCell]}><Text style={styles.scheduleShiftText}>{total}</Text></View> : null}
                 </View>;
               })) : (
                 <View style={styles.scheduleEmptyGroup}><Text style={styles.compactScreenMeta}>Список сотрудников будет заполнен при создании графика.</Text></View>
@@ -7917,15 +7917,17 @@ const styles = StyleSheet.create({
   scheduleNamesColumnCompact: { width: 116 },
   scheduleNameHeader: { width: "100%", paddingHorizontal: 10, alignItems: "flex-start", backgroundColor: colors.surfaceSoft },
   scheduleNameHeaderText: { ...typography.meta, fontWeight: "800", color: colors.textMuted },
-  scheduleStaffBlock: { height: 84, paddingHorizontal: 10, justifyContent: "center", borderBottomWidth: 2, borderBottomColor: "rgba(11,132,179,0.24)", backgroundColor: colors.surface },
+  scheduleStaffBlock: { height: 84, minHeight: 84, maxHeight: 84, paddingHorizontal: 10, justifyContent: "center", borderBottomWidth: 2, borderBottomColor: "rgba(11,132,179,0.24)", backgroundColor: colors.surface },
   scheduleTimelineScroll: { flex: 1, minWidth: 0 },
-  scheduleTimelineContent: { paddingBottom: 12 },
+  scheduleTimelineContent: {},
   scheduleTimelineGrid: { overflow: "hidden" },
-  scheduleGridRow: { flexDirection: "row", minHeight: 42 },
-  scheduleSurgeonEndRow: { borderBottomWidth: 2, borderBottomColor: "rgba(11,132,179,0.24)" },
+  scheduleGridRow: { flexDirection: "row", height: 42, minHeight: 42, maxHeight: 42 },
+  scheduleSurgeonEndCell: { borderBottomWidth: 2, borderBottomColor: "rgba(11,132,179,0.24)" },
   scheduleCell: {
     width: 42,
+    height: 42,
     minHeight: 42,
+    maxHeight: 42,
     borderRightWidth: 1,
     borderBottomWidth: 1,
     borderColor: colors.borderSoft,
