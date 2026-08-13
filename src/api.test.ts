@@ -1,6 +1,5 @@
 import {
   checkHealth,
-  deletePACSStudy,
   generateReport,
   getAgentHeartbeatTimes,
   getHistoricalStatistics,
@@ -90,18 +89,6 @@ describe("Viewer API client", () => {
       week_start: "2026-07-27",
       days: [{ date: "2026-07-27", entries: [] }]
     });
-  });
-
-  it("deletes a PACS study by StudyInstanceUID", async () => {
-    const fetchMock = jest
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue(new Response("{}", { status: 200 }));
-
-    await expect(deletePACSStudy("1.2.840.1")).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/pacs/studies/1.2.840.1",
-      expect.objectContaining({ method: "DELETE", signal: expect.any(AbortSignal) })
-    );
   });
 
   it("generates a report on backend for a calendar period", async () => {

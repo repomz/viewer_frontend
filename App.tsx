@@ -8,7 +8,6 @@ import {
   Image,
   Keyboard,
   Modal,
-  PanResponder,
   Platform,
   Pressable,
   RefreshControl,
@@ -30,9 +29,7 @@ import {
   ApiError,
   checkHealth,
   createUserRequest,
-  deletePACSStudy,
   deleteReport,
-  deleteStudy,
   deleteUserRequest,
   getAgentHeartbeatTimes,
   getAgents,
@@ -1291,19 +1288,6 @@ export default function App() {
     }
   }, []);
 
-  const removePACSAngiography = useCallback(async (study: Study) => {
-    try {
-      await deletePACSStudy(study.study_id);
-      await deleteStudy(study.id);
-      await deleteStudyFromDevice(study.study_id);
-      setXaStudies((current) => current.filter((item) => item.id !== study.id));
-      setDicomCache(getDicomCacheSnapshot());
-      setToast({ message: "Исследование удалено из PACS", tone: "success" });
-    } catch (error) {
-      setToast({ message: errorMessage(error), tone: "danger" });
-    }
-  }, []);
-
   const removeRequest = useCallback(async (request: UserRequest) => {
     try {
       await deleteUserRequest(request.id, settings.userId);
@@ -1362,27 +1346,6 @@ export default function App() {
   const primaryAgentHealth =
     agentHealthById[settings.agentId] ??
     ({ online: false, status: "unknown" } satisfies AgentHealth);
-  const switchTab = useCallback((direction: -1 | 1) => {
-    const current = tabs.findIndex((tab) => tab.id === activeTab);
-    const next = current + direction;
-    if (next >= 0 && next < tabs.length) setActiveTab(tabs[next]!.id);
-  }, [activeTab]);
-
-  const pageSwipe = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gesture) =>
-          compact &&
-          Math.abs(gesture.dx) > 24 &&
-          Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.6,
-        onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dx < -70) switchTab(1);
-          if (gesture.dx > 70) switchTab(-1);
-        }
-      }),
-    [compact, switchTab]
-  );
-
   const isAngiography = activeTab === "angiography";
 
   if (!authenticated) {
@@ -1427,7 +1390,6 @@ export default function App() {
             />
 
             <View
-              {...(compact ? pageSwipe.panHandlers : {})}
               style={[
                 styles.content,
                 compact && styles.contentCompact,
@@ -1483,7 +1445,6 @@ export default function App() {
                   dicomCache={dicomCache}
                   onRetry={() => void loadXAStudies()}
                   onDeleteLocal={removeLocalAngiography}
-                  onDeletePACS={removePACSAngiography}
                   initialStudyUID={requestedXAStudyUID}
                   onInitialStudyHandled={() => setRequestedXAStudyUID(null)}
                   onSearch={(modality) => {
@@ -2602,7 +2563,6 @@ function AngiographyScreen({
   dicomCache,
   onRetry,
   onDeleteLocal,
-  onDeletePACS,
   onSearch,
   initialStudyUID,
   onInitialStudyHandled
@@ -2615,7 +2575,6 @@ function AngiographyScreen({
   dicomCache: DicomCacheSnapshot;
   onRetry: () => void;
   onDeleteLocal: (study: Study) => Promise<void>;
-  onDeletePACS: (study: Study) => Promise<void>;
   onSearch: (modality: "xa" | "ct") => void;
   initialStudyUID: string | null;
   onInitialStudyHandled: () => void;
@@ -2787,23 +2746,7 @@ function AngiographyScreen({
                       >
                         <Icon name="ellipsis-horizontal" size={20} color={darkColors.textMuted} />
                       </Pressable>
-                    ) : (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Удалить ${study.patient} из PACS`}
-                        hitSlop={10}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          confirmDeleteAll(
-                            `Удалить исследование ${study.patient} из PACS?`,
-                            () => void onDeletePACS(study)
-                          );
-                        }}
-                        style={styles.angioRowAction}
-                      >
-                        <Icon name="trash-outline" size={18} color={colors.danger} />
-                      </Pressable>
-                    )}
+                    ) : null}
                   </Pressable>
                 );
               })}
@@ -2918,30 +2861,15 @@ function AngiographyScreen({
               setActionStudy(null);
               if (!study) return;
               confirmDeleteAll(
-                `Удалить сохранённые файлы ${study.patient} только с этого устройства?`,
+                `Удалить сохранённые файлы ${study.patient} с этого устройства?`,
                 () => void onDeleteLocal(study)
-              );
-            }}
-            style={styles.angioActionButton}
-          >
-            <Icon name="phone-portrait-outline" size={21} color={colors.text} />
-            <Text style={styles.angioActionText}>Удалить локально</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => {
-              const study = actionStudy;
-              setActionStudy(null);
-              if (!study) return;
-              confirmDeleteAll(
-                `Безвозвратно удалить исследование ${study.patient} из PACS?`,
-                () => void onDeletePACS(study)
               );
             }}
             style={[styles.angioActionButton, styles.angioActionDanger]}
           >
             <Icon name="trash-outline" size={21} color={colors.danger} />
             <Text style={[styles.angioActionText, styles.angioActionDangerText]}>
-              Удалить из PACS
+              Удалить
             </Text>
           </Pressable>
         </View>

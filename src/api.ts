@@ -189,12 +189,6 @@ export async function deleteStudy(id: string): Promise<void> {
   await request(`/studies/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
-export async function deletePACSStudy(studyUID: string): Promise<void> {
-  await request(`/pacs/studies/${encodeURIComponent(studyUID)}`, {
-    method: "DELETE"
-  });
-}
-
 export async function deleteAllStudies(): Promise<void> {
   await request("/studies", { method: "DELETE" });
 }
