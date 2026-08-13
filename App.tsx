@@ -3938,7 +3938,7 @@ function DutyScheduleScreen({
     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
     return date.getDay() !== 0 && date.getDay() !== 6 && !current?.holidays.includes(day);
   });
-  const monthlyNorm = workingDays.length * 8;
+  const monthlyNorm = workingDays.length * 6;
   const shiftKey = (day: number, row: "day" | "duty") => `${day}:${row}`;
   const shiftValue = (staff: DutySchedule["groups"][number]["staff"][number], day: number, row: "day" | "duty") =>
     staff.shifts[shiftKey(day, row)] ?? (row === "day" ? staff.shifts[String(day)] ?? "" : "");
