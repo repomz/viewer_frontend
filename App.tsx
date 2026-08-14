@@ -136,6 +136,7 @@ type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statis
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudySort = "time" | "operation";
+type StudySearchScope = "week" | "database";
 type StudyCategory =
   | "all"
   | "КАГ"
@@ -488,6 +489,7 @@ export default function App() {
   const [studiesLoading, setStudiesLoading] = useState(() => loadStudiesCache().length === 0);
   const [studiesError, setStudiesError] = useState("");
   const [search, setSearch] = useState("");
+  const [studySearchScope, setStudySearchScope] = useState<StudySearchScope>("week");
   const [archiveSuggestions, setArchiveSuggestions] = useState<Study[]>([]);
   const [archiveSearchLoading, setArchiveSearchLoading] = useState(false);
   const [dayFilter, setDayFilter] = useState<DayFilter>(null);
@@ -1165,7 +1167,7 @@ export default function App() {
 
   useEffect(() => {
     const query = search.trim();
-    if (query.length < 2) {
+    if (studySearchScope !== "database" || query.length < 2) {
       setArchiveSuggestions([]);
       setArchiveSearchLoading(false);
       return;
@@ -1176,8 +1178,7 @@ export default function App() {
       void suggestProtocolStudies(query)
         .then((items) => {
           if (!cancelled) {
-            const localIDs = new Set(protocolStudies.map((study) => study.id));
-            setArchiveSuggestions(items.filter((study) => !localIDs.has(study.id)));
+            setArchiveSuggestions(items);
           }
         })
         .catch(() => {
@@ -1191,7 +1192,7 @@ export default function App() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [protocolStudies, search]);
+  }, [search, studySearchScope]);
 
   const recordRequest = useCallback((request: UserRequest) => {
     setRequests((current) => {
@@ -1405,6 +1406,7 @@ export default function App() {
                   loading={studiesLoading}
                   error={studiesError}
                   search={search}
+                  searchScope={studySearchScope}
                   archiveSuggestions={archiveSuggestions}
                   archiveSearchLoading={archiveSearchLoading}
                   dayFilter={dayFilter}
@@ -1413,6 +1415,10 @@ export default function App() {
                   surgeonFilter={surgeonFilter}
                   selected={selectedStudy}
                   onSearch={setSearch}
+                  onSearchScope={(scope) => {
+                    setStudySearchScope(scope);
+                    setArchiveSuggestions([]);
+                  }}
                   onDayFilter={(value) =>
                     setDayFilter((current) => current === value ? null : value)
                   }
@@ -2059,6 +2065,7 @@ function StudiesScreen({
   loading,
   error,
   search,
+  searchScope,
   archiveSuggestions,
   archiveSearchLoading,
   dayFilter,
@@ -2067,6 +2074,7 @@ function StudiesScreen({
   surgeonFilter,
   selected,
   onSearch,
+  onSearchScope,
   onDayFilter,
   onFilter,
   onSelect,
@@ -2083,6 +2091,7 @@ function StudiesScreen({
   loading: boolean;
   error: string;
   search: string;
+  searchScope: StudySearchScope;
   archiveSuggestions: Study[];
   archiveSearchLoading: boolean;
   dayFilter: DayFilter;
@@ -2091,6 +2100,7 @@ function StudiesScreen({
   surgeonFilter: string | null;
   selected: Study | null;
   onSearch: (value: string) => void;
+  onSearchScope: (value: StudySearchScope) => void;
   onDayFilter: (value: NonNullable<DayFilter>) => void;
   onFilter: () => void;
   onSelect: (study: Study | null) => void;
@@ -2101,6 +2111,7 @@ function StudiesScreen({
   onOpenXA: (study: Study) => void;
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
+  const [databaseSelected, setDatabaseSelected] = useState<Study | null>(null);
   const patientXA = (study: Study) => findProtocolAngiography(study, angiographies);
   const hasAvailableXA = (study: Study) => {
     const angiography = patientXA(study);
@@ -2114,6 +2125,15 @@ function StudiesScreen({
     onSelect(study);
     if (!inlineDetail) setDetailOpen(true);
   };
+  const chooseDatabaseStudy = (study: Study) => {
+    setDatabaseSelected(study);
+    onSelect(study);
+    if (!inlineDetail) setDetailOpen(true);
+  };
+
+  useEffect(() => {
+    if (searchScope === "week") setDatabaseSelected(null);
+  }, [searchScope]);
 
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
@@ -2125,6 +2145,11 @@ function StudiesScreen({
           filterActive={category !== "all" || sort !== "time" || Boolean(surgeonFilter)}
           onFilter={onFilter}
         />
+        <View style={styles.studySearchScopes}>
+          <Chip label="Текущая неделя" selected={searchScope === "week"} onPress={() => onSearchScope("week")} />
+          <Chip label="Вся база" selected={searchScope === "database"} onPress={() => onSearchScope("database")} />
+        </View>
+        {searchScope === "week" ? (
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -2142,38 +2167,61 @@ function StudiesScreen({
             />
           ))}
         </ScrollView>
+        ) : null}
       </View>
 
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
 
-      {search.trim().length >= 2 && (archiveSearchLoading || archiveSuggestions.length) ? (
-        <View style={styles.studySuggestions}>
-          <Text style={styles.studySuggestionsTitle}>Протоколы в базе</Text>
-          {archiveSearchLoading ? (
-            <ActivityIndicator size="small" color={colors.primary} />
-          ) : archiveSuggestions.slice(0, 8).map((study) => (
-            <Pressable
-              key={study.id}
-              accessibilityRole="button"
-              accessibilityLabel={`Открыть архивный протокол ${study.patient}`}
-              onPress={() => choose(study)}
-              style={styles.studySuggestionRow}
-            >
-              <View style={styles.studySuggestionCopy}>
-                <Text numberOfLines={1} style={styles.studySuggestionPatient}>
-                  {shortPatientName(study.patient)}{study.age ? ` ${study.age}` : ""}
-                </Text>
-                <Text numberOfLines={1} style={styles.studySuggestionOperation}>
-                  {shortOperationName(study.name_operation)}
-                </Text>
-              </View>
-              <Text style={styles.studySuggestionDate}>{formatShortNumericDate(study.time_beginning)}</Text>
-            </Pressable>
-          ))}
+      {searchScope === "database" ? (
+        <View style={styles.studyDatabaseWorkspace}>
+          <View style={styles.studyDatabaseResults}>
+            <Text style={styles.studySuggestionsTitle}>Поиск по началу фамилии или ФИО</Text>
+            {search.trim().length < 2 ? (
+              <EmptyState icon="search-outline" title="Введите минимум две буквы" description="Например: Петр или Петров ИВ." />
+            ) : archiveSearchLoading ? (
+              <LoadingState label="Ищем протоколы в базе…" />
+            ) : archiveSuggestions.length ? (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.studyDatabaseList}>
+                {archiveSuggestions.map((study) => (
+                  <Pressable
+                    key={study.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Открыть протокол ${study.patient}`}
+                    onPress={() => chooseDatabaseStudy(study)}
+                    style={[styles.studySuggestionRow, databaseSelected?.id === study.id && styles.studyRowSelected]}
+                  >
+                    <View style={styles.studySuggestionCopy}>
+                      <Text numberOfLines={1} style={styles.studySuggestionPatient}>
+                        {shortPatientName(study.patient)}{study.age ? ` ${study.age}` : ""}
+                      </Text>
+                      <Text numberOfLines={1} style={styles.studySuggestionOperation}>
+                        {shortOperationName(study.name_operation)}
+                      </Text>
+                    </View>
+                    <Text style={styles.studySuggestionDate}>{formatShortNumericDate(study.time_beginning)}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : (
+              <EmptyState icon="search-outline" title="Совпадений нет" description="Проверьте начало фамилии или ФИО." />
+            )}
+          </View>
+          {inlineDetail ? (
+            <ScrollView style={styles.studyDatabaseDetail} contentContainerStyle={styles.detailPaneContent}>
+              {databaseSelected ? (
+                <StudyDetails
+                  study={databaseSelected}
+                  hasXA={hasAvailableXA(databaseSelected)}
+                  xaCached={xaIsCached(databaseSelected)}
+                  onOpenXA={() => onOpenXA(databaseSelected)}
+                />
+              ) : (
+                <EmptyState icon="reader-outline" title="Выберите пациента" description="Протокол из базы откроется здесь." />
+              )}
+            </ScrollView>
+          ) : null}
         </View>
-      ) : null}
-
-      <View style={styles.studyWorkspace}>
+      ) : <View style={styles.studyWorkspace}>
         <View style={styles.studyListPane}>
           {loading && !studies.length ? (
             <LoadingState label="Получаем исследования с сервера…" />
@@ -2237,7 +2285,7 @@ function StudiesScreen({
             )}
           </ScrollView>
         ) : null}
-      </View>
+      </View>}
 
       {!inlineDetail ? (
         <Sheet
@@ -3910,7 +3958,11 @@ function DutyScheduleScreen({
   const [saving, setSaving] = useState(false);
   const [holidayText, setHolidayText] = useState("");
   const [shiftTool, setShiftTool] = useState("6");
+  const timelineRef = useRef<ScrollView>(null);
   const selectedMonth = monthKey(monthOffset);
+  const today = new Date();
+  const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  const currentDay = selectedMonth === currentMonthKey ? today.getDate() : null;
 
   useEffect(() => {
     if (monthOffset === 0 && schedule) setCurrent(schedule);
@@ -3930,6 +3982,14 @@ function DutyScheduleScreen({
     });
     return () => { cancelled = true; };
   }, [monthOffset, schedule, selectedMonth]);
+
+  useEffect(() => {
+    if (!compact || !currentDay) return;
+    const timer = setTimeout(() => {
+      timelineRef.current?.scrollTo({ x: Math.max(0, (currentDay - 1) * 42 - 42), animated: false });
+    }, 80);
+    return () => clearTimeout(timer);
+  }, [compact, currentDay, current?.month]);
 
   const activeGroup = current?.groups.find((group) => group.id === "surgeons")
     ?? current?.groups[0];
@@ -4059,14 +4119,14 @@ function DutyScheduleScreen({
                 </View>
               ))}
             </View>
-            <ScrollView horizontal showsHorizontalScrollIndicator style={styles.scheduleTimelineScroll} contentContainerStyle={styles.scheduleTimelineContent}>
+            <ScrollView ref={timelineRef} horizontal showsHorizontalScrollIndicator style={styles.scheduleTimelineScroll} contentContainerStyle={styles.scheduleTimelineContent}>
               <View style={styles.scheduleTimelineGrid}>
                 <View testID="schedule-days-header" style={styles.scheduleGridRow}>
                 {days.map((day) => {
                   const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
                   const weekend = date.getDay() === 0 || date.getDay() === 6;
                   const holiday = current.holidays.includes(day);
-                  return <Text key={day} style={[styles.scheduleCell, styles.scheduleDayHeader, (weekend || holiday) && styles.scheduleHolidayCell]}>{day}</Text>;
+                  return <Text key={day} style={[styles.scheduleCell, styles.scheduleDayHeader, (weekend || holiday) && styles.scheduleHolidayCell, day === currentDay && styles.scheduleTodayCell]}>{day}</Text>;
                 })}
                 {editing && !compact ? <Text style={[styles.scheduleCell, styles.scheduleTotalHeader]}>Σ</Text> : null}
               </View>
@@ -4076,7 +4136,7 @@ function DutyScheduleScreen({
                   {days.map((day) => {
                     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
                     const marked = date.getDay() === 0 || date.getDay() === 6 || current.holidays.includes(day);
-                    return <Pressable key={day} onPress={() => changeShift(staff.id, day, row)} style={[styles.scheduleCell, styles.scheduleShiftCell, marked && styles.scheduleHolidayCell, rowIndex === 1 && styles.scheduleSurgeonEndCell]}>
+                    return <Pressable key={day} onPress={() => changeShift(staff.id, day, row)} style={[styles.scheduleCell, styles.scheduleShiftCell, marked && styles.scheduleHolidayCell, day === currentDay && styles.scheduleTodayCell, rowIndex === 1 && styles.scheduleSurgeonEndCell]}>
                       <Text style={styles.scheduleShiftText}>{shiftValue(staff, day, row)}</Text>
                     </Pressable>;
                   })}
@@ -5902,6 +5962,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8
   },
+  studySearchScopes: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
   studySuggestions: {
     maxHeight: 210,
     marginBottom: 10,
@@ -5919,6 +5980,10 @@ const styles = StyleSheet.create({
   studySuggestionPatient: { fontSize: 14, fontWeight: "800", color: colors.text },
   studySuggestionOperation: { marginTop: 2, fontSize: 11, color: colors.textDim },
   studySuggestionDate: { fontSize: 11, fontWeight: "700", color: colors.primary },
+  studyDatabaseWorkspace: { flex: 1, minHeight: 0, flexDirection: "row", gap: 14 },
+  studyDatabaseResults: { flex: 1, minWidth: 0, padding: 10, gap: 7, borderRadius: radii.md, borderWidth: 1, borderColor: colors.borderSoft, backgroundColor: colors.surface },
+  studyDatabaseList: { gap: 5, paddingBottom: 12 },
+  studyDatabaseDetail: { flex: 1, minWidth: 0 },
   mobileChipsScroll: { width: "100%", flexGrow: 0 },
   weekdayChipsDesktop: { flexGrow: 0, maxWidth: 440 },
   chips: { gap: 7 },
@@ -7864,6 +7929,7 @@ const styles = StyleSheet.create({
   },
   scheduleDayHeader: { ...typography.meta, color: colors.textMuted, textAlign: "center", paddingTop: 13 },
   scheduleHolidayCell: { backgroundColor: "rgba(11,132,179,0.12)", color: colors.primary },
+  scheduleTodayCell: { backgroundColor: "rgba(11,132,179,0.24)", borderColor: "rgba(11,132,179,0.48)" },
   scheduleStaffName: { ...typography.label, color: colors.text, maxWidth: "100%", lineHeight: 17 },
   scheduleShiftCell: { backgroundColor: colors.surface },
   scheduleShiftText: { ...typography.label, color: colors.primary },

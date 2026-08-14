@@ -2,7 +2,7 @@ name: viewer-frontend
 
 services:
   frontend:
-    image: ${FRONTEND_IMAGE:-idrisovmarat/viewer_frontend:0.2.13}
+    image: ${FRONTEND_IMAGE:-idrisovmarat/viewer_frontend:0.2.14}
     build:
       context: .
       dockerfile: Dockerfile
