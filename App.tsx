@@ -50,6 +50,11 @@ import {
 } from "./src/api";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import { isPacsImagingStudy } from "./src/studyClassification";
+import {
+  studyCategories,
+  studyCategoriesFor,
+  type StudyCategory
+} from "./src/studyOperationCategories";
 import { findProtocolAngiography } from "./src/patientMatching";
 import {
   defaultSettings,
@@ -137,16 +142,6 @@ type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudySort = "time" | "operation";
 type StudySearchScope = "week" | "year" | "archive";
-type StudyCategory =
-  | "all"
-  | "КАГ"
-  | "ЦАГ"
-  | "СТЕНТ КОР"
-  | "СТЕНТ ВСА"
-  | "СТЕНТ НОГИ"
-  | "БАП НОГИ"
-  | "ЭМА"
-  | "ДРУГИЕ";
 
 const tabs: { id: Tab; label: string; shortLabel: string; icon: IconName }[] = [
   {
@@ -207,17 +202,6 @@ const dayFilters: { id: NonNullable<DayFilter>; label: string }[] = [
   { id: "7", label: "Вс" }
 ];
 
-const studyCategories: StudyCategory[] = [
-  "all",
-  "КАГ",
-  "ЦАГ",
-  "СТЕНТ КОР",
-  "СТЕНТ ВСА",
-  "СТЕНТ НОГИ",
-  "БАП НОГИ",
-  "ЭМА",
-  "ДРУГИЕ"
-];
 
 const commandLabels: Record<AgentCommand, string> = {
   sync_studies: "Проверить новые протоколы",
@@ -368,19 +352,6 @@ function shortPatientName(value: string): string {
 	return `${parts[0]} ${parts.slice(1, 3).map((part) => `${part[0]?.toLocaleUpperCase("ru") ?? ""}.`).join("")}`;
 }
 
-function studyCategory(study: Study): Exclude<StudyCategory, "all"> {
-  const source = `${study.study_type} ${study.name_operation}`
-    .toLocaleUpperCase("ru")
-    .replace(/_/g, " ");
-  if (source.includes("КАГ")) return "КАГ";
-  if (source.includes("ЦАГ")) return "ЦАГ";
-  if (source.includes("ЭМА")) return "ЭМА";
-  if (source.includes("СТЕНТ") && /(ВСА|СОНН)/.test(source)) return "СТЕНТ ВСА";
-  if (source.includes("СТЕНТ") && /(НОГ|ПЕРИФЕР)/.test(source)) return "СТЕНТ НОГИ";
-  if (source.includes("СТЕНТ")) return "СТЕНТ КОР";
-  if (source.includes("БАП") && /(НОГ|ПЕРИФЕР)/.test(source)) return "БАП НОГИ";
-  return "ДРУГИЕ";
-}
 
 function reportShareText(report: ReportDocument): string {
   const data = reportData(report);
@@ -1139,7 +1110,7 @@ export default function App() {
       const weekday = Number.isNaN(date.getTime()) ? 0 : date.getDay();
       const isoWeekday = weekday === 0 ? 7 : weekday;
       if (dayFilter && isoWeekday !== Number(dayFilter)) return false;
-      if (category !== "all" && studyCategory(study) !== category) return false;
+      if (category !== "all" && !studyCategoriesFor(study).includes(category)) return false;
       if (
         surgeonFilter &&
         study.surgeon.trim().toLocaleLowerCase("ru") !== surgeonFilter
@@ -5088,67 +5059,59 @@ function StudyFilterSheet({
 }) {
   return (
     <Sheet visible={visible} title="Фильтр и порядок" onClose={onClose}>
-      <View style={styles.filterSheetContent}>
-        <Text style={styles.filterSectionTitle}>ПОРЯДОК СПИСКА</Text>
-        <View style={styles.filterSortRow}>
-          <Chip
-            label="По времени"
-            selected={sort === "time"}
-            onPress={() => onSort("time")}
-          />
-          <Chip
-            label="По типу операции"
-            selected={sort === "operation"}
-            onPress={() => onSort("operation")}
-          />
-        </View>
-        <Text style={styles.filterSectionTitle}>ХИРУРГ</Text>
-        <View style={styles.filterSortRow}>
-          <Chip
-            label="Все хирурги"
-            selected={!surgeon}
-            onPress={() => onSurgeon(null)}
-          />
-          {surgeons.map((value) => (
+      <ScrollView
+        style={styles.filterSheetScroll}
+        contentContainerStyle={styles.filterSheetContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.filterSectionCard}>
+          <Text style={styles.filterSectionTitle}>ПОРЯДОК СПИСКА</Text>
+          <View style={styles.filterChoiceGrid}>
             <Chip
-              key={value}
-              label={value.charAt(0).toLocaleUpperCase("ru") + value.slice(1)}
-              selected={surgeon === value}
-              onPress={() => onSurgeon(surgeon === value ? null : value)}
+              label="По времени"
+              selected={sort === "time"}
+              onPress={() => onSort("time")}
             />
-          ))}
+            <Chip
+              label="По типу операции"
+              selected={sort === "operation"}
+              onPress={() => onSort("operation")}
+            />
+          </View>
         </View>
-        <Text style={styles.filterSectionTitle}>ТИП ОПЕРАЦИИ</Text>
-        {studyCategories.map((value) => {
-          const active = selected === value;
-          return (
-            <Pressable
-              key={value}
-              accessibilityRole="radio"
-              accessibilityState={{ checked: active }}
-              onPress={() => onSelect(value)}
-              style={({ pressed }) => [
-                styles.filterOption,
-                active && styles.filterOptionSelected,
-                pressed && styles.pressed
-              ]}
-            >
-              <Text
-                style={[
-                  styles.filterOptionText,
-                  active && styles.filterOptionTextSelected
-                ]}
-              >
-                {value === "all" ? "Все типы" : value}
-              </Text>
-              {active ? (
-                <Icon name="checkmark-circle" color={colors.primary} />
-              ) : null}
-            </Pressable>
-          );
-        })}
+        <View style={styles.filterSectionCard}>
+          <Text style={styles.filterSectionTitle}>ХИРУРГ</Text>
+          <View style={styles.filterChoiceGrid}>
+            <Chip
+              label="Все хирурги"
+              selected={!surgeon}
+              onPress={() => onSurgeon(null)}
+            />
+            {surgeons.map((value) => (
+              <Chip
+                key={value}
+                label={value.charAt(0).toLocaleUpperCase("ru") + value.slice(1)}
+                selected={surgeon === value}
+                onPress={() => onSurgeon(surgeon === value ? null : value)}
+              />
+            ))}
+          </View>
+        </View>
+        <View style={styles.filterSectionCard}>
+          <Text style={styles.filterSectionTitle}>ТИП ОПЕРАЦИИ</Text>
+          <View style={styles.filterChoiceGrid}>
+            {studyCategories.map((value) => (
+              <Chip
+                key={value}
+                label={value === "all" ? "Все типы" : value}
+                selected={selected === value}
+                onPress={() => onSelect(value)}
+              />
+            ))}
+          </View>
+        </View>
         <Button label="Готово" onPress={onClose} />
-      </View>
+      </ScrollView>
     </Sheet>
   );
 }
@@ -7841,37 +7804,26 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingTop: 18
   },
-  filterSheetContent: { padding: 14, gap: 6 },
-  filterSectionTitle: {
-    ...typography.meta,
-    color: colors.textDim,
-    marginTop: 5,
-    marginBottom: 2,
-    letterSpacing: 0.7
-  },
-  filterSortRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 7,
-    marginBottom: 7
-  },
-  filterOption: {
-    minHeight: 48,
-    paddingHorizontal: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  filterSheetScroll: { minHeight: 0 },
+  filterSheetContent: { padding: 14, paddingBottom: 18, gap: 10 },
+  filterSectionCard: {
+    padding: 12,
+    gap: 9,
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.borderSoft,
     backgroundColor: colors.surfaceSoft
   },
-  filterOptionSelected: {
-    backgroundColor: colors.primarySoft,
-    borderColor: "rgba(11,132,179,0.32)"
+  filterSectionTitle: {
+    ...typography.meta,
+    color: colors.textDim,
+    letterSpacing: 0.7
   },
-  filterOptionText: { ...typography.label, color: colors.textMuted },
-  filterOptionTextSelected: { color: colors.primary },
+  filterChoiceGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 7
+  },
   mobileNavSafe: {
     position: "absolute",
     left: 0,
