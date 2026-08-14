@@ -3609,7 +3609,10 @@ function StatisticsScreen({
           <View style={styles.statisticsTablesPane}>
           <View style={styles.statisticsTableCard}>
             <View style={styles.statisticsCardHeading}>
-              <Text style={styles.statisticsCardTitle}>Хирурги · {new Date().getFullYear()}</Text>
+              <View style={styles.statisticsCardTitleRow}>
+                <View style={styles.statisticsCardIcon}><Icon name="people-outline" size={17} color={colors.primary} /></View>
+                <Text style={styles.statisticsCardTitle}>Хирурги · {new Date().getFullYear()}</Text>
+              </View>
               <Text style={styles.compactScreenMeta}>Только операции текущего года</Text>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator style={styles.statisticsHorizontalScroll}>
@@ -3622,8 +3625,8 @@ function StatisticsScreen({
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsTotalHeader]}>Всего</Text>
                 </View>
                 <View>
-                  {statistics.surgeons.map((row) => (
-                    <View key={row.surgeon} style={styles.statisticsTableRow}>
+                  {statistics.surgeons.map((row, index) => (
+                    <View key={row.surgeon} style={[styles.statisticsTableRow, index % 2 === 1 && styles.statisticsTableRowAlt]}>
                       <Text numberOfLines={1} style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>{row.surgeon}</Text>
                       {statistics.operation_types.map((type) => (
                         <Text key={type.id} style={styles.statisticsCell}>{row.counts[type.id] ?? 0}</Text>
@@ -3646,7 +3649,10 @@ function StatisticsScreen({
           </View>
           <View style={styles.historicalStatisticsCard}>
             <View style={styles.statisticsCardHeading}>
-              <Text style={styles.statisticsCardTitle}>Операции по годам</Text>
+              <View style={styles.statisticsCardTitleRow}>
+                <View style={styles.statisticsCardIcon}><Icon name="analytics-outline" size={17} color={colors.primary} /></View>
+                <Text style={styles.statisticsCardTitle}>Операции по годам</Text>
+              </View>
               <Text style={styles.compactScreenMeta}>
                 {historicalStatistics?.schema_version === 2 && historicalStatistics.years.length
                   ? `${historicalStatistics.start_year}–${historicalStatistics.end_year}`
@@ -3664,8 +3670,8 @@ function StatisticsScreen({
                     <Text style={styles.historyHeaderCell}>ВСЕГО</Text>
                   </View>
                   <View>
-                    {historicalStatistics.years.map((row) => (
-                      <View key={row.year} style={styles.historyTableRow}>
+                    {historicalStatistics.years.map((row, index) => (
+                      <View key={row.year} style={[styles.historyTableRow, index % 2 === 1 && styles.historyTableRowAlt]}>
                         <Text style={[styles.historyCell, styles.historyYearCell]}>{row.year}</Text>
                         {historicalStatistics.operation_types.map((type) => (
                           <Text key={type} style={styles.historyCell}>{row.counts[type] ?? 0}</Text>
@@ -6721,7 +6727,8 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
     paddingHorizontal: 18,
-    paddingBottom: 12
+    paddingBottom: 12,
+    backgroundColor: colors.canvas
   },
   statisticsPageScroll: { flex: 1, minHeight: 0 },
   statisticsPageContent: { paddingBottom: 18 },
@@ -6740,24 +6747,33 @@ const styles = StyleSheet.create({
     minWidth: 0,
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: "rgba(11,132,179,0.22)",
     backgroundColor: colors.surface,
-    overflow: "hidden"
+    overflow: "hidden",
+    shadowColor: colors.text,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2
   },
   statisticsCardHeading: {
-    minHeight: 50,
+    minHeight: 62,
     paddingHorizontal: 14,
     justifyContent: "center",
+    gap: 3,
     borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft
+    borderBottomColor: "rgba(11,132,179,0.18)",
+    backgroundColor: colors.primarySoft
   },
+  statisticsCardTitleRow: { flexDirection: "row", alignItems: "center", gap: 9 },
+  statisticsCardIcon: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: colors.canvasRaised, borderWidth: 1, borderColor: "rgba(11,132,179,0.18)" },
   statisticsCardTitle: { ...typography.label, color: colors.text },
   statisticsHorizontalScroll: { minWidth: 0, flexGrow: 0 },
   statisticsTableHeader: {
     minHeight: 54,
     flexDirection: "row",
     alignItems: "stretch",
-    backgroundColor: colors.canvasRaised,
+    backgroundColor: "rgba(11,132,179,0.08)",
     borderBottomWidth: 1,
     borderBottomColor: colors.border
   },
@@ -6766,8 +6782,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "stretch",
     borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft
+    borderBottomColor: colors.borderSoft,
+    backgroundColor: colors.surface
   },
+  statisticsTableRowAlt: { backgroundColor: colors.surfaceSoft },
   statisticsHeaderCell: {
     width: 92,
     paddingHorizontal: 8,
@@ -6775,7 +6793,9 @@ const styles = StyleSheet.create({
     textAlignVertical: "center",
     ...typography.meta,
     fontWeight: "800",
-    color: colors.textMuted
+    color: colors.primaryStrong,
+    borderRightWidth: 1,
+    borderRightColor: colors.borderSoft
   },
   statisticsCell: {
     width: 92,
@@ -6783,7 +6803,9 @@ const styles = StyleSheet.create({
     textAlign: "center",
     textAlignVertical: "center",
     ...typography.label,
-    color: colors.text
+    color: colors.text,
+    borderRightWidth: 1,
+    borderRightColor: colors.borderSoft
   },
   statisticsSurgeonCell: {
     width: 150,
@@ -6791,21 +6813,26 @@ const styles = StyleSheet.create({
     textTransform: "capitalize"
   },
   statisticsVMPHeader: { color: colors.primary },
-  statisticsTotalHeader: { color: colors.text },
+  statisticsTotalHeader: { color: colors.primaryStrong, backgroundColor: "rgba(11,132,179,0.08)" },
   statisticsVMPCell: {
     color: colors.primary,
     backgroundColor: colors.primarySoft
   },
-  statisticsTotalCell: { fontWeight: "800" },
-  statisticsSummaryRow: { backgroundColor: colors.canvasRaised },
+  statisticsTotalCell: { fontWeight: "800", color: colors.primaryStrong, backgroundColor: "rgba(11,132,179,0.06)" },
+  statisticsSummaryRow: { backgroundColor: colors.primarySoft, borderTopWidth: 1, borderTopColor: "rgba(11,132,179,0.20)" },
   historicalStatisticsCard: {
     minHeight: 220,
     minWidth: 0,
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: "rgba(11,132,179,0.22)",
     backgroundColor: colors.surface,
-    overflow: "hidden"
+    overflow: "hidden",
+    shadowColor: colors.text,
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.06,
+    shadowRadius: 14,
+    elevation: 2
   },
   mobileStatisticsScroll: { flex: 1, minHeight: 0 },
   mobileStatisticsContent: { paddingTop: 10, paddingBottom: 24, gap: 12 },
@@ -6941,8 +6968,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "stretch",
     borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft
+    borderBottomColor: colors.borderSoft,
+    backgroundColor: colors.surface
   },
+  historyTableRowAlt: { backgroundColor: colors.surfaceSoft },
   historyHeaderCell: {
     width: 108,
     paddingHorizontal: 7,
@@ -6951,8 +6980,10 @@ const styles = StyleSheet.create({
     fontFamily: Platform.select({ web: "ui-monospace, SFMono-Regular, Menlo, monospace", default: "monospace" }),
     fontSize: 10,
     fontWeight: "800",
-    color: colors.textMuted,
-    backgroundColor: colors.canvasRaised
+    color: colors.primaryStrong,
+    backgroundColor: "rgba(11,132,179,0.08)",
+    borderRightWidth: 1,
+    borderRightColor: colors.borderSoft
   },
   historyCell: {
     width: 108,
@@ -6961,10 +6992,12 @@ const styles = StyleSheet.create({
     textAlignVertical: "center",
     fontFamily: Platform.select({ web: "ui-monospace, SFMono-Regular, Menlo, monospace", default: "monospace" }),
     fontSize: 12,
-    color: colors.text
+    color: colors.text,
+    borderRightWidth: 1,
+    borderRightColor: colors.borderSoft
   },
   historyYearCell: { width: 70, fontWeight: "800" },
-  historyTotalCell: { fontWeight: "800", color: colors.primary },
+  historyTotalCell: { fontWeight: "800", color: colors.primaryStrong, backgroundColor: "rgba(11,132,179,0.06)" },
   historyEmpty: {
     flex: 1,
     alignItems: "center",
@@ -7945,8 +7978,8 @@ const styles = StyleSheet.create({
   },
   scheduleDayHeader: { ...typography.meta, color: colors.textMuted, textAlign: "center", paddingTop: 13 },
   scheduleHolidayCell: { backgroundColor: "rgba(11,132,179,0.12)", color: colors.primary },
-  scheduleTodayCell: { backgroundColor: colors.primary, borderColor: colors.primary, color: colors.canvas },
-  scheduleTodayText: { color: colors.canvas },
+  scheduleTodayCell: { backgroundColor: "rgba(83,103,118,0.12)", borderColor: "rgba(83,103,118,0.20)", color: colors.text },
+  scheduleTodayText: { color: colors.text },
   scheduleStaffName: { ...typography.label, color: colors.text, maxWidth: "100%", lineHeight: 17 },
   scheduleShiftCell: { backgroundColor: colors.surface },
   scheduleShiftText: { ...typography.label, color: colors.primary },
