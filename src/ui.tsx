@@ -175,17 +175,13 @@ export function SearchField({
   onChangeText,
   placeholder,
   filterActive = false,
-  onFilter,
-  onFocus,
-  onBlur
+  onFilter
 }: {
   value: string;
   onChangeText: (value: string) => void;
   placeholder: string;
   filterActive?: boolean;
   onFilter?: () => void;
-  onFocus?: () => void;
-  onBlur?: () => void;
 }) {
   return (
     <View style={styles.search}>
@@ -197,8 +193,6 @@ export function SearchField({
         placeholder={placeholder}
         placeholderTextColor={colors.textDim}
         selectionColor={colors.primary}
-        onFocus={onFocus}
-        onBlur={onBlur}
         style={styles.searchInput}
       />
       {value ? (

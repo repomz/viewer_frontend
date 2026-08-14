@@ -2112,8 +2112,6 @@ function StudiesScreen({
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [databaseSelected, setDatabaseSelected] = useState<Study | null>(null);
-  const [searchFocused, setSearchFocused] = useState(false);
-  const searchBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const patientXA = (study: Study) => findProtocolAngiography(study, angiographies);
   const hasAvailableXA = (study: Study) => {
     const angiography = patientXA(study);
@@ -2137,34 +2135,32 @@ function StudiesScreen({
     if (searchScope === "week") setDatabaseSelected(null);
   }, [searchScope]);
 
-  useEffect(() => () => {
-    if (searchBlurTimer.current) clearTimeout(searchBlurTimer.current);
-  }, []);
+  const searchScopeControls = (
+    <View style={[styles.studySearchScopes, compact && styles.studySearchScopesCompact]}>
+      <View style={compact ? styles.studySearchScopeItem : undefined}>
+        <Chip label="Текущая неделя" selected={searchScope === "week"} onPress={() => onSearchScope("week")} />
+      </View>
+      <View style={compact ? styles.studySearchScopeItem : undefined}>
+        <Chip label="Текущий год" selected={searchScope === "year"} onPress={() => onSearchScope("year")} />
+      </View>
+      <View style={compact ? styles.studySearchScopeItem : undefined}>
+        <Chip label="Все года" selected={false} disabled onPress={() => undefined} />
+      </View>
+    </View>
+  );
 
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
       <View style={[styles.studyToolbar, compact && styles.studyToolbarCompact]}>
+        {compact ? searchScopeControls : null}
         <SearchField
           value={search}
           onChangeText={onSearch}
           placeholder={compact ? "Поиск пациента" : "Пациент, хирург, операция или ID"}
           filterActive={category !== "all" || sort !== "time" || Boolean(surgeonFilter)}
           onFilter={onFilter}
-          onFocus={() => {
-            if (searchBlurTimer.current) clearTimeout(searchBlurTimer.current);
-            setSearchFocused(true);
-          }}
-          onBlur={() => {
-            searchBlurTimer.current = setTimeout(() => setSearchFocused(false), 160);
-          }}
         />
-        {(!compact || searchFocused) ? (
-        <View style={styles.studySearchScopes}>
-          <Chip label="Текущая неделя" selected={searchScope === "week"} onPress={() => onSearchScope("week")} />
-          <Chip label="Текущий год" selected={searchScope === "year"} onPress={() => onSearchScope("year")} />
-          <Chip label="Все года" selected={false} disabled onPress={() => undefined} />
-        </View>
-        ) : null}
+        {!compact ? searchScopeControls : null}
         {searchScope === "week" ? (
         <ScrollView
           horizontal
@@ -5985,6 +5981,8 @@ const styles = StyleSheet.create({
     marginBottom: 8
   },
   studySearchScopes: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0 },
+  studySearchScopesCompact: { width: "100%", alignItems: "stretch" },
+  studySearchScopeItem: { flex: 1, minWidth: 0 },
   studySuggestions: {
     maxHeight: 210,
     marginBottom: 10,
