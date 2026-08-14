@@ -2138,13 +2138,13 @@ function StudiesScreen({
   const searchScopeControls = (
     <View style={[styles.studySearchScopes, compact && styles.studySearchScopesCompact]}>
       <View style={compact ? styles.studySearchScopeItem : undefined}>
-        <Chip label="Текущая неделя" selected={searchScope === "week"} onPress={() => onSearchScope("week")} />
+        <Chip label="Неделя" selected={searchScope === "week"} onPress={() => onSearchScope("week")} />
       </View>
       <View style={compact ? styles.studySearchScopeItem : undefined}>
-        <Chip label="Текущий год" selected={searchScope === "year"} onPress={() => onSearchScope("year")} />
+        <Chip label="Год" selected={searchScope === "year"} onPress={() => onSearchScope("year")} />
       </View>
       <View style={compact ? styles.studySearchScopeItem : undefined}>
-        <Chip label="Все года" selected={false} disabled onPress={() => undefined} />
+        <Chip label="Архив" selected={false} disabled onPress={() => undefined} />
       </View>
     </View>
   );
