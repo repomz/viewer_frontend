@@ -122,6 +122,7 @@ export function MobileDicomViewer({
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [renderedResolution, setRenderedResolution] = useState({ width: 0, height: 0 });
   const [viewportSize, setViewportSize] = useState({ width: 1, height: 1 });
   const [seriesOpen, setSeriesOpen] = useState(false);
   const [metadataLoading, setMetadataLoading] = useState(true);
@@ -160,8 +161,9 @@ export function MobileDicomViewer({
         preparedFrameKey(selectedFrame.instanceUID, selectedFrame.frameIndex + 1)
       ) ?? renderedFrameURL(selectedFrame)
     : "";
-  const rows = metadataNumber(selectedFrame?.metadata, "00280010", 0);
-  const columns = metadataNumber(selectedFrame?.metadata, "00280011", 0);
+  const rows = metadataNumber(selectedFrame?.metadata, "00280010", 0) || selectedPreparedSeries?.rows || renderedResolution.height;
+  const columns = metadataNumber(selectedFrame?.metadata, "00280011", 0) || selectedPreparedSeries?.columns || renderedResolution.width;
+  const imageTransformChanged = zoom !== 1 || panOffset.x !== 0 || panOffset.y !== 0;
   const bitsStored = metadataNumber(selectedFrame?.metadata, "00280101", 12);
   const windowWidth = metadataNumber(
     selectedFrame?.metadata,
@@ -229,6 +231,7 @@ export function MobileDicomViewer({
     setPlaying(false);
     setZoom(1);
     setPanOffset({ x: 0, y: 0 });
+    setRenderedResolution({ width: 0, height: 0 });
     setCineSource("");
     setCineReady(false);
     setPreciseMode(false);
@@ -588,7 +591,13 @@ export function MobileDicomViewer({
       createElement("img", {
         src: frameSource,
         alt: "Кадр XA",
-        onLoad: () => setFrameReady(true),
+        onLoad: (event: Event) => {
+          setFrameReady(true);
+          const image = event.currentTarget as HTMLImageElement;
+          if (image.naturalWidth && image.naturalHeight) {
+            setRenderedResolution({ width: image.naturalWidth, height: image.naturalHeight });
+          }
+        },
         onError: () => {
           setPlaying(false);
           setError("PACS не смог отрисовать выбранный XA-кадр");
@@ -635,6 +644,12 @@ export function MobileDicomViewer({
         onLoadedData: () => {
           setCineReady(true);
           if (!preciseMode) setFrameReady(true);
+        },
+        onLoadedMetadata: () => {
+          const element = videoElement.current;
+          if (element?.videoWidth && element.videoHeight) {
+            setRenderedResolution({ width: element.videoWidth, height: element.videoHeight });
+          }
         },
         onCanPlay: () => {
           setCineReady(true);
@@ -1121,7 +1136,7 @@ export function MobileDicomViewer({
           <Pressable accessibilityRole="button" accessibilityLabel="Следующая серия" disabled={series.length < 2} onPress={() => selectSeries((seriesIndex + 1) % series.length)} style={[styles.controlButton, series.length < 2 && styles.controlButtonDisabled]}>
             <Icon name="chevron-down" size={20} color={darkColors.text} />
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Сбросить изображение" onPress={reset} style={styles.controlButton}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Сбросить изображение" onPress={reset} style={[styles.controlButton, imageTransformChanged && styles.controlButtonActive]}>
             <Icon name="refresh" size={19} color={darkColors.text} />
           </Pressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Сохранить текущий кадр" onPress={() => void captureFrame()} style={styles.controlButton}>
@@ -1200,15 +1215,6 @@ export function MobileDicomViewer({
             <View style={styles.controlRow}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Предыдущая серия"
-                disabled={series.length < 2}
-                onPress={() => selectSeries((seriesIndex - 1 + series.length) % series.length)}
-                style={[styles.controlButton, series.length < 2 && styles.controlButtonDisabled]}
-              >
-                <Icon name="play-skip-back" size={19} color={darkColors.text} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
                 accessibilityLabel="Открыть серии"
                 onPress={() => {
                   setPlaying(false);
@@ -1220,6 +1226,15 @@ export function MobileDicomViewer({
                 ]}
               >
                 <Icon name="layers-outline" size={20} color={darkColors.text} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Предыдущая серия"
+                disabled={series.length < 2}
+                onPress={() => selectSeries((seriesIndex - 1 + series.length) % series.length)}
+                style={[styles.controlButton, series.length < 2 && styles.controlButtonDisabled]}
+              >
+                <Icon name="play-skip-back" size={19} color={darkColors.text} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -1246,7 +1261,7 @@ export function MobileDicomViewer({
                 accessibilityRole="button"
                 accessibilityLabel="Сбросить изображение"
                 onPress={reset}
-                style={styles.controlButton}
+                style={[styles.controlButton, imageTransformChanged && styles.controlButtonActive]}
               >
                 <Icon name="refresh" size={19} color={darkColors.text} />
               </Pressable>
@@ -1569,16 +1584,14 @@ const styles = StyleSheet.create({
   },
   controls: {
     position: "absolute",
-    left: 10,
-    right: 10,
+    left: 4,
+    right: 4,
     bottom: 10,
-    minHeight: 62,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: darkColors.borderSoft,
-    backgroundColor: "rgba(30,33,39,0.94)"
+    minHeight: 48,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    borderWidth: 0,
+    backgroundColor: "transparent"
   },
   desktopControls: {
     width: 60,
@@ -1594,7 +1607,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 10
+    gap: 7
   },
   controlButton: {
     width: 44,

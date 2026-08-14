@@ -175,13 +175,17 @@ export function SearchField({
   onChangeText,
   placeholder,
   filterActive = false,
-  onFilter
+  onFilter,
+  onFocus,
+  onBlur
 }: {
   value: string;
   onChangeText: (value: string) => void;
   placeholder: string;
   filterActive?: boolean;
   onFilter?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }) {
   return (
     <View style={styles.search}>
@@ -193,6 +197,8 @@ export function SearchField({
         placeholder={placeholder}
         placeholderTextColor={colors.textDim}
         selectionColor={colors.primary}
+        onFocus={onFocus}
+        onBlur={onBlur}
         style={styles.searchInput}
       />
       {value ? (
@@ -227,20 +233,24 @@ export function SearchField({
 export function Chip({
   label,
   selected,
-  onPress
+  onPress,
+  disabled = false
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ selected }}
+      accessibilityState={{ selected, disabled }}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.chip,
         selected && styles.chipSelected,
+        disabled && styles.disabled,
         pressed && styles.buttonActive
       ]}
     >

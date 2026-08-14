@@ -136,7 +136,7 @@ type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statis
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudySort = "time" | "operation";
-type StudySearchScope = "week" | "database";
+type StudySearchScope = "week" | "year" | "archive";
 type StudyCategory =
   | "all"
   | "КАГ"
@@ -1167,7 +1167,7 @@ export default function App() {
 
   useEffect(() => {
     const query = search.trim();
-    if (studySearchScope !== "database" || query.length < 2) {
+    if (studySearchScope !== "year" || query.length < 2) {
       setArchiveSuggestions([]);
       setArchiveSearchLoading(false);
       return;
@@ -2112,6 +2112,8 @@ function StudiesScreen({
 }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [databaseSelected, setDatabaseSelected] = useState<Study | null>(null);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const searchBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const patientXA = (study: Study) => findProtocolAngiography(study, angiographies);
   const hasAvailableXA = (study: Study) => {
     const angiography = patientXA(study);
@@ -2135,6 +2137,10 @@ function StudiesScreen({
     if (searchScope === "week") setDatabaseSelected(null);
   }, [searchScope]);
 
+  useEffect(() => () => {
+    if (searchBlurTimer.current) clearTimeout(searchBlurTimer.current);
+  }, []);
+
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
       <View style={[styles.studyToolbar, compact && styles.studyToolbarCompact]}>
@@ -2144,11 +2150,21 @@ function StudiesScreen({
           placeholder={compact ? "Поиск пациента" : "Пациент, хирург, операция или ID"}
           filterActive={category !== "all" || sort !== "time" || Boolean(surgeonFilter)}
           onFilter={onFilter}
+          onFocus={() => {
+            if (searchBlurTimer.current) clearTimeout(searchBlurTimer.current);
+            setSearchFocused(true);
+          }}
+          onBlur={() => {
+            searchBlurTimer.current = setTimeout(() => setSearchFocused(false), 160);
+          }}
         />
+        {(!compact || searchFocused) ? (
         <View style={styles.studySearchScopes}>
           <Chip label="Текущая неделя" selected={searchScope === "week"} onPress={() => onSearchScope("week")} />
-          <Chip label="Вся база" selected={searchScope === "database"} onPress={() => onSearchScope("database")} />
+          <Chip label="Текущий год" selected={searchScope === "year"} onPress={() => onSearchScope("year")} />
+          <Chip label="Все года" selected={false} disabled onPress={() => undefined} />
         </View>
+        ) : null}
         {searchScope === "week" ? (
         <ScrollView
           horizontal
@@ -2172,7 +2188,7 @@ function StudiesScreen({
 
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
 
-      {searchScope === "database" ? (
+      {searchScope === "year" ? (
         <View style={styles.studyDatabaseWorkspace}>
           <View style={styles.studyDatabaseResults}>
             <Text style={styles.studySuggestionsTitle}>Поиск по началу фамилии или ФИО</Text>
@@ -4137,7 +4153,7 @@ function DutyScheduleScreen({
                     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
                     const marked = date.getDay() === 0 || date.getDay() === 6 || current.holidays.includes(day);
                     return <Pressable key={day} onPress={() => changeShift(staff.id, day, row)} style={[styles.scheduleCell, styles.scheduleShiftCell, marked && styles.scheduleHolidayCell, day === currentDay && styles.scheduleTodayCell, rowIndex === 1 && styles.scheduleSurgeonEndCell]}>
-                      <Text style={styles.scheduleShiftText}>{shiftValue(staff, day, row)}</Text>
+                    <Text style={[styles.scheduleShiftText, day === currentDay && styles.scheduleTodayText]}>{shiftValue(staff, day, row)}</Text>
                     </Pressable>;
                   })}
                   {editing && !compact ? <View style={[styles.scheduleCell, styles.scheduleTotalCell, total >= monthlyNorm && styles.scheduleTotalReached, rowIndex === 1 && styles.scheduleSurgeonEndCell]}><Text style={styles.scheduleShiftText}>{total}</Text></View> : null}
@@ -7929,7 +7945,8 @@ const styles = StyleSheet.create({
   },
   scheduleDayHeader: { ...typography.meta, color: colors.textMuted, textAlign: "center", paddingTop: 13 },
   scheduleHolidayCell: { backgroundColor: "rgba(11,132,179,0.12)", color: colors.primary },
-  scheduleTodayCell: { backgroundColor: "rgba(11,132,179,0.24)", borderColor: "rgba(11,132,179,0.48)" },
+  scheduleTodayCell: { backgroundColor: "#38BDF8", borderColor: "#087EA4", color: "#062D3A" },
+  scheduleTodayText: { color: "#062D3A" },
   scheduleStaffName: { ...typography.label, color: colors.text, maxWidth: "100%", lineHeight: 17 },
   scheduleShiftCell: { backgroundColor: colors.surface },
   scheduleShiftText: { ...typography.label, color: colors.primary },

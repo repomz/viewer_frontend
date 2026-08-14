@@ -12,6 +12,8 @@ export type PreparedXASeries = {
   series_uid: string;
   number: number;
   description?: string;
+  columns?: number;
+  rows?: number;
   fps?: number;
   cine_id?: string;
   cine_path?: string;
@@ -147,7 +149,10 @@ export function manifestDicomSeries(
         `/series/${encodeURIComponent(series.series_uid)}` +
         `/instances/${encodeURIComponent(frame.instance_uid)}`,
       frameIndex: Math.max(0, frame.frame_index - 1),
-      metadata: {}
+      metadata: {
+        ...(series.rows ? { "00280010": { vr: "US", Value: [series.rows] } } : {}),
+        ...(series.columns ? { "00280011": { vr: "US", Value: [series.columns] } } : {})
+      }
     }))
   }));
 }

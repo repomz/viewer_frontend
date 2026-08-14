@@ -63,6 +63,8 @@ describe("buildDicomSeries", () => {
           series_uid: "1.2.series",
           number: 3,
           description: "XA cine",
+          columns: 768,
+          rows: 576,
           frames: [
             { id: "a.jpg", instance_uid: "1.2.instance", frame_index: 1, path: "/a", size: 50 },
             { id: "b.jpg", instance_uid: "1.2.instance", frame_index: 2, path: "/b", size: 50 }
@@ -73,5 +75,9 @@ describe("buildDicomSeries", () => {
 
     expect(result[0]).toMatchObject({ uid: "1.2.series", number: 3 });
     expect(result[0]?.frames.map((frame) => frame.frameIndex)).toEqual([0, 1]);
+    expect(result[0]?.frames[0]?.metadata).toMatchObject({
+      "00280010": { Value: [576] },
+      "00280011": { Value: [768] }
+    });
   });
 });
