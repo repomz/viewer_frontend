@@ -3482,6 +3482,14 @@ function StatisticsScreen({
 }) {
 	const [mobileColumn, setMobileColumn] = useState("total");
 	const [mobileColumnOpen, setMobileColumnOpen] = useState(false);
+	const visibleSurgeons = useMemo(
+		() =>
+			(statistics?.surgeons ?? []).filter((row) => {
+				const surgeon = row.surgeon.trim().toLocaleLowerCase("ru");
+				return surgeon !== "не указано" && !surgeon.startsWith("гергерт");
+			}),
+		[statistics]
+	);
 	const selectedMobileType = statistics?.operation_types.find(
 		(type) => type.id === mobileColumn
 	);
@@ -3489,8 +3497,8 @@ function StatisticsScreen({
 		mobileColumn === "total" ? "Все операции" : selectedMobileType?.label ?? "Все операции";
 	const mobileColumnTotal =
 		mobileColumn === "total"
-			? statistics?.surgeons.reduce((sum, row) => sum + row.total, 0) ?? 0
-			: selectedMobileType?.total ?? 0;
+			? visibleSurgeons.reduce((sum, row) => sum + row.total, 0)
+			: visibleSurgeons.reduce((sum, row) => sum + (row.counts[mobileColumn] ?? 0), 0);
 
 	if (compact) {
 		return (
@@ -3500,7 +3508,6 @@ function StatisticsScreen({
 						<Text style={styles.compactScreenTitle}>Статистика</Text>
 						<Text style={styles.compactScreenMeta}>Операции хирургов · {new Date().getFullYear()}</Text>
 					</View>
-					<IconButton icon="refresh-outline" label="Обновить статистику" onPress={onRetry} />
 				</View>
 				{error ? <InlineError message={error} onRetry={onRetry} /> : null}
 				{loading && !statistics ? <LoadingState label="Считаем операции…" /> : null}
@@ -3562,7 +3569,7 @@ function StatisticsScreen({
 								<Text style={styles.mobileStatisticsHeaderName}>Хирург</Text>
 								<Text style={styles.mobileStatisticsHeaderValue}>{mobileColumnLabel}</Text>
 							</View>
-							{statistics.surgeons.slice(0, 4).map((row) => (
+							{visibleSurgeons.slice(0, 4).map((row) => (
 								<View key={row.surgeon} style={styles.mobileStatisticsTableRow}>
 									<Text numberOfLines={1} style={styles.mobileStatisticsSurgeon}>{row.surgeon}</Text>
 									<Text style={styles.mobileStatisticsValue}>
@@ -3595,7 +3602,6 @@ function StatisticsScreen({
             Хирурги — текущий год; архив — по всем импортированным годам
           </Text>
         </View>
-        <IconButton icon="refresh-outline" label="Обновить статистику" onPress={onRetry} />
       </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !statistics ? (
@@ -3621,7 +3627,7 @@ function StatisticsScreen({
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsTotalHeader]}>Всего</Text>
                 </View>
                 <View>
-                  {statistics.surgeons.map((row, index) => (
+                  {visibleSurgeons.map((row, index) => (
                     <View key={row.surgeon} style={[styles.statisticsTableRow, index % 2 === 1 && styles.statisticsTableRowAlt]}>
                       <Text numberOfLines={1} style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>{row.surgeon}</Text>
                       {statistics.operation_types.map((type) => (
@@ -3634,10 +3640,12 @@ function StatisticsScreen({
                 <View style={[styles.statisticsTableRow, styles.statisticsSummaryRow]}>
                   <Text style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>Всего</Text>
                   {statistics.operation_types.map((type) => (
-                    <Text key={type.id} style={styles.statisticsCell}>{type.total}</Text>
+                    <Text key={type.id} style={styles.statisticsCell}>
+                      {visibleSurgeons.reduce((sum, row) => sum + (row.counts[type.id] ?? 0), 0)}
+                    </Text>
                   ))}
                   <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>
-					{statistics.surgeons.reduce((sum, row) => sum + row.total, 0)}
+					{visibleSurgeons.reduce((sum, row) => sum + row.total, 0)}
                   </Text>
                 </View>
               </View>
@@ -4077,25 +4085,25 @@ function DutyScheduleScreen({
   return (
     <View style={[styles.scheduleScreen, compact && styles.screenCompact]}>
       <View style={styles.scheduleToolbar}>
-        <View>
-          <Text style={styles.compactScreenTitle}>График смен</Text>
-          <Text style={styles.compactScreenMeta}>{monthTitle(selectedMonth)}</Text>
+        <View style={styles.scheduleToolbarLeft}>
+          <View style={styles.scheduleTitleBlock}>
+            <Text style={styles.compactScreenTitle}>График смен</Text>
+            <Text style={styles.compactScreenMeta}>{monthTitle(selectedMonth)}</Text>
+          </View>
+          <View style={styles.scheduleMonthButtons}>
+            <Button label="Текущий" compact variant={monthOffset === 0 ? "primary" : "ghost"} onPress={() => { setMonthOffset(0); setEditing(false); }} />
+            <Button label="Следующий" compact variant={monthOffset === 1 ? "primary" : "ghost"} onPress={() => { setMonthOffset(1); setEditing(false); }} />
+          </View>
         </View>
-        <View style={styles.scheduleMonthButtons}>
-          <Button label="Текущий" compact variant={monthOffset === 0 ? "primary" : "ghost"} onPress={() => { setMonthOffset(0); setEditing(false); }} />
-          <Button label="Следующий" compact variant={monthOffset === 1 ? "primary" : "ghost"} onPress={() => { setMonthOffset(1); setEditing(false); }} />
+        {!compact ? <View style={styles.scheduleToolbarActions}>
+          {!editing ? <Button label="Заполнить график" compact icon="create-outline" onPress={() => setEditing(true)} /> : null}
           {!compact ? <Button label="Распечатать" compact icon="print-outline" variant="ghost" onPress={printSchedule} /> : null}
-        </View>
+        </View> : null}
       </View>
       {error && monthOffset === 0 ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !current ? <LoadingState label="Открываем график…" /> : null}
       {current ? (
         <ScrollView style={styles.schedulePage} contentContainerStyle={styles.schedulePageContent}>
-          {!compact && !editing ? (
-            <View style={styles.scheduleViewActions}>
-              <Button label="Заполнить график" icon="create-outline" onPress={() => setEditing(true)} />
-            </View>
-          ) : null}
           {editing && !compact ? (
             <View style={styles.scheduleEditorPanel}>
               <View style={styles.scheduleEditorTopRow}>
@@ -6745,7 +6753,7 @@ const styles = StyleSheet.create({
     minWidth: 0,
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: "rgba(11,132,179,0.22)",
+    borderColor: colors.border,
     backgroundColor: colors.surface,
     overflow: "hidden",
     shadowColor: colors.text,
@@ -6760,18 +6768,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 3,
     borderBottomWidth: 1,
-    borderBottomColor: "rgba(11,132,179,0.18)",
-    backgroundColor: colors.primarySoft
+    borderBottomColor: colors.borderSoft,
+    backgroundColor: colors.surface
   },
   statisticsCardTitleRow: { flexDirection: "row", alignItems: "center", gap: 9 },
-  statisticsCardIcon: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: colors.canvasRaised, borderWidth: 1, borderColor: "rgba(11,132,179,0.18)" },
+  statisticsCardIcon: { width: 30, height: 30, alignItems: "center", justifyContent: "center", borderRadius: 10, backgroundColor: colors.surfaceSoft, borderWidth: 1, borderColor: colors.borderSoft },
   statisticsCardTitle: { ...typography.label, color: colors.text },
   statisticsHorizontalScroll: { minWidth: 0, flexGrow: 0 },
   statisticsTableHeader: {
     minHeight: 54,
     flexDirection: "row",
     alignItems: "stretch",
-    backgroundColor: "rgba(11,132,179,0.08)",
+    backgroundColor: colors.surfaceSoft,
     borderBottomWidth: 1,
     borderBottomColor: colors.border
   },
@@ -6791,7 +6799,7 @@ const styles = StyleSheet.create({
     textAlignVertical: "center",
     ...typography.meta,
     fontWeight: "800",
-    color: colors.primaryStrong,
+    color: colors.textMuted,
     borderRightWidth: 1,
     borderRightColor: colors.borderSoft
   },
@@ -6811,19 +6819,19 @@ const styles = StyleSheet.create({
     textTransform: "capitalize"
   },
   statisticsVMPHeader: { color: colors.primary },
-  statisticsTotalHeader: { color: colors.primaryStrong, backgroundColor: "rgba(11,132,179,0.08)" },
+  statisticsTotalHeader: { color: colors.text, backgroundColor: colors.surfaceSoft },
   statisticsVMPCell: {
     color: colors.primary,
     backgroundColor: colors.primarySoft
   },
-  statisticsTotalCell: { fontWeight: "800", color: colors.primaryStrong, backgroundColor: "rgba(11,132,179,0.06)" },
-  statisticsSummaryRow: { backgroundColor: colors.primarySoft, borderTopWidth: 1, borderTopColor: "rgba(11,132,179,0.20)" },
+  statisticsTotalCell: { fontWeight: "800", color: colors.text },
+  statisticsSummaryRow: { backgroundColor: "#F0F4F6", borderTopWidth: 1, borderTopColor: colors.border },
   historicalStatisticsCard: {
     minHeight: 220,
     minWidth: 0,
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: "rgba(11,132,179,0.22)",
+    borderColor: colors.border,
     backgroundColor: colors.surface,
     overflow: "hidden",
     shadowColor: colors.text,
@@ -7922,7 +7930,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12
   },
+  scheduleToolbarLeft: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 14, flex: 1, minWidth: 0 },
+  scheduleTitleBlock: { minWidth: 112 },
   scheduleMonthButtons: { flexDirection: "row", alignItems: "center", gap: 6 },
+  scheduleToolbarActions: { flexDirection: "row", alignItems: "center", gap: 6 },
   schedulePage: { flex: 1, minHeight: 0 },
   schedulePageContent: { paddingHorizontal: 18, paddingBottom: 30, gap: 14 },
   dutyTodayCard: {
@@ -7938,7 +7949,6 @@ const styles = StyleSheet.create({
   dutyTodayName: { ...typography.label, color: colors.text },
   dutyTodayMeta: { ...typography.meta, color: colors.primary },
   scheduleGroupTabs: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  scheduleViewActions: { flexDirection: "row", justifyContent: "flex-end" },
   scheduleEditorPanel: { gap: 12, padding: 14, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   scheduleEditorTopRow: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 14 },
   scheduleHolidayTools: { flex: 1, maxWidth: 430, flexDirection: "row", alignItems: "flex-end", gap: 8 },

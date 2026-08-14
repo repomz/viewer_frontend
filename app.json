@@ -2,7 +2,7 @@
   "expo": {
     "name": "Viewer Clinical",
     "slug": "viewer-clinical",
-    "version": "0.2.18",
+    "version": "0.2.19",
     "orientation": "portrait",
     "icon": "./assets/viewer-vessels-icon-v4.png",
     "userInterfaceStyle": "light",
