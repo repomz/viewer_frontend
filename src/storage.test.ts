@@ -1,6 +1,8 @@
 import {
+  loadDressingChecks,
   loadOperationPlanCache,
   loadReportsCache,
+  saveDressingChecks,
   saveOperationPlanCache,
   saveReportsCache
 } from "./storage";
@@ -43,5 +45,13 @@ describe("clinical data cache", () => {
 
     expect(loadOperationPlanCache("2026-08-03")).toEqual(plan);
     expect(loadOperationPlanCache("2026-08-10")).toBeNull();
+  });
+
+  it("persists dressing marks separately for each reporting period", () => {
+    saveDressingChecks("2026-08-14", ["к/о 2|иванов", "к/о 2|иванов"]);
+    saveDressingChecks("2026-08-15", ["рсц|петров"]);
+
+    expect(loadDressingChecks("2026-08-14")).toEqual(["к/о 2|иванов"]);
+    expect(loadDressingChecks("2026-08-15")).toEqual(["рсц|петров"]);
   });
 });

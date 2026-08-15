@@ -51,6 +51,11 @@ import {
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import { isPacsImagingStudy } from "./src/studyClassification";
 import {
+  dressingDepartments,
+  dressingRoundID,
+  reportOperationCategory
+} from "./src/reportOperations";
+import {
   studyCategories,
   studyCategoriesFor,
   type StudyCategory
@@ -62,6 +67,7 @@ import {
   loadOperationStatisticsCache,
   loadHistoricalStatisticsCache,
   loadDutyScheduleCache,
+  loadDressingChecks,
   loadRequests,
   loadReportsCache,
   loadSettings,
@@ -72,6 +78,7 @@ import {
   saveOperationStatisticsCache,
   saveHistoricalStatisticsCache,
   saveDutyScheduleCache,
+  saveDressingChecks,
   saveRequests,
   saveReportsCache,
   saveStudiesCache,
@@ -3154,6 +3161,7 @@ function ReportsScreen({
   onDelete: (report: ReportDocument) => void;
   onForward: (report: ReportDocument) => void;
 }) {
+  const [view, setView] = useState<"report" | "dressings">("report");
   const [selected, setSelected] = useState<ReportDocument | null>(
     reports[0] ?? null
   );
@@ -3179,9 +3187,11 @@ function ReportsScreen({
       >
         <View style={styles.compactScreenHeading}>
           <Text style={styles.compactScreenTitle}>Отчёты</Text>
-          <Text style={styles.compactScreenMeta}>{reports.length} записей</Text>
+          <Text style={styles.compactScreenMeta}>
+            {view === "report" ? `${reports.length} записей` : "Маршрут по отделениям"}
+          </Text>
         </View>
-        <Pressable
+        {view === "report" ? <Pressable
           accessibilityRole="button"
           accessibilityLabel={generating ? "Отчёт формируется" : "Сформировать отчёт"}
           disabled={generating}
@@ -3196,11 +3206,39 @@ function ReportsScreen({
           ) : (
             <Icon name="add" size={22} color={colors.primary} />
           )}
+        </Pressable> : null}
+      </View>
+      <View style={[styles.reportViewTabs, compact && styles.reportViewTabsCompact]}>
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: view === "report" }}
+          onPress={() => setView("report")}
+          style={[styles.reportViewTab, view === "report" && styles.reportViewTabActive]}
+        >
+          <Icon name="document-text-outline" size={17} color={view === "report" ? colors.primary : colors.textDim} />
+          <Text style={[styles.reportViewTabText, view === "report" && styles.reportViewTabTextActive]}>Отчёт</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: view === "dressings" }}
+          onPress={() => setView("dressings")}
+          style={[styles.reportViewTab, view === "dressings" && styles.reportViewTabActive]}
+        >
+          <Icon name="checkmark-circle-outline" size={17} color={view === "dressings" ? colors.primary : colors.textDim} />
+          <Text style={[styles.reportViewTabText, view === "dressings" && styles.reportViewTabTextActive]}>Повязки</Text>
         </Pressable>
       </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !reports.length ? (
         <LoadingState label="Загружаем отчёты…" />
+      ) : view === "dressings" && reports.length ? (
+        <DressingChecklist report={reports[0]!} compact={compact} />
+      ) : view === "dressings" ? (
+        <EmptyState
+          icon="checkmark-circle-outline"
+          title="Список повязок пока пуст"
+          description="Пациенты появятся после формирования отчёта по выполненным операциям."
+        />
       ) : reports.length ? (
         <View
           style={[
@@ -3255,8 +3293,8 @@ function ReportsScreen({
       )}
       {compact ? (
         <Sheet
-          visible={mobileOpen && Boolean(selected)}
-          title={reportData(selected ?? {}).date ?? "Отчёт дежурства"}
+          visible={view === "report" && mobileOpen && Boolean(selected)}
+          title="Отчёт"
           onClose={() => setMobileOpen(false)}
           fullScreen
         >
@@ -3279,6 +3317,148 @@ function ReportsScreen({
         }}
       />
     </View>
+  );
+}
+
+function DressingChecklist({
+  report,
+  compact
+}: {
+  report: ReportDocument;
+  compact: boolean;
+}) {
+  const data = useMemo(() => reportData(report), [report]);
+  const roundID = dressingRoundID(data);
+  const departments = useMemo(() => dressingDepartments(data), [data]);
+  const [completed, setCompleted] = useState<string[]>(() => loadDressingChecks(roundID));
+  const completedSet = useMemo(() => new Set(completed), [completed]);
+  const total = departments.reduce((sum, group) => sum + group.patients.length, 0);
+  const completedTotal = departments.reduce(
+    (sum, group) => sum + group.patients.filter((patient) => completedSet.has(patient.id)).length,
+    0
+  );
+
+  const printDressings = () => {
+    if (Platform.OS !== "web") return;
+    const printWindow = window.open("", "_blank", "width=900,height=760");
+    if (!printWindow) return;
+    const groups = departments.map((group) => `
+      <section>
+        <h2>${escapePrintHTML(group.department)} <span>${group.patients.length}</span></h2>
+        <ol>${group.patients.map((patient) => `
+          <li>
+            <strong>${escapePrintHTML(patient.patient)}${patient.age ? ` ${escapePrintHTML(String(patient.age))}` : ""}</strong>
+            <small>${escapePrintHTML(shortOperationName(patient.operation))}</small>
+          </li>`).join("")}
+        </ol>
+      </section>`).join("");
+    printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Повязки</title><style>
+      @page{size:A4 portrait;margin:9mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,sans-serif;color:#17232d}
+      header{display:flex;align-items:flex-end;justify-content:space-between;border-bottom:1px solid #aebbc3;padding-bottom:5px;margin-bottom:7px}
+      h1{font-size:16px;margin:0}header p{font-size:9px;color:#607482;margin:0}.grid{column-count:2;column-gap:8mm}
+      section{break-inside:avoid;border:1px solid #cfd9df;border-radius:5px;margin:0 0 5px;overflow:hidden}
+      h2{font-size:10px;margin:0;padding:4px 6px;background:#eef4f7;text-transform:uppercase}h2 span{float:right;color:#607482}
+      ol{margin:0;padding:0;list-style:none;counter-reset:item}li{counter-increment:item;padding:4px 6px 4px 24px;border-top:1px solid #e2e8ec;position:relative}
+      li:before{content:counter(item,decimal-leading-zero);position:absolute;left:6px;top:5px;font-size:8px;color:#607482}
+      strong{display:block;font-size:9px;line-height:11px}small{display:block;font-size:8px;line-height:10px;color:#607482;margin-top:1px}
+    </style></head><body><header><h1>Повязки</h1><p>${departments.length} отделений · ${total} пациентов</p></header><main class="grid">${groups}</main></body></html>`);
+    printWindow.document.close();
+    printWindow.addEventListener("load", () => printWindow.print(), { once: true });
+  };
+
+  useEffect(() => {
+    setCompleted(loadDressingChecks(roundID));
+  }, [roundID]);
+
+  const toggle = (patientID: string) => {
+    setCompleted((current) => {
+      const next = current.includes(patientID)
+        ? current.filter((value) => value !== patientID)
+        : [...current, patientID];
+      saveDressingChecks(roundID, next);
+      return next;
+    });
+  };
+
+  if (!total) {
+    return (
+      <EmptyState
+        icon="checkmark-circle-outline"
+        title="Пациентов для повязок нет"
+        description="В последнем отчёте нет выполненных плановых или экстренных операций."
+      />
+    );
+  }
+
+  return (
+    <ScrollView
+      style={styles.dressingScroll}
+      contentContainerStyle={[styles.dressingContent, compact && styles.dressingContentCompact]}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.dressingProgressCard}>
+        <View style={styles.dressingProgressCopy}>
+          <Text style={styles.dressingProgressTitle}>Повязки</Text>
+          <Text style={styles.dressingProgressMeta}>{departments.length} отделений · {total} пациентов</Text>
+        </View>
+        {compact ? (
+          <Badge
+            label={`${completedTotal} из ${total}`}
+            tone={completedTotal === total ? "success" : "neutral"}
+          />
+        ) : (
+          <Button label="Распечатать" compact icon="print-outline" variant="ghost" onPress={printDressings} />
+        )}
+      </View>
+      <View style={!compact ? styles.dressingDesktopGrid : undefined}>
+      {departments.map((group) => (
+        <View key={group.department} style={[styles.dressingDepartmentCard, !compact && styles.dressingDepartmentCardDesktop]}>
+          <View style={styles.dressingDepartmentHeader}>
+            <Text style={styles.dressingDepartmentTitle}>{group.department}</Text>
+            <Text style={styles.dressingDepartmentCount}>{group.patients.length}</Text>
+          </View>
+          {group.patients.map((patient) => {
+            const checked = completedSet.has(patient.id);
+            const content = (
+              <>
+                <View style={styles.dressingPatientCopy}>
+                  <Text numberOfLines={1} style={[styles.dressingPatientName, checked && compact && styles.dressingPatientNameChecked]}>
+                    {patient.patient}{patient.age ? ` ${patient.age}` : ""}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.dressingOperation}>
+                    {shortOperationName(patient.operation)}
+                  </Text>
+                </View>
+                {compact ? <View style={[styles.dressingCheck, checked && styles.dressingCheckActive]}>
+                  {checked ? <Icon name="checkmark" size={17} color={colors.white} /> : null}
+                </View> : null}
+              </>
+            );
+            return compact ? (
+              <Pressable
+                key={patient.id}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked }}
+                accessibilityLabel={`${checked ? "Снять отметку" : "Отметить повязку"}: ${patient.patient}`}
+                onPress={() => toggle(patient.id)}
+                style={({ pressed }) => [
+                  styles.dressingPatientRow,
+                  checked && styles.dressingPatientRowChecked,
+                  pressed && styles.pressed
+                ]}
+              >
+                {content}
+              </Pressable>
+            ) : (
+              <View key={patient.id} style={[styles.dressingPatientRow, styles.dressingPatientRowDesktop]}>
+                {content}
+              </View>
+            );
+          })}
+        </View>
+      ))}
+      </View>
+    </ScrollView>
   );
 }
 
@@ -3803,17 +3983,6 @@ function ReportDetail({ report }: { report: ReportDocument }) {
   );
   return (
     <View style={styles.reportDocument}>
-      <View style={styles.reportDocumentHeader}>
-        <View>
-          <Text style={styles.reportDocumentEyebrow}>ОТЧЁТ ДЕЖУРСТВА</Text>
-          <Text style={styles.reportDocumentTitle}>
-            {data.date ?? "Дата не указана"}
-          </Text>
-          <Text style={styles.reportDocumentPeriod}>
-            {data.period_start ?? "—"} — {data.period_end ?? "—"}
-          </Text>
-        </View>
-      </View>
       <View style={styles.reportStats}>
         <ReportStat label="Экстренные" value={data.emergency_total ?? 0}
           active={section === "emergency"} onPress={() => setSection("emergency")} />
@@ -3826,11 +3995,11 @@ function ReportDetail({ report }: { report: ReportDocument }) {
           onPress={() => setSection("today")}
         />
       </View>
-      {section === "emergency" ? <ReportSection title="Экстренные операции"
+      {section === "emergency" ? <ReportSection
         operations={data.emergency_operations ?? []} /> : null}
-      {section === "planned" ? <ReportSection title="Плановые операции"
+      {section === "planned" ? <ReportSection
         operations={data.planned_operations ?? []} /> : null}
-      {section === "today" ? <ReportSection title="План сегодня"
+      {section === "today" ? <ReportSection
         operations={data.today_planned_operations ?? []} /> : null}
     </View>
   );
@@ -3849,31 +4018,17 @@ function ReportStat({
 }
 
 function ReportSection({
-  title,
   operations
 }: {
-  title: string;
   operations: ReportOperation[];
 }) {
   if (!operations.length) return null;
-  const category = (operation: ReportOperation) => {
-    const value = `${operation.operation ?? ""}`.toLocaleLowerCase("ru").replace(/ё/g, "е");
-    if (/(тромбэкстрак|тромбаспир|\bта\b)/.test(value)) return "Тромбэкстракции";
-    if (/(аневризм|эмболизац.*аневр)/.test(value)) return "Аневризма";
-    if (/каг/.test(value) && /стент/.test(value)) return "КАГ + стент";
-    if (/каг|коронарограф/.test(value)) return "КАГ";
-    if (/цаг|церебральн.*ангиограф/.test(value)) return "ЦАГ";
-    return "Другие";
-  };
   const groups = ["КАГ", "КАГ + стент", "ЦАГ", "Тромбэкстракции", "Аневризма", "Другие"]
-    .map((label) => ({ label, operations: operations.filter((operation) => category(operation) === label) }))
+    .map((label) => ({ label, operations: operations.filter((operation) => reportOperationCategory(operation) === label) }))
     .filter((group) => group.operations.length);
   let absoluteIndex = 0;
   return (
     <View style={styles.reportSection}>
-      <Text style={styles.reportSectionTitle}>
-        {title} · {operations.length}
-      </Text>
       <View style={styles.operationTable}>
         {groups.map((group) => (
           <View key={group.label}>
@@ -6454,6 +6609,34 @@ const styles = StyleSheet.create({
     borderColor: colors.primary,
     backgroundColor: colors.primarySoft
   },
+  reportViewTabs: {
+    width: 300,
+    minHeight: 42,
+    padding: 3,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceHover
+  },
+  reportViewTabsCompact: { width: undefined, alignSelf: "stretch" },
+  reportViewTab: {
+    flex: 1,
+    minHeight: 36,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    borderRadius: radii.sm
+  },
+  reportViewTabActive: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border
+  },
+  reportViewTabText: { ...typography.label, color: colors.textMuted },
+  reportViewTabTextActive: { color: colors.primary },
   reportPeriodContent: {
     padding: 18,
     gap: 20
@@ -6692,6 +6875,78 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: colors.dangerSoft
   },
+  dressingScroll: { flex: 1, minHeight: 0, marginTop: 10 },
+  dressingContent: {
+    width: "100%",
+    maxWidth: 1060,
+    alignSelf: "center",
+    gap: 10,
+    paddingBottom: 28
+  },
+  dressingContentCompact: { paddingBottom: 90 },
+  dressingProgressCard: {
+    minHeight: 56,
+    paddingHorizontal: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface
+  },
+  dressingProgressCopy: { flex: 1, minWidth: 0 },
+  dressingProgressTitle: { ...typography.label, color: colors.text },
+  dressingProgressMeta: { ...typography.meta, color: colors.textDim, marginTop: 2 },
+  dressingDesktopGrid: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", gap: 10 },
+  dressingDepartmentCard: {
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface
+  },
+  dressingDepartmentCardDesktop: { width: "49%", flexGrow: 1 },
+  dressingDepartmentHeader: {
+    minHeight: 38,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: colors.surfaceSoft,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  dressingDepartmentTitle: { ...typography.label, color: colors.primary, textTransform: "uppercase" },
+  dressingDepartmentCount: { ...typography.meta, color: colors.textMuted },
+  dressingPatientRow: {
+    minHeight: 56,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft
+  },
+  dressingPatientRowDesktop: { minHeight: 46, paddingVertical: 5 },
+  dressingPatientRowChecked: { backgroundColor: colors.successSoft },
+  dressingPatientCopy: { flex: 1, minWidth: 0 },
+  dressingPatientName: { ...typography.label, color: colors.text },
+  dressingPatientNameChecked: { color: colors.success },
+  dressingOperation: { ...typography.meta, color: colors.textDim, marginTop: 2 },
+  dressingCheck: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface
+  },
+  dressingCheckActive: { borderColor: colors.success, backgroundColor: colors.success },
   statisticsScreen: {
     flex: 1,
     minHeight: 0,
@@ -7093,8 +7348,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border
   },
-  reportDetailContent: { padding: 20, paddingBottom: 34 },
-  reportDocument: { gap: 20 },
+  reportDetailContent: { padding: 14, paddingBottom: 34 },
+  reportDocument: { gap: 10 },
   reportDocumentHeader: {
     flexDirection: "row",
     alignItems: "flex-start",

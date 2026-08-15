@@ -19,6 +19,7 @@ const PINNED_PROTOCOLS_KEY = "viewer.pinned-protocols.v1";
 const OPERATION_STATISTICS_KEY = "viewer.operation-statistics.v1";
 const HISTORICAL_STATISTICS_KEY = "viewer.historical-statistics.v1";
 const DUTY_SCHEDULE_KEY_PREFIX = "viewer.duty-schedule.v1";
+const DRESSING_CHECKS_KEY_PREFIX = "viewer.dressing-checks.v1";
 
 type PinnedProtocol = { study: Study; expiresAt: string };
 
@@ -121,6 +122,28 @@ export function saveReportsCache(
   window.localStorage.setItem(
     `${REPORTS_KEY_PREFIX}.${agentId}`,
     JSON.stringify(reports.slice(0, 30))
+  );
+}
+
+export function loadDressingChecks(roundID: string): string[] {
+  if (!hasStorage() || !roundID) return [];
+  try {
+    const stored = JSON.parse(
+      window.localStorage.getItem(`${DRESSING_CHECKS_KEY_PREFIX}.${roundID}`) ?? "[]"
+    );
+    return Array.isArray(stored)
+      ? stored.filter((value): value is string => typeof value === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveDressingChecks(roundID: string, patientIDs: string[]): void {
+  if (!hasStorage() || !roundID) return;
+  window.localStorage.setItem(
+    `${DRESSING_CHECKS_KEY_PREFIX}.${roundID}`,
+    JSON.stringify([...new Set(patientIDs)])
   );
 }
 
