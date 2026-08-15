@@ -2041,8 +2041,11 @@ function MobileNavigation({
     gestureIndexRef.current = nextIndex;
     setGestureIndex((current) => current === nextIndex ? current : nextIndex);
     dropX.setValue(boundedX - itemWidth / 2 + 3);
-    dropTilt.setValue(Math.max(-1, Math.min(1, delta / 16)));
-  }, [dropTilt, dropX, itemWidth, navWidth]);
+    const motion = Math.min(1, Math.abs(delta) / 22);
+    dropScaleX.setValue(1.04 + motion * 0.14);
+    dropScaleY.setValue(1.06 - motion * 0.08);
+    dropTilt.setValue(Math.max(-1, Math.min(1, delta / 22)));
+  }, [dropScaleX, dropScaleY, dropTilt, dropX, itemWidth, navWidth]);
 
   const settleDrop = useCallback((commit: boolean) => {
     const nextIndex = gestureIndexRef.current ?? activeIndex;
@@ -2087,13 +2090,13 @@ function MobileNavigation({
       }
       Animated.parallel([
         Animated.spring(dropScaleX, {
-          toValue: 1.15,
+          toValue: 1.04,
           damping: 13,
           stiffness: 300,
           useNativeDriver
         }),
         Animated.spring(dropScaleY, {
-          toValue: 0.88,
+          toValue: 1.06,
           damping: 13,
           stiffness: 300,
           useNativeDriver
@@ -2143,6 +2146,28 @@ function MobileNavigation({
             ]}
           >
             <View style={[styles.mobileNavDropGlow, dark && styles.mobileNavDropGlowDark]} />
+            <Animated.View
+              style={[
+                styles.mobileNavRefractionTrack,
+                {
+                  width: navWidth,
+                  transform: [{ translateX: Animated.multiply(dropX, -1) }]
+                }
+              ]}
+            >
+              {tabs.map((tab, index) => (
+                <View key={`lens-${tab.id}`} style={[styles.mobileNavRefractionItem, { width: itemWidth }]}>
+                  <Icon
+                    name={index === visualIndex ? (tab.icon.replace("-outline", "") as IconName) : tab.icon}
+                    size={20}
+                    color={dark ? darkColors.primary : colors.primary}
+                  />
+                  <Text numberOfLines={1} style={[styles.mobileNavRefractionText, dark && styles.mobileNavRefractionTextDark]}>
+                    {tab.shortLabel}
+                  </Text>
+                </View>
+              ))}
+            </Animated.View>
             <View style={styles.mobileNavDropShine} />
           </Animated.View>
         ) : null}
@@ -8290,41 +8315,56 @@ const styles = StyleSheet.create({
     bottom: 10,
     zIndex: 50,
     elevation: 20,
-    backgroundColor: colors.canvas,
+    backgroundColor: "transparent",
     paddingHorizontal: 10,
     paddingTop: 0,
     paddingBottom: 0
   },
-  mobileNavSafeDark: { backgroundColor: darkColors.canvas },
+  mobileNavSafeDark: { backgroundColor: "transparent" },
   mobileNav: {
-    height: 48,
+    height: 54,
     position: "relative",
-    overflow: "visible",
+    overflow: "hidden",
     flexDirection: "row",
     paddingHorizontal: 2,
-    paddingVertical: 2,
-    backgroundColor: "transparent"
+    paddingVertical: 4,
+    borderRadius: 28,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.78)",
+    backgroundColor: "rgba(245,249,251,0.68)",
+    shadowColor: "#315F73",
+    shadowOffset: { width: 0, height: 7 },
+    shadowOpacity: 0.13,
+    shadowRadius: 16,
+    ...(Platform.OS === "web" ? {
+      backdropFilter: "blur(18px) saturate(1.35)",
+      WebkitBackdropFilter: "blur(18px) saturate(1.35)",
+      boxShadow: "0 7px 24px rgba(24,61,78,0.13), inset 0 1px 0 rgba(255,255,255,0.78)"
+    } : {})
   },
-  mobileNavDark: { backgroundColor: "transparent" },
+  mobileNavDark: {
+    borderColor: "rgba(255,255,255,0.14)",
+    backgroundColor: "rgba(35,39,45,0.70)"
+  },
   mobileNavDrop: {
     position: "absolute",
     left: 0,
-    top: 2,
-    bottom: 2,
+    top: 3,
+    bottom: 3,
     overflow: "hidden",
-    borderRadius: 20,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.88)",
-    backgroundColor: "rgba(255,255,255,0.58)",
+    backgroundColor: "rgba(255,255,255,0.36)",
     shadowColor: "#2E667D",
     shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.18,
     shadowRadius: 10,
     elevation: 5,
     ...(Platform.OS === "web" ? {
-      backdropFilter: "blur(12px) saturate(1.45)",
-      WebkitBackdropFilter: "blur(12px) saturate(1.45)",
-      boxShadow: "0 5px 18px rgba(22,67,88,0.16), inset 0 1px 0 rgba(255,255,255,0.82)"
+      backdropFilter: "blur(9px) saturate(1.7) contrast(1.04)",
+      WebkitBackdropFilter: "blur(9px) saturate(1.7) contrast(1.04)",
+      boxShadow: "0 4px 15px rgba(22,67,88,0.16), inset 0 1px 0 rgba(255,255,255,0.90), inset 0 -1px 0 rgba(65,139,169,0.10)"
     } : {})
   },
   mobileNavDropDark: {
@@ -8352,6 +8392,31 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.76)",
     transform: [{ rotate: "-7deg" }]
   },
+  mobileNavRefractionTrack: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    flexDirection: "row",
+    alignItems: "stretch",
+    opacity: 0.94,
+    ...(Platform.OS === "web" ? {
+      filter: "saturate(1.35) contrast(1.08)"
+    } : {})
+  },
+  mobileNavRefractionItem: {
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    transform: [{ scale: 1.075 }]
+  },
+  mobileNavRefractionText: {
+    fontSize: 9,
+    lineHeight: 12,
+    fontWeight: "700",
+    color: colors.primary
+  },
+  mobileNavRefractionTextDark: { color: darkColors.primary },
   mobileNavItem: {
     flex: 1,
     zIndex: 2,
