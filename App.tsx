@@ -2147,7 +2147,6 @@ function MobileNavigation({
               }
             ]}
           >
-            <View style={[styles.mobileNavDropGlow, dark && styles.mobileNavDropGlowDark]} />
           </Animated.View>
         ) : null}
         {tabs.map((tab, index) => {
@@ -4833,11 +4832,28 @@ function PlanScreen({
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
       <View style={styles.planToolbar}>
-        <View style={styles.compactScreenHeading}>
-          <Text style={styles.compactScreenTitle}>План операций</Text>
-          <Text style={styles.compactScreenMeta}>
-            Нажмите строку дня для заполнения
-          </Text>
+        <View style={styles.planWeekSelector}>
+          {([0, 1] as const).map((offset) => (
+            <Pressable
+              key={offset}
+              accessibilityRole="button"
+              accessibilityState={{ selected: weekOffset === offset }}
+              onPress={() => onWeekChange(offset)}
+              style={[
+                styles.planWeekOption,
+                weekOffset === offset && styles.planWeekOptionActive
+              ]}
+            >
+              <Text
+                style={[
+                  styles.planWeekOptionText,
+                  weekOffset === offset && styles.planWeekOptionTextActive
+                ]}
+              >
+                {offset === 0 ? "Текущая неделя" : "Следующая неделя"}
+              </Text>
+            </Pressable>
+          ))}
         </View>
         <View style={styles.planToolbarActions}>
           <IconButton
@@ -4857,29 +4873,6 @@ function PlanScreen({
             }}
           />
         </View>
-      </View>
-      <View style={styles.planWeekSelector}>
-        {([0, 1] as const).map((offset) => (
-          <Pressable
-            key={offset}
-            accessibilityRole="button"
-            accessibilityState={{ selected: weekOffset === offset }}
-            onPress={() => onWeekChange(offset)}
-            style={[
-              styles.planWeekOption,
-              weekOffset === offset && styles.planWeekOptionActive
-            ]}
-          >
-            <Text
-              style={[
-                styles.planWeekOptionText,
-                weekOffset === offset && styles.planWeekOptionTextActive
-              ]}
-            >
-              {offset === 0 ? "Текущая неделя" : "Следующая неделя"}
-            </Text>
-          </Pressable>
-        ))}
       </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !plan ? (
@@ -7900,7 +7893,7 @@ const styles = StyleSheet.create({
     borderColor: colors.primary
   },
   planToolbar: {
-    minHeight: 54,
+    minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -8340,33 +8333,23 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.88)",
-    backgroundColor: "rgba(255,255,255,0.36)",
+    backgroundColor: "rgba(255,255,255,0.16)",
     shadowColor: "#2E667D",
     shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.18,
     shadowRadius: 10,
     elevation: 5,
     ...(Platform.OS === "web" ? {
-      backdropFilter: "blur(9px) saturate(1.7) contrast(1.04)",
-      WebkitBackdropFilter: "blur(9px) saturate(1.7) contrast(1.04)",
+      backdropFilter: "blur(14px) saturate(1.8) contrast(1.06)",
+      WebkitBackdropFilter: "blur(14px) saturate(1.8) contrast(1.06)",
       boxShadow: "0 4px 15px rgba(22,67,88,0.16), inset 0 1px 0 rgba(255,255,255,0.90), inset 0 -1px 0 rgba(65,139,169,0.10)"
     } : {})
   },
   mobileNavDropDark: {
     borderColor: "rgba(122,215,255,0.38)",
-    backgroundColor: "rgba(53,194,255,0.16)",
+    backgroundColor: "rgba(53,194,255,0.11)",
     shadowColor: "#35C2FF"
   },
-  mobileNavDropGlow: {
-    position: "absolute",
-    left: "9%",
-    right: "9%",
-    bottom: -9,
-    height: 21,
-    borderRadius: 18,
-    backgroundColor: "rgba(11,132,179,0.13)"
-  },
-  mobileNavDropGlowDark: { backgroundColor: "rgba(53,194,255,0.20)" },
   mobileNavItem: {
     flex: 1,
     zIndex: 2,
