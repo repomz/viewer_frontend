@@ -3167,6 +3167,7 @@ function ReportsScreen({
   );
   const [mobileOpen, setMobileOpen] = useState(false);
   const [periodOpen, setPeriodOpen] = useState(false);
+  const [dressingProgress, setDressingProgress] = useState({ completed: 0, total: 0 });
 
   useEffect(() => {
     if (!selected && reports[0]) setSelected(reports[0]);
@@ -3179,60 +3180,58 @@ function ReportsScreen({
 
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
-      <View
-        style={[
-          styles.compactScreenToolbar,
-          compact && styles.compactScreenToolbarMobile
-        ]}
-      >
-        <View style={styles.compactScreenHeading}>
-          <Text style={styles.compactScreenTitle}>Отчёты</Text>
-          <Text style={styles.compactScreenMeta}>
-            {view === "report" ? `${reports.length} записей` : "Маршрут по отделениям"}
-          </Text>
+      {!compact ? (
+        <View style={styles.compactScreenToolbar}>
+          <View style={styles.compactScreenHeading}>
+            <Text style={styles.compactScreenTitle}>Отчёты</Text>
+            <Text style={styles.compactScreenMeta}>
+              {view === "report" ? `${reports.length} записей` : "Маршрут по отделениям"}
+            </Text>
+          </View>
+          {view === "report" ? (
+            <ReportRequestButton generating={generating} onPress={() => setPeriodOpen(true)} />
+          ) : null}
         </View>
-        {view === "report" ? <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={generating ? "Отчёт формируется" : "Сформировать отчёт"}
-          disabled={generating}
-          onPress={() => setPeriodOpen(true)}
-          style={[
-            styles.reportRequestButton,
-            generating && styles.reportRequestButtonPending
-          ]}
-        >
-          {generating ? (
-            <ActivityIndicator size="small" color={colors.primary} />
-          ) : (
-            <Icon name="add" size={22} color={colors.primary} />
-          )}
-        </Pressable> : null}
-      </View>
-      <View style={[styles.reportViewTabs, compact && styles.reportViewTabsCompact]}>
-        <Pressable
-          accessibilityRole="tab"
-          accessibilityState={{ selected: view === "report" }}
-          onPress={() => setView("report")}
-          style={[styles.reportViewTab, view === "report" && styles.reportViewTabActive]}
-        >
-          <Icon name="document-text-outline" size={17} color={view === "report" ? colors.primary : colors.textDim} />
-          <Text style={[styles.reportViewTabText, view === "report" && styles.reportViewTabTextActive]}>Отчёт</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="tab"
-          accessibilityState={{ selected: view === "dressings" }}
-          onPress={() => setView("dressings")}
-          style={[styles.reportViewTab, view === "dressings" && styles.reportViewTabActive]}
-        >
-          <Icon name="checkmark-circle-outline" size={17} color={view === "dressings" ? colors.primary : colors.textDim} />
-          <Text style={[styles.reportViewTabText, view === "dressings" && styles.reportViewTabTextActive]}>Повязки</Text>
-        </Pressable>
+      ) : null}
+      <View style={compact ? styles.reportMobileTopRow : undefined}>
+        <View style={[styles.reportViewTabs, compact && styles.reportViewTabsCompact]}>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: view === "report" }}
+            onPress={() => setView("report")}
+            style={[styles.reportViewTab, view === "report" && styles.reportViewTabActive]}
+          >
+            <Icon name="document-text-outline" size={17} color={view === "report" ? colors.primary : colors.textDim} />
+            <Text style={[styles.reportViewTabText, view === "report" && styles.reportViewTabTextActive]}>Отчёт</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: view === "dressings" }}
+            onPress={() => setView("dressings")}
+            style={[styles.reportViewTab, view === "dressings" && styles.reportViewTabActive]}
+          >
+            <Icon name="checkmark-circle-outline" size={17} color={view === "dressings" ? colors.primary : colors.textDim} />
+            <Text style={[styles.reportViewTabText, view === "dressings" && styles.reportViewTabTextActive]}>Повязки</Text>
+          </Pressable>
+        </View>
+        {compact && view === "report" ? (
+          <ReportRequestButton generating={generating} onPress={() => setPeriodOpen(true)} />
+        ) : compact && view === "dressings" ? (
+          <Badge
+            label={`${dressingProgress.completed} из ${dressingProgress.total}`}
+            tone={dressingProgress.total > 0 && dressingProgress.completed === dressingProgress.total ? "success" : "neutral"}
+          />
+        ) : null}
       </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !reports.length ? (
         <LoadingState label="Загружаем отчёты…" />
       ) : view === "dressings" && reports.length ? (
-        <DressingChecklist report={reports[0]!} compact={compact} />
+        <DressingChecklist
+          report={reports[0]!}
+          compact={compact}
+          onProgressChange={setDressingProgress}
+        />
       ) : view === "dressings" ? (
         <EmptyState
           icon="checkmark-circle-outline"
@@ -3320,12 +3319,41 @@ function ReportsScreen({
   );
 }
 
+function ReportRequestButton({
+  generating,
+  onPress
+}: {
+  generating: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={generating ? "Отчёт формируется" : "Сформировать отчёт"}
+      disabled={generating}
+      onPress={onPress}
+      style={[
+        styles.reportRequestButton,
+        generating && styles.reportRequestButtonPending
+      ]}
+    >
+      {generating ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <Icon name="add" size={22} color={colors.primary} />
+      )}
+    </Pressable>
+  );
+}
+
 function DressingChecklist({
   report,
-  compact
+  compact,
+  onProgressChange
 }: {
   report: ReportDocument;
   compact: boolean;
+  onProgressChange?: (progress: { completed: number; total: number }) => void;
 }) {
   const data = useMemo(() => reportData(report), [report]);
   const roundID = dressingRoundID(data);
@@ -3370,6 +3398,10 @@ function DressingChecklist({
     setCompleted(loadDressingChecks(roundID));
   }, [roundID]);
 
+  useEffect(() => {
+    onProgressChange?.({ completed: completedTotal, total });
+  }, [completedTotal, onProgressChange, total]);
+
   const toggle = (patientID: string) => {
     setCompleted((current) => {
       const next = current.includes(patientID)
@@ -3392,24 +3424,19 @@ function DressingChecklist({
 
   return (
     <ScrollView
-      style={styles.dressingScroll}
+      style={[styles.dressingScroll, compact && styles.dressingScrollCompact]}
       contentContainerStyle={[styles.dressingContent, compact && styles.dressingContentCompact]}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.dressingProgressCard}>
-        <View style={styles.dressingProgressCopy}>
-          <Text style={styles.dressingProgressTitle}>Повязки</Text>
-          <Text style={styles.dressingProgressMeta}>{departments.length} отделений · {total} пациентов</Text>
-        </View>
-        {compact ? (
-          <Badge
-            label={`${completedTotal} из ${total}`}
-            tone={completedTotal === total ? "success" : "neutral"}
-          />
-        ) : (
+      {!compact ? (
+        <View style={styles.dressingProgressCard}>
+          <View style={styles.dressingProgressCopy}>
+            <Text style={styles.dressingProgressTitle}>Повязки</Text>
+            <Text style={styles.dressingProgressMeta}>{departments.length} отделений · {total} пациентов</Text>
+          </View>
           <Button label="Распечатать" compact icon="print-outline" variant="ghost" onPress={printDressings} />
-        )}
-      </View>
+        </View>
+      ) : null}
       <View style={!compact ? styles.dressingDesktopGrid : undefined}>
       {departments.map((group) => (
         <View key={group.department} style={[styles.dressingDepartmentCard, !compact && styles.dressingDepartmentCardDesktop]}>
@@ -6619,7 +6646,14 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.surfaceHover
   },
-  reportViewTabsCompact: { width: undefined, alignSelf: "stretch" },
+  reportMobileTopRow: {
+    minHeight: 48,
+    paddingBottom: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
+  },
+  reportViewTabsCompact: { width: undefined, alignSelf: "stretch", flex: 1, minWidth: 0 },
   reportViewTab: {
     flex: 1,
     minHeight: 36,
@@ -6876,6 +6910,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.dangerSoft
   },
   dressingScroll: { flex: 1, minHeight: 0, marginTop: 10 },
+  dressingScrollCompact: { marginTop: 0 },
   dressingContent: {
     width: "100%",
     maxWidth: 1060,
