@@ -22,7 +22,13 @@ for (const filename of [
   "apple-touch-icon-v5.png",
   "pwa-icon-512-v5.png",
   "angiography-splash.webp",
-  "angiography-splash.png"
+  "angiography-splash.png",
+  "startup-390x844@3x.png",
+  "startup-393x852@3x.png",
+  "startup-402x874@3x.png",
+  "startup-428x926@3x.png",
+  "startup-430x932@3x.png",
+  "startup-440x956@3x.png"
 ]) {
   copyFileSync(resolve(assets, filename), resolve(dist, filename));
 }
@@ -82,7 +88,13 @@ const iconFontPreload = iconFontPath
 
 const splashHead = `
     <link rel="preload" as="image" href="/angiography-splash.webp" fetchpriority="high" />
-    <link rel="apple-touch-startup-image" href="/angiography-splash.png?v=6" />
+    <link rel="apple-touch-startup-image" href="/angiography-splash.png?v=7" />
+    <link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)" href="/startup-390x844@3x.png?v=7" />
+    <link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3)" href="/startup-393x852@3x.png?v=7" />
+    <link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3)" href="/startup-402x874@3x.png?v=7" />
+    <link rel="apple-touch-startup-image" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)" href="/startup-428x926@3x.png?v=7" />
+    <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" href="/startup-430x932@3x.png?v=7" />
+    <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3)" href="/startup-440x956@3x.png?v=7" />
     ${iconFontPreload}
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-vessels-v5.png?v=5" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v5.png?v=5" />
@@ -121,7 +133,17 @@ const splashHead = `
           position: fixed !important;
           left: 0 !important;
           right: 0 !important;
-          bottom: 10px !important;
+          bottom: calc(env(safe-area-inset-bottom, 0px) + 6px) !important;
+          -webkit-user-select: none !important;
+          user-select: none !important;
+          -webkit-touch-callout: none !important;
+          touch-action: none !important;
+          overscroll-behavior: contain !important;
+        }
+        #mobile-navigation * {
+          -webkit-user-select: none !important;
+          user-select: none !important;
+          -webkit-touch-callout: none !important;
         }
       }
     </style>`;
@@ -220,12 +242,15 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put("/", response.clone()));
-          return response;
-        })
-        .catch(() => caches.match("/"))
+      caches.match("/").then((cached) => {
+        const network = fetch(request)
+          .then((response) => {
+            if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put("/", response.clone()));
+            return response;
+          })
+          .catch(() => cached);
+        return cached || network;
+      })
     );
     return;
   }

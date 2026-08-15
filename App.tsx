@@ -2004,6 +2004,7 @@ function MobileNavigation({
   onTabChange: (tab: Tab) => void;
   dark?: boolean;
 }) {
+  const insets = useSafeAreaInsets();
   const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTab));
   const [navWidth, setNavWidth] = useState(0);
   const [gestureIndex, setGestureIndex] = useState<number | null>(null);
@@ -2120,7 +2121,8 @@ function MobileNavigation({
       nativeID="mobile-navigation"
       style={[
         styles.mobileNavSafe,
-        dark && styles.mobileNavSafeDark
+        dark && styles.mobileNavSafeDark,
+        { bottom: Math.max(14, insets.bottom + 6) }
       ]}
     >
       <View
@@ -2146,29 +2148,6 @@ function MobileNavigation({
             ]}
           >
             <View style={[styles.mobileNavDropGlow, dark && styles.mobileNavDropGlowDark]} />
-            <Animated.View
-              style={[
-                styles.mobileNavRefractionTrack,
-                {
-                  width: navWidth,
-                  transform: [{ translateX: Animated.multiply(dropX, -1) }]
-                }
-              ]}
-            >
-              {tabs.map((tab, index) => (
-                <View key={`lens-${tab.id}`} style={[styles.mobileNavRefractionItem, { width: itemWidth }]}>
-                  <Icon
-                    name={index === visualIndex ? (tab.icon.replace("-outline", "") as IconName) : tab.icon}
-                    size={20}
-                    color={dark ? darkColors.primary : colors.primary}
-                  />
-                  <Text numberOfLines={1} style={[styles.mobileNavRefractionText, dark && styles.mobileNavRefractionTextDark]}>
-                    {tab.shortLabel}
-                  </Text>
-                </View>
-              ))}
-            </Animated.View>
-            <View style={styles.mobileNavDropShine} />
           </Animated.View>
         ) : null}
         {tabs.map((tab, index) => {
@@ -2204,6 +2183,7 @@ function MobileNavigation({
                 }
               />
               <Text
+                selectable={false}
                 numberOfLines={1}
                 style={[
                   styles.mobileNavText,
@@ -8339,6 +8319,11 @@ const styles = StyleSheet.create({
     ...(Platform.OS === "web" ? {
       backdropFilter: "blur(18px) saturate(1.35)",
       WebkitBackdropFilter: "blur(18px) saturate(1.35)",
+      WebkitTouchCallout: "none",
+      WebkitUserSelect: "none",
+      userSelect: "none",
+      touchAction: "none",
+      overscrollBehavior: "contain",
       boxShadow: "0 7px 24px rgba(24,61,78,0.13), inset 0 1px 0 rgba(255,255,255,0.78)"
     } : {})
   },
@@ -8382,41 +8367,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(11,132,179,0.13)"
   },
   mobileNavDropGlowDark: { backgroundColor: "rgba(53,194,255,0.20)" },
-  mobileNavDropShine: {
-    position: "absolute",
-    top: 4,
-    left: "18%",
-    width: "38%",
-    height: 5,
-    borderRadius: 5,
-    backgroundColor: "rgba(255,255,255,0.76)",
-    transform: [{ rotate: "-7deg" }]
-  },
-  mobileNavRefractionTrack: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    bottom: 0,
-    flexDirection: "row",
-    alignItems: "stretch",
-    opacity: 0.94,
-    ...(Platform.OS === "web" ? {
-      filter: "saturate(1.35) contrast(1.08)"
-    } : {})
-  },
-  mobileNavRefractionItem: {
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 2,
-    transform: [{ scale: 1.075 }]
-  },
-  mobileNavRefractionText: {
-    fontSize: 9,
-    lineHeight: 12,
-    fontWeight: "700",
-    color: colors.primary
-  },
-  mobileNavRefractionTextDark: { color: darkColors.primary },
   mobileNavItem: {
     flex: 1,
     zIndex: 2,
