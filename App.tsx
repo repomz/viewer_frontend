@@ -8,6 +8,7 @@ import {
   Image,
   Keyboard,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   RefreshControl,
@@ -61,6 +62,7 @@ import {
   type StudyCategory
 } from "./src/studyOperationCategories";
 import { findProtocolAngiography } from "./src/patientMatching";
+import { mobileNavigationIndexAtX } from "./src/mobileNavigation";
 import {
   defaultSettings,
   loadOperationPlanCache,
@@ -2002,6 +2004,114 @@ function MobileNavigation({
   onTabChange: (tab: Tab) => void;
   dark?: boolean;
 }) {
+  const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTab));
+  const [navWidth, setNavWidth] = useState(0);
+  const [gestureIndex, setGestureIndex] = useState<number | null>(null);
+  const gestureIndexRef = useRef<number | null>(null);
+  const draggingRef = useRef(false);
+  const lastTouchX = useRef(0);
+  const dropX = useRef(new Animated.Value(0)).current;
+  const dropScaleX = useRef(new Animated.Value(1)).current;
+  const dropScaleY = useRef(new Animated.Value(1)).current;
+  const dropTilt = useRef(new Animated.Value(0)).current;
+  const itemWidth = navWidth > 0 ? navWidth / tabs.length : 0;
+  const useNativeDriver = Platform.OS !== "web";
+
+  const springDropToIndex = useCallback((index: number) => {
+    if (!itemWidth) return;
+    Animated.spring(dropX, {
+      toValue: index * itemWidth + 3,
+      damping: 20,
+      stiffness: 260,
+      mass: 0.72,
+      useNativeDriver
+    }).start();
+  }, [dropX, itemWidth, useNativeDriver]);
+
+  useEffect(() => {
+    if (!draggingRef.current) springDropToIndex(activeIndex);
+  }, [activeIndex, springDropToIndex]);
+
+  const moveDrop = useCallback((x: number) => {
+    if (!Number.isFinite(x) || !itemWidth || !navWidth) return;
+    const boundedX = Math.max(itemWidth / 2, Math.min(navWidth - itemWidth / 2, x));
+    const nextIndex = mobileNavigationIndexAtX(x, navWidth, tabs.length);
+    const delta = boundedX - lastTouchX.current;
+    lastTouchX.current = boundedX;
+    gestureIndexRef.current = nextIndex;
+    setGestureIndex((current) => current === nextIndex ? current : nextIndex);
+    dropX.setValue(boundedX - itemWidth / 2 + 3);
+    dropTilt.setValue(Math.max(-1, Math.min(1, delta / 16)));
+  }, [dropTilt, dropX, itemWidth, navWidth]);
+
+  const settleDrop = useCallback((commit: boolean) => {
+    const nextIndex = gestureIndexRef.current ?? activeIndex;
+    draggingRef.current = false;
+    gestureIndexRef.current = null;
+    setGestureIndex(null);
+    if (commit) onTabChange(tabs[nextIndex]!.id);
+    springDropToIndex(commit ? nextIndex : activeIndex);
+    Animated.parallel([
+      Animated.spring(dropScaleX, {
+        toValue: 1,
+        damping: 9,
+        stiffness: 230,
+        mass: 0.62,
+        useNativeDriver
+      }),
+      Animated.spring(dropScaleY, {
+        toValue: 1,
+        damping: 9,
+        stiffness: 230,
+        mass: 0.62,
+        useNativeDriver
+      }),
+      Animated.spring(dropTilt, {
+        toValue: 0,
+        damping: 12,
+        stiffness: 220,
+        useNativeDriver
+      })
+    ]).start();
+  }, [activeIndex, dropScaleX, dropScaleY, dropTilt, onTabChange, springDropToIndex, useNativeDriver]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponderCapture: () => true,
+    onMoveShouldSetPanResponderCapture: () => true,
+    onPanResponderGrant: (event) => {
+      draggingRef.current = true;
+      const touchX = Number(event.nativeEvent.locationX);
+      if (Number.isFinite(touchX)) {
+        lastTouchX.current = touchX;
+        moveDrop(touchX);
+      }
+      Animated.parallel([
+        Animated.spring(dropScaleX, {
+          toValue: 1.15,
+          damping: 13,
+          stiffness: 300,
+          useNativeDriver
+        }),
+        Animated.spring(dropScaleY, {
+          toValue: 0.88,
+          damping: 13,
+          stiffness: 300,
+          useNativeDriver
+        })
+      ]).start();
+    },
+    onPanResponderMove: (event) => moveDrop(Number(event.nativeEvent.locationX)),
+    onPanResponderRelease: () => settleDrop(true),
+    onPanResponderTerminate: () => settleDrop(false),
+    onPanResponderTerminationRequest: () => false
+  }), [dropScaleX, dropScaleY, moveDrop, settleDrop, useNativeDriver]);
+
+  const visualIndex = gestureIndex ?? activeIndex;
+  const tilt = dropTilt.interpolate({
+    inputRange: [-1, 0, 1],
+    outputRange: ["-7deg", "0deg", "7deg"]
+  });
+
   return (
     <View
       nativeID="mobile-navigation"
@@ -2010,9 +2120,34 @@ function MobileNavigation({
         dark && styles.mobileNavSafeDark
       ]}
     >
-      <View style={[styles.mobileNav, dark && styles.mobileNavDark]}>
-        {tabs.map((tab) => {
-          const active = activeTab === tab.id;
+      <View
+        style={[styles.mobileNav, dark && styles.mobileNavDark]}
+        onLayout={(event) => setNavWidth(event.nativeEvent.layout.width)}
+        {...panResponder.panHandlers}
+      >
+        {navWidth > 0 ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.mobileNavDrop,
+              dark && styles.mobileNavDropDark,
+              {
+                width: Math.max(0, itemWidth - 6),
+                transform: [
+                  { translateX: dropX },
+                  { scaleX: dropScaleX },
+                  { scaleY: dropScaleY },
+                  { skewX: tilt }
+                ]
+              }
+            ]}
+          >
+            <View style={[styles.mobileNavDropGlow, dark && styles.mobileNavDropGlowDark]} />
+            <View style={styles.mobileNavDropShine} />
+          </Animated.View>
+        ) : null}
+        {tabs.map((tab, index) => {
+          const active = visualIndex === index;
           return (
             <Pressable
               key={tab.id}
@@ -2025,7 +2160,7 @@ function MobileNavigation({
                 dark && styles.mobileNavItemDark,
                 active && styles.mobileNavItemActive,
                 active && dark && styles.mobileNavItemActiveDark,
-                pressed && styles.mobileNavItemPressed
+                pressed && !draggingRef.current && styles.mobileNavItemPressed
               ]}
             >
               <Icon
@@ -8163,14 +8298,63 @@ const styles = StyleSheet.create({
   mobileNavSafeDark: { backgroundColor: darkColors.canvas },
   mobileNav: {
     height: 48,
+    position: "relative",
+    overflow: "visible",
     flexDirection: "row",
     paddingHorizontal: 2,
     paddingVertical: 2,
     backgroundColor: "transparent"
   },
   mobileNavDark: { backgroundColor: "transparent" },
+  mobileNavDrop: {
+    position: "absolute",
+    left: 0,
+    top: 2,
+    bottom: 2,
+    overflow: "hidden",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.88)",
+    backgroundColor: "rgba(255,255,255,0.58)",
+    shadowColor: "#2E667D",
+    shadowOffset: { width: 0, height: 5 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 5,
+    ...(Platform.OS === "web" ? {
+      backdropFilter: "blur(12px) saturate(1.45)",
+      WebkitBackdropFilter: "blur(12px) saturate(1.45)",
+      boxShadow: "0 5px 18px rgba(22,67,88,0.16), inset 0 1px 0 rgba(255,255,255,0.82)"
+    } : {})
+  },
+  mobileNavDropDark: {
+    borderColor: "rgba(122,215,255,0.38)",
+    backgroundColor: "rgba(53,194,255,0.16)",
+    shadowColor: "#35C2FF"
+  },
+  mobileNavDropGlow: {
+    position: "absolute",
+    left: "9%",
+    right: "9%",
+    bottom: -9,
+    height: 21,
+    borderRadius: 18,
+    backgroundColor: "rgba(11,132,179,0.13)"
+  },
+  mobileNavDropGlowDark: { backgroundColor: "rgba(53,194,255,0.20)" },
+  mobileNavDropShine: {
+    position: "absolute",
+    top: 4,
+    left: "18%",
+    width: "38%",
+    height: 5,
+    borderRadius: 5,
+    backgroundColor: "rgba(255,255,255,0.76)",
+    transform: [{ rotate: "-7deg" }]
+  },
   mobileNavItem: {
     flex: 1,
+    zIndex: 2,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
@@ -8181,10 +8365,10 @@ const styles = StyleSheet.create({
   mobileNavItemActive: {
     marginVertical: 1,
     borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.86)",
-    transform: [{ scale: 1.02 }]
+    backgroundColor: "transparent",
+    transform: [{ scale: 1.025 }]
   },
-  mobileNavItemActiveDark: { backgroundColor: darkColors.primarySoft },
+  mobileNavItemActiveDark: { backgroundColor: "transparent" },
   mobileNavItemPressed: {
     opacity: 0.82,
     transform: [{ scale: 0.92 }]
