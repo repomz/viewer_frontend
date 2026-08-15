@@ -2,11 +2,11 @@
   "expo": {
     "name": "Viewer Clinical",
     "slug": "viewer-clinical",
-    "version": "0.2.26",
+    "version": "0.2.27",
     "orientation": "portrait",
     "icon": "./assets/viewer-vessels-icon-v4.png",
     "userInterfaceStyle": "light",
-    "backgroundColor": "#F3F6F8",
+    "backgroundColor": "#07131F",
     "primaryColor": "#0B84B3",
     "splash": {
       "image": "./assets/angiography-splash.png",

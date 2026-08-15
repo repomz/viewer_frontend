@@ -21,7 +21,8 @@ for (const filename of [
   "favicon-vessels-v5.png",
   "apple-touch-icon-v5.png",
   "pwa-icon-512-v5.png",
-  "angiography-splash.webp"
+  "angiography-splash.webp",
+  "angiography-splash.png"
 ]) {
   copyFileSync(resolve(assets, filename), resolve(dist, filename));
 }
@@ -72,12 +73,16 @@ function findRelativeFile(directory, suffix, prefix = "") {
 }
 
 const iconFontPath = findRelativeFile(dist, ".ttf");
+const inlineSplash = `data:image/jpeg;base64,${readFileSync(
+  resolve(assets, "angiography-splash-inline.jpg")
+).toString("base64")}`;
 const iconFontPreload = iconFontPath
   ? `<link rel="preload" as="font" type="font/ttf" href="${iconFontPath}" crossorigin fetchpriority="high" />`
   : "";
 
 const splashHead = `
     <link rel="preload" as="image" href="/angiography-splash.webp" fetchpriority="high" />
+    <link rel="apple-touch-startup-image" href="/angiography-splash.png?v=6" />
     ${iconFontPreload}
     <link rel="icon" type="image/png" sizes="192x192" href="/favicon-vessels-v5.png?v=5" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v5.png?v=5" />
@@ -99,7 +104,11 @@ const splashHead = `
         z-index: 9999;
         display: grid;
         place-items: center;
-        background: #07131F url('/angiography-splash.webp') center / cover no-repeat;
+        background-color: #07131F;
+        background-image: url('/angiography-splash.webp'), url('${inlineSplash}');
+        background-position: center, center;
+        background-size: cover, cover;
+        background-repeat: no-repeat, no-repeat;
       }
       #viewer-preboot::before {
         content: '';
@@ -172,6 +181,7 @@ const appShell = [
   webBundlePath,
   iconFontPath,
   "/angiography-splash.webp",
+  "/angiography-splash.png?v=6",
   "/manifest.webmanifest?v=5",
   "/favicon-vessels-v5.png?v=5",
   "/apple-touch-icon-v5.png?v=5",
