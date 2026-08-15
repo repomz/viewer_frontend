@@ -595,7 +595,17 @@ export default function App() {
 
   const loadRequestHistory = useCallback(async () => {
     try {
-      const response = await getUserRequests(settings.userId, settings.agentId);
+      const responses = await Promise.all(
+        settings.agentIds.map((agentId) =>
+          getUserRequests(settings.userId, agentId)
+        )
+      );
+      const response = [...new Map(
+        responses.flat().map((request) => [request.id, request])
+      ).values()].sort(
+        (left, right) =>
+          new Date(right.created_at).getTime() - new Date(left.created_at).getTime()
+      );
       response.forEach((request) => {
         if (terminalStatuses.has(request.status)) {
           processedCompletions.current.add(request.id);
@@ -606,7 +616,7 @@ export default function App() {
     } catch {
       // Offline/mobile fallback remains the local request cache.
     }
-  }, [settings.agentId, settings.userId]);
+  }, [settings.agentIds, settings.userId]);
 
   const loadReports = useCallback(async () => {
     const cached = loadReportsCache(settings.agentId);
@@ -697,7 +707,7 @@ export default function App() {
 
   const updateAgentHealth = useCallback(async () => {
     const entries = await Promise.all(
-      settings.selectedAgentIds.map(async (agentId) => {
+      settings.agentIds.map(async (agentId) => {
         try {
           const [wellTimes, errorTimes] = await Promise.all([
             getAgentHeartbeatTimes(agentId, "well"),
@@ -731,7 +741,7 @@ export default function App() {
       })
     );
     setAgentHealthById(Object.fromEntries(entries));
-  }, [settings.selectedAgentIds]);
+  }, [settings.agentIds]);
 
   const refreshConnectivity = useCallback(() => {
     void updateServerHealth();
@@ -818,11 +828,22 @@ export default function App() {
       .then((ids) => {
         if (!ids.length) return;
         setSettings((current) => {
-          const agentIds = [...new Set([...current.agentIds, ...ids])].sort(
+          const agentIds = [...new Set(ids)].sort(
             (left, right) => left - right
           );
-          if (agentIds.length === current.agentIds.length) return current;
-          const next = { ...current, agentIds };
+          if (
+            agentIds.length === current.agentIds.length &&
+            agentIds.every((id, index) => id === current.agentIds[index])
+          ) return current;
+          const agentId = agentIds.includes(current.agentId)
+            ? current.agentId
+            : agentIds[0]!;
+          const next = {
+            ...current,
+            agentId,
+            agentIds,
+            selectedAgentIds: agentIds
+          };
           saveSettings(next);
           return next;
         });
@@ -867,6 +888,7 @@ export default function App() {
 
   useEffect(() => {
     if (!authenticated) return;
+    refreshConnectivity();
     const timer = setInterval(refreshConnectivity, 30_000);
     return () => clearInterval(timer);
   }, [authenticated, refreshConnectivity]);
@@ -1181,11 +1203,15 @@ export default function App() {
   }, []);
 
   const submitCommand = useCallback(
-    async (command: AgentCommand, payload: Record<string, unknown>) => {
+    async (
+      command: AgentCommand,
+      payload: Record<string, unknown>,
+      agentId = settings.agentId
+    ) => {
       try {
         const created = await createUserRequest({
           userId: settings.userId,
-          agentId: settings.agentId,
+          agentId,
           command,
           payload
         });
@@ -1224,9 +1250,11 @@ export default function App() {
         studies.some((study) => study.study_id === uid)
       ) return;
       automaticImportUIDs.current.add(uid);
-      void submitCommand(request.command === "find_ct" ? "get_ct" : "get_xa", {
-        study_uid: uid
-      });
+      void submitCommand(
+        request.command === "find_ct" ? "get_ct" : "get_xa",
+        { study_uid: uid },
+        request.agent_id
+      );
     });
   }, [requests, studies, submitCommand]);
 
@@ -1322,9 +1350,6 @@ export default function App() {
     }
   }, [loadReports, settings.agentId]);
 
-  const primaryAgentHealth =
-    agentHealthById[settings.agentId] ??
-    ({ online: false, status: "unknown" } satisfies AgentHealth);
   const isAngiography = activeTab === "angiography";
 
   if (!authenticated) {
@@ -1362,7 +1387,7 @@ export default function App() {
               compact={compact}
               activeTab={activeTab}
               health={health}
-              selectedAgentIds={settings.selectedAgentIds}
+              agentIds={settings.agentIds}
               agentHealthById={agentHealthById}
               onMenu={() => setMenuOpen(true)}
               onTabChange={setActiveTab}
@@ -1539,14 +1564,13 @@ export default function App() {
           initialCommand={commandModality}
           requests={requests}
           studies={studies}
+          agentHealthById={agentHealthById}
           onClose={() => setCommandOpen(false)}
           onSubmit={submitCommand}
         />
         <MobileMenu
           visible={menuOpen}
           settings={settings}
-          health={health}
-          agentHealth={primaryAgentHealth}
           onClose={() => setMenuOpen(false)}
           onSettings={() => {
             setMenuOpen(false);
@@ -1798,7 +1822,7 @@ function TopBar({
   compact,
   activeTab,
   health,
-  selectedAgentIds,
+  agentIds,
   agentHealthById,
   onMenu,
   onTabChange
@@ -1806,12 +1830,14 @@ function TopBar({
   compact: boolean;
   activeTab: Tab;
   health: ApiHealth | null;
-  selectedAgentIds: number[];
+  agentIds: number[];
   agentHealthById: Record<number, AgentHealth>;
   onMenu: () => void;
   onTabChange: (tab: Tab) => void;
 }) {
-  const active = desktopTabs.find((item) => item.id === activeTab) ?? tabs[0]!;
+  const active = activeTab === "settings"
+    ? { label: "Настройки" }
+    : desktopTabs.find((item) => item.id === activeTab) ?? tabs[0]!;
   const dark = activeTab === "angiography";
   const statusColor = (agentId: number) => {
     const agent = agentHealthById[agentId];
@@ -1851,7 +1877,7 @@ function TopBar({
             <Icon name="server-outline" size={16}
               color={health?.ok ? colors.success : colors.danger} />
           </View>
-          {selectedAgentIds.map((agentId) => (
+          {agentIds.map((agentId) => (
             <View
               key={agentId}
               accessibilityLabel={`Агент ${agentId}`}
@@ -1946,7 +1972,7 @@ function TopBar({
             Сервер
           </Text>
         </View>
-        {selectedAgentIds.map((agentId) => (
+        {agentIds.map((agentId) => (
           <View
             key={agentId}
             style={[styles.healthPill, dark && styles.healthPillDark]}
@@ -2955,7 +2981,8 @@ function RequestCard({
   studies: Study[];
   onSubmit: (
     command: AgentCommand,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    agentId?: number
   ) => Promise<boolean>;
   onRefresh: () => void;
 }) {
@@ -3079,7 +3106,7 @@ function RequestCard({
                     onPress={() =>
                       void onSubmit("import_study", {
                         protocol_ref: String(protocol.protocol_ref)
-                      })
+                      }, request.agent_id)
                     }
                   />
                 ) : null}
@@ -3120,7 +3147,8 @@ function RequestCard({
                     onPress={() =>
                       void onSubmit(
                         modality === "CT" ? "get_ct" : "get_xa",
-                        { study_uid: uid }
+                        { study_uid: uid },
+                        request.agent_id
                       )
                     }
                   />
@@ -5097,16 +5125,12 @@ function PlanScreen({
 function MobileMenu({
   visible,
   settings,
-  health,
-  agentHealth,
   onClose,
 	onSettings,
 	onStatistics
 }: {
   visible: boolean;
   settings: AppSettings;
-  health: ApiHealth | null;
-  agentHealth: AgentHealth;
   onClose: () => void;
   onSettings: () => void;
 	onStatistics: () => void;
@@ -5170,22 +5194,17 @@ function MobileMenu({
               </Text>
             </View>
           </View>
-          <View style={styles.drawerStatuses}>
-            <StatusLine
-              icon="server-outline"
-              label="Viewer Backend"
-              online={Boolean(health?.ok)}
-              meta={health?.ok ? "Сервер доступен" : "Нет соединения"}
-            />
-            <StatusLine
-              icon="hardware-chip-outline"
-              label={`Hospital Agent ${settings.agentId}`}
-              online={agentHealth.online && agentHealth.status === "well"}
-              warning={agentHealth.status === "with_errors"}
-              meta={`Heartbeat ${relativeTime(agentHealth.lastSeen)}`}
-            />
-          </View>
           <View style={styles.drawerMenu}>
+			<Pressable
+			  disabled
+			  accessibilityRole="button"
+			  accessibilityState={{ disabled: true }}
+			  style={[styles.drawerItem, styles.drawerItemDisabled]}
+			>
+			  <Icon name="person-outline" color={colors.textDim} />
+			  <Text style={styles.drawerItemText}>Профиль</Text>
+			  <Badge label="Скоро" tone="neutral" />
+			</Pressable>
 			<Pressable
 			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
 			  onPress={onStatistics}
@@ -5202,7 +5221,7 @@ function MobileMenu({
               onPress={onSettings}
             >
               <Icon name="options-outline" color={colors.textMuted} />
-              <Text style={styles.drawerItemText}>Настройки и агенты</Text>
+              <Text style={styles.drawerItemText}>Настройки</Text>
               <Icon name="chevron-forward" size={17} color={colors.textDim} />
             </Pressable>
           </View>
@@ -5317,22 +5336,7 @@ function SettingsScreen({
   onCheck: () => void;
   onClearCache: () => void;
 }) {
-  const [agentIds] = useState(settings.agentIds);
-  const [selectedAgentIds, setSelectedAgentIds] = useState(
-    settings.selectedAgentIds
-  );
   const [userId, setUserId] = useState(settings.userId);
-
-  const toggleAgent = (id: number) => {
-    setSelectedAgentIds((current) => {
-      if (current.includes(id)) {
-        return current.length === 1
-          ? current
-          : current.filter((value) => value !== id);
-      }
-      return current.length < 2 ? [...current, id] : [current[1]!, id];
-    });
-  };
 
   return (
     <ScrollView
@@ -5343,67 +5347,10 @@ function SettingsScreen({
       <View style={styles.settingsGrid}>
         <View style={styles.settingsCard}>
           <View>
-            <Text style={styles.settingsTitle}>Больничные агенты</Text>
+            <Text style={styles.settingsTitle}>Пользователь</Text>
             <Text style={styles.settingsDescription}>
-              Выберите до двух агентов — только их статусы появятся в шапке.
+              Локальные параметры профиля до подключения авторизации.
             </Text>
-          </View>
-          <View style={styles.agentManager}>
-            {agentIds.map((id) => {
-              const active = selectedAgentIds.includes(id);
-              const state =
-                agentHealthById[id] ??
-                ({ online: false, status: "unknown" } satisfies AgentHealth);
-              return (
-                <Pressable
-                  key={id}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: active }}
-                  onPress={() => toggleAgent(id)}
-                  style={({ pressed }) => [
-                    styles.agentRow,
-                    active && styles.agentRowSelected,
-                    pressed && styles.pressed
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.selectionCheck,
-                      active && styles.selectionCheckSelected
-                    ]}
-                  >
-                    {active ? (
-                      <Icon name="checkmark" size={16} color="#fff" />
-                    ) : null}
-                  </View>
-                  <View style={styles.agentRowCopy}>
-                    <Text style={styles.agentRowTitle}>Hospital Agent {id}</Text>
-                    <Text style={styles.requestMetaText}>
-                      {state.status === "with_errors"
-                        ? "Есть ошибки"
-                        : state.online
-                          ? "На связи"
-                          : state.status === "unknown"
-                            ? "Статус ещё не проверен"
-                            : `Не в сети · ${relativeTime(state.lastSeen)}`}
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.statusDot,
-                      {
-                        backgroundColor:
-                          state.status === "with_errors"
-                            ? colors.warning
-                            : state.online
-                              ? colors.success
-                              : colors.danger
-                      }
-                    ]}
-                  />
-                </Pressable>
-              );
-            })}
           </View>
           <Field
             label="Идентификатор пользователя"
@@ -5416,9 +5363,7 @@ function SettingsScreen({
             label="Сохранить"
             onPress={() =>
               onSave({
-                agentId: selectedAgentIds[0] ?? agentIds[0] ?? 2,
-                agentIds,
-                selectedAgentIds,
+                ...settings,
                 userId,
                 autoDownloadAngiography: true
               })
@@ -5479,7 +5424,7 @@ function SettingsScreen({
             online={Boolean(health?.ok)}
             meta={health?.message ?? "Проверяем…"}
           />
-          {selectedAgentIds.map((id) => {
+          {settings.agentIds.map((id) => {
             const state =
               agentHealthById[id] ??
               ({ online: false, status: "unknown" } satisfies AgentHealth);
@@ -5522,6 +5467,7 @@ function CommandSheet({
   initialCommand,
   requests,
   studies,
+  agentHealthById,
   onClose,
   onSubmit
 }: {
@@ -5530,20 +5476,37 @@ function CommandSheet({
   initialCommand: "find_xa" | "find_ct";
   requests: UserRequest[];
   studies: Study[];
+  agentHealthById: Record<number, AgentHealth>;
   onClose: () => void;
   onSubmit: (
     command: AgentCommand,
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    agentId?: number
   ) => Promise<boolean>;
 }) {
   const [command, setCommand] = useState<AgentCommand>(initialCommand);
   const [patient, setPatient] = useState("");
   const [searchPeriod, setSearchPeriod] = useState("today");
   const [submitting, setSubmitting] = useState(false);
+  const activeAgentIds = useMemo(
+    () => settings.agentIds.filter((id) => agentHealthById[id]?.online),
+    [agentHealthById, settings.agentIds]
+  );
+  const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
   const needsPatient = ["find_study", "find_xa", "find_ct"].includes(command);
   const needsPacsPeriod = ["find_xa", "find_ct"].includes(command);
-  const valid = !needsPatient || patient.trim().length >= 2;
+  const valid = Boolean(selectedAgentId) && (!needsPatient || patient.trim().length >= 2);
   useEffect(() => setCommand(initialCommand), [initialCommand, visible]);
+  useEffect(() => {
+    if (!visible) return;
+    setSelectedAgentId((current) =>
+      current && activeAgentIds.includes(current)
+        ? current
+        : activeAgentIds.includes(settings.agentId)
+          ? settings.agentId
+          : activeAgentIds[0] ?? null
+    );
+  }, [activeAgentIds, settings.agentId, visible]);
   const relevantRequests = requests
     .filter((request) => request.command === command)
     .slice(0, 5);
@@ -5557,7 +5520,8 @@ function CommandSheet({
           ...(needsPacsPeriod ? { period: searchPeriod } : {})
         }
       : {};
-    const ok = await onSubmit(command, payload);
+    if (!selectedAgentId) return;
+    const ok = await onSubmit(command, payload, selectedAgentId);
     setSubmitting(false);
     if (ok) {
       setPatient("");
@@ -5572,11 +5536,41 @@ function CommandSheet({
       fullScreen
     >
       <ScrollView contentContainerStyle={styles.commandContent}>
-        <View style={styles.commandDestination}>
-          <Icon name="hardware-chip-outline" color={colors.primary} />
-          <Text style={styles.commandDestinationText}>
-            Агент {settings.agentId} · пользователь {settings.userId}
-          </Text>
+        <View style={styles.commandAgentSection}>
+          <Text style={styles.commandGroupLabel}>ОТПРАВИТЬ АГЕНТУ</Text>
+          {activeAgentIds.length ? (
+            <View style={styles.commandAgentOptions}>
+              {activeAgentIds.map((agentId) => {
+                const selected = selectedAgentId === agentId;
+                return (
+                  <Pressable
+                    key={agentId}
+                    accessibilityRole="radio"
+                    accessibilityState={{ checked: selected }}
+                    onPress={() => setSelectedAgentId(agentId)}
+                    style={[
+                      styles.commandAgentOption,
+                      selected && styles.commandAgentOptionActive
+                    ]}
+                  >
+                    <View style={styles.commandAgentOnlineDot} />
+                    <Text style={[
+                      styles.commandAgentOptionText,
+                      selected && styles.commandAgentOptionTextActive
+                    ]}>
+                      Агент {agentId}
+                    </Text>
+                    {selected ? <Icon name="checkmark" size={16} color={colors.primary} /> : null}
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : (
+            <View style={styles.commandNoAgents}>
+              <Icon name="alert-circle-outline" size={18} color={colors.warning} />
+              <Text style={styles.commandNoAgentsText}>Нет агентов на связи</Text>
+            </View>
+          )}
         </View>
         {needsPatient ? (
           <Field
@@ -7587,6 +7581,45 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft
   },
   commandDestinationText: { ...typography.label, color: colors.textMuted },
+  commandAgentSection: { gap: 8 },
+  commandAgentOptions: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  commandAgentOption: {
+    minHeight: 42,
+    minWidth: 126,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface
+  },
+  commandAgentOptionActive: {
+    borderColor: "rgba(11,132,179,0.34)",
+    backgroundColor: colors.primarySoft
+  },
+  commandAgentOnlineDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 7,
+    backgroundColor: colors.success
+  },
+  commandAgentOptionText: { ...typography.label, color: colors.textMuted },
+  commandAgentOptionTextActive: { color: colors.primary },
+  commandNoAgents: {
+    minHeight: 42,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    backgroundColor: colors.warningSoft
+  },
+  commandNoAgentsText: { ...typography.label, color: colors.textMuted },
   commandGroupLabel: { ...typography.meta, color: colors.textDim, letterSpacing: 1 },
   commandOptions: { gap: 6 },
   commandOption: {
@@ -8087,6 +8120,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceSoft
   },
   drawerItemText: { ...typography.label, color: colors.text, flex: 1 },
+  drawerItemDisabled: { opacity: 0.58 },
   drawerFooter: {
     marginTop: "auto",
     flexDirection: "row",
