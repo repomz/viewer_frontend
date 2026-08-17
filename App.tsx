@@ -4217,7 +4217,17 @@ function ReportSection({
   operations: ReportOperation[];
 }) {
   if (!operations.length) return null;
-  const groups = ["КАГ", "КАГ + стент", "ЦАГ", "Тромбэкстракции", "Аневризма", "Другие"]
+  const groups = [
+    "КАГ",
+    "КАГ + стент",
+    "ЦАГ",
+    "ЦАГ + ТА",
+    "ЦАГ + ТА + БАП",
+    "ЦАГ + ТА + стент",
+    "Тромбэкстракции",
+    "Аневризма",
+    "Другие"
+  ]
     .map((label) => ({ label, operations: operations.filter((operation) => reportOperationCategory(operation) === label) }))
     .filter((group) => group.operations.length);
   let absoluteIndex = 0;
@@ -4507,6 +4517,7 @@ const planDepartments = [
   "неврология",
   "нейро/х",
   "сосуды",
+  "диализ/о",
   "гинек",
   "урология",
   "гной хир"
@@ -4519,6 +4530,7 @@ const defaultPlanOperations: Record<string, string> = {
   неврология: "цаг",
   "нейро/х": "цаг",
   сосуды: "ангио вса",
+  "диализ/о": "ангио в/к",
   гинек: "эма",
   урология: "эмб простаты",
   "гной хир": "бап голени"
@@ -4541,6 +4553,7 @@ const planOperationsFor = (department: string): string[] => {
     return ["каг стент", "каг диагностика", "ЭКС"];
   }
   if (department === "сосуды") return vascularOperations;
+  if (department === "диализ/о") return ["ангио в/к", "бап фистулы", "каг"];
   return [defaultPlanOperations[department] ?? ""];
 };
 

@@ -9,6 +9,19 @@ describe("report operation presentation", () => {
     expect(reportOperationCategory({ operation: "БАП ПКА + внутрисосудистая визуализация" })).toBe("КАГ + стент");
   });
 
+  it.each([
+    ["ЦАГ + ТА СМА", "ЦАГ + ТА"],
+    ["цаг, тэ из ПМА", "ЦАГ + ТА"],
+    ["Церебральная ангиография. Тромбаспирация", "ЦАГ + ТА"],
+    ["ЦАГ: ТРОМБО-АСПИРАЦИЯ", "ЦАГ + ТА"],
+    ["ЦАГ; тромб экстракция", "ЦАГ + ТА"],
+    ["ЦАГ — тромбэкстракция + стентирование ВСА", "ЦАГ + ТА + стент"],
+    ["ЦАГ, ТА, баллонная ангиопластика", "ЦАГ + ТА + БАП"],
+    ["ЦАГ + ТЭ + БАП + стентирование", "ЦАГ + ТА + стент"]
+  ] as const)("classifies combined cerebral intervention %s", (operation, expected) => {
+    expect(reportOperationCategory({ operation })).toBe(expected);
+  });
+
   it("builds a deduplicated dressing route by department without today's plan", () => {
     const groups = dressingDepartments({
       emergency_operations: [
