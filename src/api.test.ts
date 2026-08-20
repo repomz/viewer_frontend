@@ -2,6 +2,7 @@ import {
   checkHealth,
   generateReport,
   getAgentHeartbeatTimes,
+  getBackendVersion,
   getHistoricalStatistics,
   getOperationStatistics,
   getOperationPlan,
@@ -53,6 +54,24 @@ describe("Viewer API client", () => {
       .mockResolvedValue(new Response("DICOM viewer API v0.1", { status: 200 }));
 
     await expect(checkHealth()).resolves.toBe("DICOM viewer API v0.1");
+  });
+
+  it("loads the backend build version", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ version: "0.2.8", revision: "abc123" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await expect(getBackendVersion()).resolves.toEqual({
+      version: "0.2.8",
+      revision: "abc123"
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/version",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
   });
 
   it("loads the latest successful agent heartbeats", async () => {

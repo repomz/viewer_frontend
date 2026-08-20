@@ -93,6 +93,13 @@ export async function checkHealth(): Promise<string> {
   return request<string>("/", { headers: { Accept: "text/plain" } }, 5_000);
 }
 
+export async function getBackendVersion(): Promise<{
+  version: string;
+  revision: string;
+}> {
+  return request<{ version: string; revision: string }>("/version", {}, 5_000);
+}
+
 export async function getStudies(): Promise<Study[]> {
   const response = await request<Study[]>("/studies?page=1&page_size=100");
   return Array.isArray(response) ? response : [];

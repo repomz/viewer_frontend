@@ -14,13 +14,14 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = resolve(projectRoot, "dist");
 const assets = resolve(projectRoot, "assets");
 const indexPath = resolve(dist, "index.html");
+const frontendVersion = JSON.parse(
+  readFileSync(resolve(projectRoot, "package.json"), "utf8")
+).version;
 
 mkdirSync(dist, { recursive: true });
 
 for (const filename of [
-  "favicon-vessels-v5.png",
-  "apple-touch-icon-v5.png",
-  "pwa-icon-512-v5.png",
+  "viewer-vessels-icon-v4.png",
   "angiography-splash.webp",
   "angiography-splash.png",
   "startup-390x844@3x.png",
@@ -34,10 +35,11 @@ for (const filename of [
 }
 
 // iOS asks for these conventional names before it parses the document head.
-// Keeping every fallback identical prevents the obsolete Expo "V" icon flash.
-copyFileSync(resolve(assets, "apple-touch-icon-v5.png"), resolve(dist, "apple-touch-icon.png"));
-copyFileSync(resolve(assets, "apple-touch-icon-v5.png"), resolve(dist, "apple-touch-icon-precomposed.png"));
-copyFileSync(resolve(assets, "favicon-vessels-v5.png"), resolve(dist, "favicon.ico"));
+// Every alias is an exact copy of the one canonical vessels icon.
+const canonicalIcon = resolve(assets, "viewer-vessels-icon-v4.png");
+copyFileSync(canonicalIcon, resolve(dist, "apple-touch-icon.png"));
+copyFileSync(canonicalIcon, resolve(dist, "apple-touch-icon-precomposed.png"));
+copyFileSync(canonicalIcon, resolve(dist, "favicon.ico"));
 
 writeFileSync(
   resolve(dist, "manifest.webmanifest"),
@@ -53,8 +55,8 @@ writeFileSync(
       theme_color: "#07131F",
       icons: [
         {
-          src: "/pwa-icon-512-v5.png",
-          sizes: "512x512",
+          src: "/viewer-vessels-icon-v4.png",
+          sizes: "1024x1024",
           type: "image/png",
           purpose: "any"
         }
@@ -96,9 +98,9 @@ const splashHead = `
     <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" href="/startup-430x932@3x.png?v=7" />
     <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3)" href="/startup-440x956@3x.png?v=7" />
     ${iconFontPreload}
-    <link rel="icon" type="image/png" sizes="192x192" href="/favicon-vessels-v5.png?v=5" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon-v5.png?v=5" />
-    <link rel="manifest" href="/manifest.webmanifest?v=5" />
+    <link rel="icon" type="image/png" sizes="1024x1024" href="/viewer-vessels-icon-v4.png?v=6" />
+    <link rel="apple-touch-icon" href="/viewer-vessels-icon-v4.png?v=6" />
+    <link rel="manifest" href="/manifest.webmanifest?v=6" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style id="viewer-launch-screen">
@@ -127,6 +129,17 @@ const splashHead = `
         position: absolute;
         inset: 0;
         background: rgba(5, 12, 21, .24);
+      }
+      #viewer-preboot-version {
+        position: absolute;
+        z-index: 1;
+        left: 16px;
+        right: 16px;
+        bottom: max(18px, env(safe-area-inset-bottom, 0px));
+        color: rgba(226, 240, 249, .7);
+        font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        letter-spacing: .02em;
+        text-align: center;
       }
       @media (max-width: 767px), (display-mode: standalone) {
         #mobile-navigation {
@@ -172,15 +185,25 @@ if (webBundle) {
   webBundlePath = `/_expo/static/js/web/${hashedBundle}`;
   bundleVersion = bundleHash;
 }
-html = html.replace(/<link rel="icon"[^>]*>/i, "");
+html = html.replace(/<link rel="icon"[^>]*>/gi, "");
 html = html.replace("</head>", `${splashHead}\n  </head>`);
 html = html.replace(
   '<div id="root"></div>',
-  '<div id="viewer-preboot"></div><div id="root"></div>'
+  `<div id="viewer-preboot"><div id="viewer-preboot-version">Frontend ${frontendVersion} · Backend …</div></div><div id="root"></div>`
 );
 html = html.replace(
   "</body>",
   `<script>
+    fetch('/api/version', { headers: { Accept: 'application/json' } })
+      .then(function (response) { return response.ok ? response.json() : Promise.reject(); })
+      .then(function (build) {
+        var label = document.getElementById('viewer-preboot-version');
+        if (label) label.textContent = 'Frontend ${frontendVersion} · Backend ' + (build.version || 'неизвестно');
+      })
+      .catch(function () {
+        var label = document.getElementById('viewer-preboot-version');
+        if (label) label.textContent = 'Frontend ${frontendVersion} · Backend недоступно';
+      });
     if ('serviceWorker' in navigator && window.isSecureContext) {
       window.addEventListener('load', function () {
         var reloadingForUpdate = false;
@@ -204,13 +227,11 @@ const appShell = [
   iconFontPath,
   "/angiography-splash.webp",
   "/angiography-splash.png?v=6",
-  "/manifest.webmanifest?v=5",
-  "/favicon-vessels-v5.png?v=5",
-  "/apple-touch-icon-v5.png?v=5",
+  "/manifest.webmanifest?v=6",
+  "/viewer-vessels-icon-v4.png?v=6",
   "/apple-touch-icon.png",
   "/apple-touch-icon-precomposed.png",
-  "/favicon.ico",
-  "/pwa-icon-512-v5.png"
+  "/favicon.ico"
 ].filter(Boolean);
 
 writeFileSync(

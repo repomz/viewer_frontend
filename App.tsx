@@ -34,6 +34,7 @@ import {
   deleteUserRequest,
   getAgentHeartbeatTimes,
   getAgents,
+  getBackendVersion,
   generateReport,
   getHistoricalStatistics,
   getDutySchedule,
@@ -49,6 +50,7 @@ import {
   searchStudies,
   suggestProtocolStudies
 } from "./src/api";
+import packageMetadata from "./package.json";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import { isPacsImagingStudy } from "./src/studyClassification";
 import {
@@ -487,6 +489,7 @@ export default function App() {
   const [reportsError, setReportsError] = useState("");
   const [reportGenerating, setReportGenerating] = useState(false);
   const [health, setHealth] = useState<ApiHealth | null>(null);
+  const [backendVersion, setBackendVersion] = useState("…");
   const [agentHealthById, setAgentHealthById] = useState<
     Record<number, AgentHealth>
   >({});
@@ -705,6 +708,15 @@ export default function App() {
     }
   }, []);
 
+  const updateBackendVersion = useCallback(async () => {
+    try {
+      const build = await getBackendVersion();
+      setBackendVersion(build.version || "неизвестно");
+    } catch {
+      setBackendVersion("недоступно");
+    }
+  }, []);
+
   const updateAgentHealth = useCallback(async () => {
     const entries = await Promise.all(
       settings.agentIds.map(async (agentId) => {
@@ -786,6 +798,7 @@ export default function App() {
     void Promise.allSettled([
       loadStudies(),
       updateServerHealth(),
+      updateBackendVersion(),
       updateAgentHealth(),
       loadPlan(0),
       loadReports(),
@@ -800,6 +813,7 @@ export default function App() {
     loadStatistics,
     loadDutySchedule,
     updateAgentHealth,
+    updateBackendVersion,
     updateServerHealth
   ]);
 
@@ -1346,6 +1360,8 @@ export default function App() {
           ready={appReady}
           entering={enterRequested && !appReady}
           revealForm={launchDelayElapsed}
+          frontendVersion={packageMetadata.version}
+          backendVersion={backendVersion}
           onEnter={() => {
             if (appReady) setAuthenticated(true);
             else setEnterRequested(true);
@@ -1600,12 +1616,16 @@ function LoginScreen({
   ready,
   entering,
   revealForm,
+  frontendVersion,
+  backendVersion,
   onEnter
 }: {
   compact: boolean;
   ready: boolean;
   entering: boolean;
   revealForm: boolean;
+  frontendVersion: string;
+  backendVersion: string;
   onEnter: () => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -1754,6 +1774,9 @@ function LoginScreen({
             <Text style={styles.loginTemporary}>
               Авторизация будет подключена позднее. Сейчас вход выполняется без
               проверки данных.
+            </Text>
+            <Text style={styles.loginVersions}>
+              Frontend {frontendVersion} · Backend {backendVersion}
             </Text>
           </View>
         </Animated.View>
@@ -5969,6 +5992,12 @@ const styles = StyleSheet.create({
     color: darkColors.textDim,
     fontSize: 10,
     lineHeight: 14,
+    textAlign: "center"
+  },
+  loginVersions: {
+    ...typography.meta,
+    marginTop: 10,
+    color: darkColors.textDim,
     textAlign: "center"
   },
   safeArea: { flex: 1, backgroundColor: colors.canvas },
