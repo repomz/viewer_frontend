@@ -94,7 +94,6 @@ import {
   pruneDicomCache,
   pruneExpiredDicomFrames,
   deleteStudyFromDevice,
-  downloadStudyFirstSeriesForOffline,
   downloadStudyForOffline,
   formatStorageSize,
   getCachedPreparedXAManifest,
@@ -1085,18 +1084,20 @@ export default function App() {
     void (async () => {
       let retryNeeded = false;
       try {
-        for (const study of studiesToDownload) {
-          if (!autoDownloadAllowedRef.current) break;
-          const firstSeriesReady = await downloadStudyFirstSeriesForOffline(
-            study.study_id
-          );
-          retryNeeded ||= !firstSeriesReady;
-        }
-        for (const study of studiesToDownload) {
-          if (!autoDownloadAllowedRef.current) break;
-          const complete = await downloadStudyForOffline(study.study_id);
-          retryNeeded ||= !complete;
-        }
+        let nextStudy = 0;
+        const worker = async () => {
+          while (autoDownloadAllowedRef.current) {
+            const study = studiesToDownload[nextStudy++];
+            if (!study) return;
+            // Cache every MP4 series for a patient in one pass. The previous
+            // two-pass queue downloaded the first series for every patient
+            // before returning for the remaining series, leaving studies
+            // incomplete for too long.
+            const complete = await downloadStudyForOffline(study.study_id);
+            retryNeeded ||= !complete;
+          }
+        };
+        await Promise.all(Array.from({ length: 2 }, () => worker()));
       } finally {
         autoDownloadRunning.current = false;
         if (retryNeeded && autoDownloadAllowedRef.current) {
@@ -1446,7 +1447,12 @@ export default function App() {
                   onOpenXA={openStudyAngiography}
                 />
               ) : null}
-              {activeTab === "angiography" ? (
+              <View
+                style={[
+                  styles.preservedScreen,
+                  activeTab !== "angiography" && styles.hiddenScreen
+                ]}
+              >
                 <AngiographyScreen
                   compact={compact}
                   studies={xaStudies}
@@ -1463,7 +1469,7 @@ export default function App() {
                     setCommandOpen(true);
                   }}
                 />
-              ) : null}
+              </View>
               {activeTab === "reports" ? (
                 <ReportsScreen
                   compact={compact}
@@ -4518,6 +4524,7 @@ const planDepartments = [
   "нейро/х",
   "сосуды",
   "диализ/о",
+  "платное",
   "гинек",
   "урология",
   "гной хир"
@@ -4531,6 +4538,7 @@ const defaultPlanOperations: Record<string, string> = {
   "нейро/х": "цаг",
   сосуды: "ангио вса",
   "диализ/о": "ангио в/к",
+  платное: "каг",
   гинек: "эма",
   урология: "эмб простаты",
   "гной хир": "бап голени"
@@ -4554,6 +4562,7 @@ const planOperationsFor = (department: string): string[] => {
   }
   if (department === "сосуды") return vascularOperations;
   if (department === "диализ/о") return ["ангио в/к", "бап фистулы", "каг"];
+  if (department === "платное") return ["каг", "каг стент", "цаг"];
   return [defaultPlanOperations[department] ?? ""];
 };
 
@@ -5797,6 +5806,8 @@ function CommandSheet({
 }
 
 const styles = StyleSheet.create({
+  preservedScreen: { flex: 1, minWidth: 0, minHeight: 0 },
+  hiddenScreen: { display: "none" },
   loginSafe: { flex: 1, backgroundColor: "#050C15" },
   loginLayout: {
     flex: 1,

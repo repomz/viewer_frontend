@@ -1,6 +1,6 @@
 {
   "name": "@repomz/viewer-frontend",
-  "version": "0.2.30",
+  "version": "0.2.31",
   "private": true,
   "description": "Adaptive clinical frontend for the Viewer DICOM platform",
   "main": "index.ts",

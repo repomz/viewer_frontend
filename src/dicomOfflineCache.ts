@@ -287,6 +287,12 @@ async function persistPreparedCines(
         const existing = await cache.match(url);
         if (existing) {
           const blob = await existing.blob();
+          // Keep cine studies in IndexedDB as well. On iOS standalone PWAs the
+          // Cache API can be reclaimed between launches even when localStorage
+          // survives, while IndexedDB is the more reliable persistent store.
+          if (hasIndexedDB()) {
+            await writeIndexedFrame(url, blob).catch(() => undefined);
+          }
           stored.push({ url, studyUID, bytes: blob.size });
           continue;
         }
@@ -300,13 +306,18 @@ async function persistPreparedCines(
       }
       const blob = await response.clone().blob();
       let persisted = false;
-      if (cache) {
+      if (hasIndexedDB()) {
+        persisted = await writeIndexedFrame(url, blob)
+          .then(() => true)
+          .catch(() => false);
+      }
+      if (!persisted && cache) {
         persisted = await cache
           .put(url, response)
           .then(() => true)
           .catch(() => false);
       }
-      if (!persisted) await writeIndexedFrame(url, blob);
+      if (!persisted) throw new Error("Не удалось сохранить cine XA на устройстве");
       stored.push({ url, studyUID, bytes: blob.size });
     }
   };
