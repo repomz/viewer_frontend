@@ -2,7 +2,7 @@
   "expo": {
     "name": "Viewer Clinical",
     "slug": "viewer-clinical",
-    "version": "0.2.33",
+    "version": "0.2.34",
     "orientation": "portrait",
     "icon": "./assets/viewer-vessels-icon-v4.png",
     "userInterfaceStyle": "light",
@@ -41,7 +41,7 @@
       "themeColor": "#07131F",
       "backgroundColor": "#07131F",
       "display": "standalone",
-      "favicon": "./assets/viewer-vessels-icon-v4.png"
+      "favicon": "./assets/pwa-icon-512-v5.png"
     },
     "experiments": {
       "typedRoutes": false

@@ -21,7 +21,7 @@ const frontendVersion = JSON.parse(
 mkdirSync(dist, { recursive: true });
 
 for (const filename of [
-  "viewer-vessels-icon-v4.png",
+  "pwa-icon-512-v5.png",
   "angiography-splash.webp",
   "angiography-splash.png",
   "startup-390x844@3x.png",
@@ -36,7 +36,7 @@ for (const filename of [
 
 // iOS asks for these conventional names before it parses the document head.
 // Every alias is an exact copy of the one canonical vessels icon.
-const canonicalIcon = resolve(assets, "viewer-vessels-icon-v4.png");
+const canonicalIcon = resolve(assets, "pwa-icon-512-v5.png");
 copyFileSync(canonicalIcon, resolve(dist, "apple-touch-icon.png"));
 copyFileSync(canonicalIcon, resolve(dist, "apple-touch-icon-precomposed.png"));
 copyFileSync(canonicalIcon, resolve(dist, "favicon.ico"));
@@ -55,8 +55,8 @@ writeFileSync(
       theme_color: "#07131F",
       icons: [
         {
-          src: "/viewer-vessels-icon-v4.png",
-          sizes: "1024x1024",
+          src: "/pwa-icon-512-v5.png",
+          sizes: "512x512",
           type: "image/png",
           purpose: "any"
         }
@@ -98,9 +98,9 @@ const splashHead = `
     <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" href="/startup-430x932@3x.png?v=7" />
     <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3)" href="/startup-440x956@3x.png?v=7" />
     ${iconFontPreload}
-    <link rel="icon" type="image/png" sizes="1024x1024" href="/viewer-vessels-icon-v4.png?v=6" />
-    <link rel="apple-touch-icon" href="/viewer-vessels-icon-v4.png?v=6" />
-    <link rel="manifest" href="/manifest.webmanifest?v=6" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/pwa-icon-512-v5.png?v=7" />
+    <link rel="apple-touch-icon" href="/pwa-icon-512-v5.png?v=7" />
+    <link rel="manifest" href="/manifest.webmanifest?v=7" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style id="viewer-launch-screen">
@@ -227,8 +227,8 @@ const appShell = [
   iconFontPath,
   "/angiography-splash.webp",
   "/angiography-splash.png?v=6",
-  "/manifest.webmanifest?v=6",
-  "/viewer-vessels-icon-v4.png?v=6",
+  "/manifest.webmanifest?v=7",
+  "/pwa-icon-512-v5.png?v=7",
   "/apple-touch-icon.png",
   "/apple-touch-icon-precomposed.png",
   "/favicon.ico"
