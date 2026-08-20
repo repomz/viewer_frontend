@@ -23,7 +23,10 @@ type CacheEntry = {
 };
 
 type CacheIndex = Record<string, CacheEntry>;
-type ExpectedFrames = Record<string, number>;
+type ExpectedMedia = Record<
+  string,
+  number | { count: number; kind: "cine" | "frame" }
+>;
 type PreparedManifestIndex = Record<string, PreparedXAManifest>;
 type CaptureIndex = Record<
   string,
@@ -432,9 +435,21 @@ function renderedURL(instanceURL: string, frameIndex: number): string {
 
 export function getDicomCacheSnapshot(): DicomCacheSnapshot {
   const index = readRecord<CacheIndex>(INDEX_KEY);
-  const expected = readRecord<ExpectedFrames>(EXPECTED_KEY);
+  const expected = readRecord<ExpectedMedia>(EXPECTED_KEY);
+  const manifests = readRecord<PreparedManifestIndex>(MANIFEST_KEY);
   const studies: Record<string, StudyCacheInfo> = {};
   let totalBytes = 0;
+
+  const expectedFor = (studyUID: string) => {
+    const stored = expected[studyUID];
+    if (typeof stored === "object" && stored) return stored;
+    return {
+      count: typeof stored === "number" ? stored : 0,
+      kind: manifests[studyUID]?.series.some((series) => Boolean(series.cine_path))
+        ? ("cine" as const)
+        : ("frame" as const)
+    };
+  };
 
   Object.values(index).forEach((entry) => {
     if (
@@ -445,30 +460,36 @@ export function getDicomCacheSnapshot(): DicomCacheSnapshot {
       return;
     }
     totalBytes += entry.bytes;
+    const expectedMedia = expectedFor(entry.studyUID);
     const current = studies[entry.studyUID] ?? {
       bytes: 0,
       cachedFrames: 0,
-      expectedFrames: expected[entry.studyUID] ?? 0,
+      expectedFrames: expectedMedia.count,
       complete: false,
       downloading: activeDownloads.has(entry.studyUID)
     };
     current.bytes += entry.bytes;
-    current.cachedFrames += 1;
+    if ((entry.kind ?? "frame") === expectedMedia.kind) {
+      current.cachedFrames += 1;
+    }
     studies[entry.studyUID] = current;
   });
 
-  Object.entries(expected).forEach(([studyUID, expectedFrames]) => {
+  Object.keys(expected).forEach((studyUID) => {
+    const expectedMedia = expectedFor(studyUID);
     const current = studies[studyUID] ?? {
       bytes: 0,
       cachedFrames: 0,
-      expectedFrames,
+      expectedFrames: expectedMedia.count,
       complete: false,
       downloading: activeDownloads.has(studyUID)
     };
-    current.expectedFrames = expectedFrames;
+    current.expectedFrames = expectedMedia.count;
     current.downloading = activeDownloads.has(studyUID);
     current.complete =
-      expectedFrames > 0 && current.cachedFrames >= expectedFrames;
+      expectedMedia.count > 0 &&
+      current.cachedFrames >= expectedMedia.count &&
+      (expectedMedia.kind !== "cine" || manifests[studyUID]?.status === "ready");
     current.error = downloadErrors.get(studyUID);
     studies[studyUID] = current;
   });
@@ -605,23 +626,22 @@ export async function downloadStudyForOffline(
         )
       );
     }
-    const expected = readRecord<ExpectedFrames>(EXPECTED_KEY);
-    expected[studyUID] = urls.length;
+    const expected = readRecord<ExpectedMedia>(EXPECTED_KEY);
+    expected[studyUID] = { count: urls.length, kind: "frame" };
     writeRecord(EXPECTED_KEY, expected);
     emit();
 
     const cineURLs = preparedManifest ? manifestCineURLs(preparedManifest) : [];
-    if (
-      preparedManifest &&
-      cineURLs.length > 0 &&
-      cineURLs.length === preparedManifest.series.length
-    ) {
-      expected[studyUID] = cineURLs.length;
+    if (preparedManifest && cineURLs.length > 0) {
+      expected[studyUID] = { count: preparedManifest.series.length, kind: "cine" };
       writeRecord(EXPECTED_KEY, expected);
       emit();
       await persistPreparedCines(studyUID, cineURLs, controller.signal);
       cachePreparedXAManifest(preparedManifest);
-      return true;
+      return (
+        preparedManifest.status === "ready" &&
+        cineURLs.length === preparedManifest.series.length
+      );
     }
 
     if (preparedManifest?.archive_path) {
@@ -712,8 +732,8 @@ export async function downloadStudyFirstSeriesForOffline(
     const cineURLs = manifestCineURLs(manifest);
     const firstCine = cineURLs[0];
     if (!firstCine) return false;
-    const expected = readRecord<ExpectedFrames>(EXPECTED_KEY);
-    expected[studyUID] = cineURLs.length;
+    const expected = readRecord<ExpectedMedia>(EXPECTED_KEY);
+    expected[studyUID] = { count: manifest.series.length, kind: "cine" };
     writeRecord(EXPECTED_KEY, expected);
     await persistPreparedCines(studyUID, [firstCine], controller.signal);
     cachePreparedXAManifest(manifest);
@@ -765,7 +785,7 @@ export async function deleteStudyFromDevice(studyUID: string): Promise<void> {
   }
   urls.forEach((url) => delete index[url]);
   writeRecord(INDEX_KEY, index);
-  const expected = readRecord<ExpectedFrames>(EXPECTED_KEY);
+  const expected = readRecord<ExpectedMedia>(EXPECTED_KEY);
   delete expected[studyUID];
   writeRecord(EXPECTED_KEY, expected);
   await deleteXACaptures(studyUID).catch(() => undefined);

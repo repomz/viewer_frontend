@@ -91,7 +91,6 @@ import {
 import {
   cancelDicomDownloads,
   clearDicomCache,
-  pruneDicomCache,
   pruneExpiredDicomFrames,
   deleteStudyFromDevice,
   downloadStudyForOffline,
@@ -752,22 +751,6 @@ export default function App() {
   useEffect(() => {
     if (authenticated && compact) void pruneExpiredDicomFrames();
   }, [authenticated, compact]);
-
-  useEffect(() => {
-    if (!authenticated || !compact || !studies.length) return;
-    const protocols = studies.filter((study) => !isPacsImagingStudy(study));
-    const activeXA = xaStudies
-      .filter(
-        (angiography) =>
-          angiography.study_type.toLowerCase() === "xa" &&
-          (isInActiveClinicalWindow(angiography.time_beginning) ||
-            protocols.some(
-              (protocol) => findProtocolAngiography(protocol, xaStudies)?.id === angiography.id
-            ))
-      )
-      .map((angiography) => angiography.study_id);
-    void pruneDicomCache(activeXA);
-  }, [authenticated, compact, studies, xaStudies]);
 
   useEffect(() => {
     if (!authenticated || !xaStudies.length) return;
