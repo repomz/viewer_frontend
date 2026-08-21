@@ -116,6 +116,18 @@ async function readIndexedFrame(url: string): Promise<Blob | undefined> {
   });
 }
 
+async function hasIndexedFrame(url: string): Promise<boolean> {
+  if (!hasIndexedDB()) return false;
+  const database = await openFrameDatabase();
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction("frames", "readonly");
+    const request = transaction.objectStore("frames").count(url);
+    request.onsuccess = () => resolve(request.result > 0);
+    request.onerror = () => reject(request.error);
+    transaction.oncomplete = () => database.close();
+  });
+}
+
 async function writeIndexedFrame(url: string, blob: Blob): Promise<void> {
   if (!hasIndexedDB()) return;
   const database = await openFrameDatabase();
@@ -126,6 +138,23 @@ async function writeIndexedFrame(url: string, blob: Blob): Promise<void> {
     transaction.onerror = () => reject(transaction.error);
   });
   database.close();
+}
+
+async function readStoredMedia(url: string): Promise<Blob | undefined> {
+  if (hasCacheAPI()) {
+    const cache = await window.caches.open(CACHE_NAME).catch(() => null);
+    const cached = cache ? await cache.match(url) : undefined;
+    if (cached) return cached.blob();
+  }
+  return readIndexedFrame(url).catch(() => undefined);
+}
+
+async function hasStoredMedia(url: string): Promise<boolean> {
+  if (hasCacheAPI()) {
+    const cache = await window.caches.open(CACHE_NAME).catch(() => null);
+    if (cache && (await cache.match(url))) return true;
+  }
+  return hasIndexedFrame(url).catch(() => false);
 }
 
 async function clearIndexedFrames(): Promise<void> {
@@ -286,19 +315,16 @@ async function persistPreparedCines(
     while (!signal.aborted) {
       const url = urls[nextIndex++];
       if (!url) return;
-      if (cache) {
-        const existing = await cache.match(url);
-        if (existing) {
-          const blob = await existing.blob();
-          // Keep cine studies in IndexedDB as well. On iOS standalone PWAs the
-          // Cache API can be reclaimed between launches even when localStorage
-          // survives, while IndexedDB is the more reliable persistent store.
-          if (hasIndexedDB()) {
-            await writeIndexedFrame(url, blob).catch(() => undefined);
-          }
-          stored.push({ url, studyUID, bytes: blob.size });
-          continue;
+      const existing = await readStoredMedia(url);
+      if (existing) {
+        // Cache API and IndexedDB have independent failure modes in WebKit.
+        // IndexedDB is the primary durable copy, so migrate an older Cache API
+        // entry when it is encountered without downloading the cine again.
+        if (hasIndexedDB()) {
+          await writeIndexedFrame(url, existing).catch(() => undefined);
         }
+        stored.push({ url, studyUID, bytes: existing.size });
+        continue;
       }
       const response = await fetch(url, {
         headers: { Accept: "video/mp4" },
@@ -333,16 +359,9 @@ export async function resolvePreparedCineSource(url: string): Promise<{
   source: string;
   local: boolean;
 }> {
-  if (hasCacheAPI()) {
-    const cache = await window.caches.open(CACHE_NAME).catch(() => null);
-    const cached = cache ? await cache.match(url) : undefined;
-    if (cached) {
-      return { source: URL.createObjectURL(await cached.blob()), local: true };
-    }
-  }
-  const indexed = await readIndexedFrame(url).catch(() => undefined);
-  if (indexed) {
-    return { source: URL.createObjectURL(indexed), local: true };
+  const stored = await readStoredMedia(url);
+  if (stored) {
+    return { source: URL.createObjectURL(stored), local: true };
   }
   return { source: url, local: false };
 }
@@ -508,13 +527,33 @@ export function subscribeDicomCache(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export async function requestPersistentStorage(): Promise<void> {
+export async function requestPersistentStorage(): Promise<boolean> {
   if (
     typeof navigator !== "undefined" &&
     navigator.storage?.persist
   ) {
-    await navigator.storage.persist().catch(() => false);
+    const alreadyPersistent = await navigator.storage.persisted?.().catch(() => false);
+    if (alreadyPersistent) return true;
+    return navigator.storage.persist().catch(() => false);
   }
+  return false;
+}
+
+async function hasEveryPreparedCine(manifest: PreparedXAManifest): Promise<boolean> {
+  const urls = manifestCineURLs(manifest);
+  if (!urls.length || urls.length !== manifest.series.length) return false;
+  for (const url of urls) {
+    if (!(await hasStoredMedia(url))) {
+      const index = readRecord<CacheIndex>(INDEX_KEY);
+      if (index[url]) {
+        delete index[url];
+        writeRecord(INDEX_KEY, index);
+        emit();
+      }
+      return false;
+    }
+  }
+  return true;
 }
 
 export async function loadRenderedFrameBlob(
@@ -581,7 +620,14 @@ export async function downloadStudyForOffline(
 ): Promise<boolean> {
   if (!supported() || activeDownloads.has(studyUID)) return false;
   const existing = getDicomCacheSnapshot().studies[studyUID];
-  if (existing?.complete && getCachedPreparedXAManifest(studyUID)) return true;
+  const existingManifest = getCachedPreparedXAManifest(studyUID);
+  if (
+    existing?.complete &&
+    existingManifest &&
+    (await hasEveryPreparedCine(existingManifest))
+  ) {
+    return true;
+  }
 
   activeDownloads.add(studyUID);
   const controller = new AbortController();

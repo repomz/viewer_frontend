@@ -97,8 +97,8 @@ import {
   deleteStudyFromDevice,
   downloadStudyForOffline,
   formatStorageSize,
-  getCachedPreparedXAManifest,
   getDicomCacheSnapshot,
+  requestPersistentStorage,
   subscribeDicomCache,
   type DicomCacheSnapshot
 } from "./src/dicomOfflineCache";
@@ -765,6 +765,10 @@ export default function App() {
   }, [authenticated, compact]);
 
   useEffect(() => {
+    if (authenticated && compact) void requestPersistentStorage();
+  }, [authenticated, compact]);
+
+  useEffect(() => {
     if (!authenticated || !xaStudies.length) return;
     studies
       .filter((study) => !isPacsImagingStudy(study) && !study.dicom_link.trim())
@@ -1068,13 +1072,10 @@ export default function App() {
     ) {
       return;
     }
-    const cachedStudies = getDicomCacheSnapshot().studies;
     const studiesToDownload = xaStudies.filter(
       (study) =>
         study.study_type.toLocaleLowerCase() === "xa" &&
-        isInActiveClinicalWindow(study.time_beginning) &&
-        (!cachedStudies[study.study_id]?.complete ||
-          !getCachedPreparedXAManifest(study.study_id))
+        isInActiveClinicalWindow(study.time_beginning)
     );
     if (!studiesToDownload.length) return;
     autoDownloadRunning.current = true;
