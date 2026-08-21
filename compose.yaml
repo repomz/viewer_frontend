@@ -2,7 +2,7 @@ name: viewer-frontend
 
 services:
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/repomz/viewer_frontend:0.2.36}
+    image: ${FRONTEND_IMAGE:-ghcr.io/repomz/viewer_frontend:0.2.37}
     build:
       context: .
       dockerfile: Dockerfile
@@ -10,8 +10,8 @@ services:
         VERSION: ${IMAGE_VERSION:-0.2.5}
         VCS_REF: ${VCS_REF:-unknown}
     environment:
-      BACKEND_URL: ${BACKEND_URL:-https://135.106.130.37/api}
-      PACS_URL: ${PACS_URL:-https://135.106.130.37}
+      BACKEND_URL: ${BACKEND_URL:-https://135.106.195.161/api}
+      PACS_URL: ${PACS_URL:-https://135.106.195.161}
       PACS_AUTHORIZATION: ${PACS_AUTHORIZATION:-Basic bWFwZHI6Y2hhbmdlc3Ryb25ncGFzc3dvcmQ=}
     ports:
       - "${FRONTEND_PORT:-5173}:8080"
