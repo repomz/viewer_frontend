@@ -234,7 +234,24 @@ export const agentCommandOptions: AgentCommand[] = [
 ];
 
 const terminalStatuses = new Set(["completed", "error"]);
+const angiographySearchCommands = new Set<AgentCommand>([
+  "find_xa",
+  "find_ct"
+]);
 const AGENT_ONLINE_WINDOW_MS = 150_000;
+
+export function isCompletedAngiographySearch(request: UserRequest): boolean {
+  return (
+    request.status === "completed" &&
+    angiographySearchCommands.has(request.command)
+  );
+}
+
+export function shouldNotifyAgentRequest(
+  source: "user" | "automatic"
+): boolean {
+  return source === "user";
+}
 
 function parseObject(value: UserRequest["payload"]): Record<string, unknown> {
   if (!value) return {};
@@ -523,7 +540,13 @@ export default function App() {
     )
   );
   const linkingAngiographies = useRef(new Set<string>());
-  const automaticImportSources = useRef(new Set<string>());
+  const automaticImportSources = useRef(
+    new Set(
+      requests
+        .filter(isCompletedAngiographySearch)
+        .map((request) => request.id)
+    )
+  );
   const automaticImportUIDs = useRef(new Set(
     requests
       .filter((request) => ["get_xa", "get_ct"].includes(request.command))
@@ -612,6 +635,9 @@ export default function App() {
       response.forEach((request) => {
         if (terminalStatuses.has(request.status)) {
           processedCompletions.current.add(request.id);
+        }
+        if (isCompletedAngiographySearch(request)) {
+          automaticImportSources.current.add(request.id);
         }
       });
       setRequests(response);
@@ -1207,7 +1233,8 @@ export default function App() {
     async (
       command: AgentCommand,
       payload: Record<string, unknown>,
-      agentId = settings.agentId
+      agentId = settings.agentId,
+      source: "user" | "automatic" = "user"
     ) => {
       try {
         const created = await createUserRequest({
@@ -1217,13 +1244,17 @@ export default function App() {
           payload
         });
         recordRequest(created);
-        setToast({
-          message: "Запрос отправлен",
-          tone: "success"
-        });
+        if (shouldNotifyAgentRequest(source)) {
+          setToast({
+            message: "Запрос отправлен",
+            tone: "success"
+          });
+        }
         return true;
       } catch {
-        setToast({ message: "Запрос не отправлен", tone: "danger" });
+        if (shouldNotifyAgentRequest(source)) {
+          setToast({ message: "Запрос не отправлен", tone: "danger" });
+        }
         return false;
       }
     },
@@ -1254,7 +1285,8 @@ export default function App() {
       void submitCommand(
         request.command === "find_ct" ? "get_ct" : "get_xa",
         { study_uid: uid },
-        request.agent_id
+        request.agent_id,
+        "automatic"
       );
     });
   }, [requests, studies, submitCommand]);
