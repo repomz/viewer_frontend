@@ -63,7 +63,15 @@ http {
 
         location = /manifest.webmanifest {
             default_type application/manifest+json;
-            add_header Cache-Control "no-cache";
+            add_header Cache-Control "public, max-age=300, must-revalidate";
+            try_files $uri =404;
+        }
+
+        # These conventional, unversioned paths are probed directly by iOS
+        # while the Add to Home Screen sheet is opening. Do not pin an old icon
+        # in Safari's cache for a year; versioned manifest assets remain immutable.
+        location ~ ^/(?:apple-touch-icon(?:-precomposed)?\.png|favicon\.ico)$ {
+            add_header Cache-Control "public, max-age=300, must-revalidate";
             try_files $uri =404;
         }
 

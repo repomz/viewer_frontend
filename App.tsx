@@ -3101,7 +3101,7 @@ function AngiographyScreen({
             Добавьте удалённый PACS в разделе PACS locations программы RadiAnt.
           </Text>
           <View style={styles.pacsGuideGrid}>
-            <DetailItem label="Адрес сервера" value="135.106.195.161" />
+            <DetailItem label="Адрес сервера" value="angio.su" />
             <DetailItem label="DICOM-порт" value="4242" />
             <DetailItem label="AE Title сервера" value="MAPDR" />
             <DetailItem label="AE Title компьютера" value="RADIANT" />

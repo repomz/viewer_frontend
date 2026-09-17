@@ -34,12 +34,12 @@ docker compose up --build --wait
 Приложение откроется на [http://localhost:5173](http://localhost:5173).
 
 По умолчанию proxy подключается к действующему backend
-`https://135.106.195.161/api`, а DICOMweb — через тот же HTTPS-origin
-`https://135.106.195.161`. Эти значения можно изменить в `.env`:
+`https://angio.su/api`, а DICOMweb — через тот же HTTPS-origin
+`https://angio.su`. Эти значения можно изменить в `.env`:
 
 ```dotenv
-BACKEND_URL=https://135.106.195.161/api
-PACS_URL=https://135.106.195.161
+BACKEND_URL=https://angio.su/api
+PACS_URL=https://angio.su
 PACS_AUTHORIZATION=Basic BASE64_USER_PASSWORD
 FRONTEND_PORT=5173
 ```
@@ -64,8 +64,8 @@ docker.io/idrisovmarat/viewer_frontend:latest
 ```bash
 docker pull idrisovmarat/viewer_frontend:0.2.5
 docker run --rm -p 5173:8080 \
-  -e BACKEND_URL=https://135.106.195.161/api \
-  -e PACS_URL=https://135.106.195.161 \
+  -e BACKEND_URL=https://angio.su/api \
+  -e PACS_URL=https://angio.su \
   -e 'PACS_AUTHORIZATION=Basic bWFwZHI6Y2hhbmdlc3Ryb25ncGFzc3dvcmQ=' \
   idrisovmarat/viewer_frontend:0.2.5
 ```

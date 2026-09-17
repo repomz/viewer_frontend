@@ -22,6 +22,9 @@ mkdirSync(dist, { recursive: true });
 
 for (const filename of [
   "pwa-icon-512-v5.png",
+  "pwa-icon-192-v6.png",
+  "apple-touch-icon-180-v6.png",
+  "favicon-32-v6.png",
   "angiography-splash.webp",
   "angiography-splash.png",
   "startup-320x568@2x.png",
@@ -41,11 +44,11 @@ for (const filename of [
 }
 
 // iOS asks for these conventional names before it parses the document head.
-// Every alias is an exact copy of the one canonical vessels icon.
-const canonicalIcon = resolve(assets, "pwa-icon-512-v5.png");
-copyFileSync(canonicalIcon, resolve(dist, "apple-touch-icon.png"));
-copyFileSync(canonicalIcon, resolve(dist, "apple-touch-icon-precomposed.png"));
-copyFileSync(canonicalIcon, resolve(dist, "favicon.ico"));
+// Keep the aliases small and at their native sizes so the home-screen preview
+// never needs to download and resize the larger 512px manifest icon.
+copyFileSync(resolve(assets, "apple-touch-icon-180-v6.png"), resolve(dist, "apple-touch-icon.png"));
+copyFileSync(resolve(assets, "apple-touch-icon-180-v6.png"), resolve(dist, "apple-touch-icon-precomposed.png"));
+copyFileSync(resolve(assets, "favicon-32-v6.png"), resolve(dist, "favicon.ico"));
 
 writeFileSync(
   resolve(dist, "manifest.webmanifest"),
@@ -54,12 +57,19 @@ writeFileSync(
       name: "Viewer Clinical",
       short_name: "Viewer",
       description: "Клинический просмотрщик протоколов и ангиографий",
+      id: "/",
       start_url: "/",
       scope: "/",
       display: "standalone",
       background_color: "#07131F",
       theme_color: "#07131F",
       icons: [
+        {
+          src: "/pwa-icon-192-v6.png",
+          sizes: "192x192",
+          type: "image/png",
+          purpose: "any"
+        },
         {
           src: "/pwa-icon-512-v5.png",
           sizes: "512x512",
@@ -109,9 +119,10 @@ const splashHead = `
     <link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3)" href="/startup-430x932@3x.png?v=8" />
     <link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3)" href="/startup-440x956@3x.png?v=8" />
     ${iconFontPreload}
-    <link rel="icon" type="image/png" sizes="512x512" href="/pwa-icon-512-v5.png?v=7" />
-    <link rel="apple-touch-icon" href="/pwa-icon-512-v5.png?v=7" />
-    <link rel="manifest" href="/manifest.webmanifest?v=7" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=${frontendVersion}" />
+    <link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon-precomposed.png?v=${frontendVersion}" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-v6.png?v=${frontendVersion}" />
+    <link rel="manifest" href="/manifest.webmanifest?v=${frontendVersion}" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <style id="viewer-launch-screen">
@@ -238,8 +249,9 @@ const appShell = [
   iconFontPath,
   "/angiography-splash.webp",
   "/angiography-splash.png?v=6",
-  "/manifest.webmanifest?v=7",
-  "/pwa-icon-512-v5.png?v=7",
+  `/manifest.webmanifest?v=${frontendVersion}`,
+  "/pwa-icon-192-v6.png",
+  "/pwa-icon-512-v5.png",
   "/apple-touch-icon.png",
   "/apple-touch-icon-precomposed.png",
   "/favicon.ico"
