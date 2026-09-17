@@ -35,6 +35,8 @@ http {
         application/x-font-ttf
         image/svg+xml;
 
+    ${TLS_CERT_MAP}
+
     server {
         listen 8080;
         ${TLS_LISTEN}
