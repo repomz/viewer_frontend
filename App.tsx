@@ -1011,11 +1011,7 @@ export default function App() {
     if (!launchDelayElapsed) return;
     if (Platform.OS === "web") {
       const preboot = document.getElementById("viewer-preboot");
-      if (preboot) {
-        preboot.style.transition = "opacity 420ms ease";
-        preboot.style.opacity = "0";
-        window.setTimeout(() => preboot.remove(), 440);
-      }
+      preboot?.classList.add("viewer-entry-ready");
       return;
     }
     void SplashScreen.hideAsync().catch(() => undefined);
@@ -1671,19 +1667,19 @@ function LoginScreen({
   }, [backgroundReady, panelOffset, panelOpacity, revealForm]);
 
   return (
-    <View style={styles.loginSafe}>
+    <View
+      nativeID={Platform.OS === "web" ? "viewer-login" : undefined}
+      style={[styles.loginSafe, Platform.OS === "web" && styles.loginTransparent]}
+    >
       <StatusBar style="light" backgroundColor="#050C15" />
-      <View style={[styles.loginLayout, compact && styles.loginLayoutCompact]}>
-        {Platform.OS === "web" ? (
-          <View
-            nativeID="viewer-login-background"
-            style={[
-              styles.loginBackgroundImage,
-              styles.loginBackgroundImageWeb,
-              compact && styles.loginBackgroundImageCompact
-            ]}
-          />
-        ) : (
+      <View
+        style={[
+          styles.loginLayout,
+          compact && styles.loginLayoutCompact,
+          Platform.OS === "web" && styles.loginTransparent
+        ]}
+      >
+        {Platform.OS !== "web" ? (
           <Image
             source={require("./assets/angiography-splash.png")}
             resizeMode="cover"
@@ -1693,8 +1689,11 @@ function LoginScreen({
               compact && styles.loginBackgroundImageCompact
             ]}
           />
-        )}
-        <View style={styles.loginBackgroundShade} />
+        ) : null}
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.loginBackgroundShade, { opacity: panelOpacity }]}
+        />
         {!backgroundReady ? (
           <View style={styles.loginLaunchLoader}>
             <ActivityIndicator size="small" color={darkColors.primary} />
@@ -5905,6 +5904,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#050C15"
   },
   loginLayoutCompact: { backgroundColor: "#050C15" },
+  loginTransparent: { backgroundColor: "transparent" },
   loginBackgroundImage: {
     position: "absolute",
     top: 0,
@@ -5913,12 +5913,6 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%"
   },
-  loginBackgroundImageWeb: {
-    backgroundImage: "url('/angiography-splash.webp')",
-    backgroundPosition: "center center",
-    backgroundRepeat: "no-repeat",
-    backgroundSize: "cover"
-  } as any,
   loginBackgroundImageCompact: {
     top: 0,
     left: 0,

@@ -136,6 +136,12 @@ const splashHead = `
         overflow: hidden;
         background: #07131F;
       }
+      #root {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        background: transparent;
+      }
       #viewer-preboot {
         position: fixed;
         top: 0;
@@ -143,7 +149,8 @@ const splashHead = `
         width: 100vw;
         height: 100vh;
         height: 100lvh;
-        z-index: 9999;
+        z-index: 0;
+        pointer-events: none;
         display: grid;
         place-items: center;
         background-color: #07131F;
@@ -152,18 +159,8 @@ const splashHead = `
         background-size: cover;
         background-repeat: no-repeat;
       }
-      #viewer-login-background {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        height: 100lvh !important;
-        background-color: #07131F !important;
-        background-image: url('${inlineSplash}') !important;
-        background-position: center center !important;
-        background-size: cover !important;
-        background-repeat: no-repeat !important;
+      #viewer-login {
+        background: transparent !important;
       }
       #viewer-preboot-version {
         position: absolute;
@@ -175,6 +172,10 @@ const splashHead = `
         font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         letter-spacing: .02em;
         text-align: center;
+        transition: opacity 420ms ease;
+      }
+      #viewer-preboot.viewer-entry-ready #viewer-preboot-version {
+        opacity: 0;
       }
       @media (display-mode: standalone) {
         html, body, #root {
