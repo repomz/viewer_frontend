@@ -129,14 +129,17 @@ const splashHead = `
       html, body, #root {
         width: 100%;
         height: 100%;
-        height: 100dvh;
-        min-height: 100dvh;
+        min-height: 100%;
         overflow: hidden;
         background: #07131F;
       }
       #viewer-preboot {
         position: fixed;
-        inset: 0;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        height: 100lvh;
         z-index: 9999;
         display: grid;
         place-items: center;
@@ -145,6 +148,19 @@ const splashHead = `
         background-position: center, center;
         background-size: cover, cover;
         background-repeat: no-repeat, no-repeat;
+      }
+      #viewer-login-background {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100lvh !important;
+        background-color: #07131F !important;
+        background-image: url('/angiography-splash.webp'), url('${inlineSplash}') !important;
+        background-position: center center, center center !important;
+        background-size: cover, cover !important;
+        background-repeat: no-repeat, no-repeat !important;
       }
       #viewer-preboot::before {
         content: '';
@@ -163,12 +179,20 @@ const splashHead = `
         letter-spacing: .02em;
         text-align: center;
       }
+      @media (display-mode: standalone) {
+        html, body, #root {
+          height: 100vh !important;
+          height: 100lvh !important;
+          min-height: 100vh !important;
+          min-height: 100lvh !important;
+        }
+      }
       @media (max-width: 767px), (display-mode: standalone) {
         #mobile-navigation {
           position: fixed !important;
           left: 0 !important;
           right: 0 !important;
-          bottom: calc(env(safe-area-inset-bottom, 0px) + 6px) !important;
+          bottom: max(6px, env(safe-area-inset-bottom, 0px)) !important;
           -webkit-user-select: none !important;
           user-select: none !important;
           -webkit-touch-callout: none !important;

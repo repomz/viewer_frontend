@@ -1648,7 +1648,9 @@ function LoginScreen({
   const insets = useSafeAreaInsets();
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
-  const [backgroundReady, setBackgroundReady] = useState(false);
+  const [backgroundReady, setBackgroundReady] = useState(
+    Platform.OS === "web"
+  );
   const panelOpacity = useRef(new Animated.Value(0)).current;
   const panelOffset = useRef(new Animated.Value(14)).current;
 
@@ -1672,19 +1674,26 @@ function LoginScreen({
     <View style={styles.loginSafe}>
       <StatusBar style="light" backgroundColor="#050C15" />
       <View style={[styles.loginLayout, compact && styles.loginLayoutCompact]}>
-        <Image
-          source={
-            Platform.OS === "web"
-              ? { uri: "/angiography-splash.webp" }
-              : require("./assets/angiography-splash.png")
-          }
-          resizeMode="cover"
-          onLoadEnd={() => setBackgroundReady(true)}
-          style={[
-            styles.loginBackgroundImage,
-            compact && styles.loginBackgroundImageCompact
-          ]}
-        />
+        {Platform.OS === "web" ? (
+          <View
+            nativeID="viewer-login-background"
+            style={[
+              styles.loginBackgroundImage,
+              styles.loginBackgroundImageWeb,
+              compact && styles.loginBackgroundImageCompact
+            ]}
+          />
+        ) : (
+          <Image
+            source={require("./assets/angiography-splash.png")}
+            resizeMode="cover"
+            onLoadEnd={() => setBackgroundReady(true)}
+            style={[
+              styles.loginBackgroundImage,
+              compact && styles.loginBackgroundImageCompact
+            ]}
+          />
+        )}
         <View style={styles.loginBackgroundShade} />
         {!backgroundReady ? (
           <View style={styles.loginLaunchLoader}>
@@ -2034,6 +2043,10 @@ function MobileNavigation({
   dark?: boolean;
 }) {
   const insets = useSafeAreaInsets();
+  // On web/PWA the document CSS is the single owner of the physical safe
+  // area.  Reading it again through react-native-safe-area-context caused the
+  // dock to jump after closing the full-screen report modal on iOS.
+  const dockBottom = Platform.OS === "web" ? 0 : Math.max(14, insets.bottom + 6);
   const activeIndex = Math.max(0, tabs.findIndex((tab) => tab.id === activeTab));
   const [navWidth, setNavWidth] = useState(0);
   const [gestureIndex, setGestureIndex] = useState<number | null>(null);
@@ -2151,7 +2164,7 @@ function MobileNavigation({
       style={[
         styles.mobileNavSafe,
         dark && styles.mobileNavSafeDark,
-        { bottom: Math.max(14, insets.bottom + 6) }
+        { bottom: dockBottom }
       ]}
     >
       <View
@@ -5900,6 +5913,12 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%"
   },
+  loginBackgroundImageWeb: {
+    backgroundImage: "url('/angiography-splash.webp')",
+    backgroundPosition: "center center",
+    backgroundRepeat: "no-repeat",
+    backgroundSize: "cover"
+  } as any,
   loginBackgroundImageCompact: {
     top: 0,
     left: 0,

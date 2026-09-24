@@ -22,6 +22,9 @@ const requirements = [
   [pngSize("apple-touch-icon.png").join("x") === "180x180", "Apple icon must be exactly 180x180"],
   [pngSize("pwa-icon-192-v6.png").join("x") === "192x192", "PWA small icon must be exactly 192x192"],
   [pngSize("pwa-icon-512-v5.png").join("x") === "512x512", "PWA large icon must be exactly 512x512"],
+  [html.includes("#viewer-login-background"), "login and preboot backgrounds must share one web canvas"],
+  [html.includes("height: 100lvh !important"), "standalone PWA must use stable large viewport geometry"],
+  [html.includes("bottom: max(6px, env(safe-area-inset-bottom, 0px))"), "mobile navigation must have one CSS safe-area owner"],
 ];
 
 const failed = requirements.filter(([ok]) => !ok).map(([, message]) => message);
