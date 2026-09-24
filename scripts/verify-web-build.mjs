@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version;
 const html = readFileSync(resolve(root, "dist/index.html"), "utf8");
+const serviceWorker = readFileSync(resolve(root, "dist/sw.js"), "utf8");
 const manifest = JSON.parse(readFileSync(resolve(root, "dist/manifest.webmanifest"), "utf8"));
 
 function pngSize(filename) {
@@ -25,6 +26,7 @@ const requirements = [
   [html.includes("#viewer-login-background"), "login and preboot backgrounds must share one web canvas"],
   [html.includes("data:image/webp;base64"), "first HTML paint must embed the final splash image"],
   [!html.includes("controllerchange"), "service worker updates must not force a visible page reload"],
+  [!serviceWorker.includes("skipWaiting") && !serviceWorker.includes("clients.claim"), "service worker must activate only after the current PWA session closes"],
   [html.includes("height: 100lvh !important"), "standalone PWA must use stable large viewport geometry"],
   [html.includes("bottom: max(6px, env(safe-area-inset-bottom, 0px))"), "mobile navigation must have one CSS safe-area owner"],
 ];
