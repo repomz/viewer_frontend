@@ -65,6 +65,7 @@ import {
 } from "./src/studyOperationCategories";
 import { findProtocolAngiography } from "./src/patientMatching";
 import { mobileNavigationIndexAtX } from "./src/mobileNavigation";
+import { deduplicateStudies } from "./src/studyDeduplication";
 import {
   defaultSettings,
   loadOperationPlanCache,
@@ -483,8 +484,12 @@ export default function App() {
   const [enterRequested, setEnterRequested] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("studies");
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
-  const [studies, setStudies] = useState<Study[]>(loadStudiesCache);
-  const [studiesLoading, setStudiesLoading] = useState(() => loadStudiesCache().length === 0);
+  const initialStudies = useMemo(
+    () => deduplicateStudies(loadStudiesCache()),
+    []
+  );
+  const [studies, setStudies] = useState<Study[]>(initialStudies);
+  const [studiesLoading, setStudiesLoading] = useState(initialStudies.length === 0);
   const [studiesError, setStudiesError] = useState("");
   const [search, setSearch] = useState("");
   const [studySearchScope, setStudySearchScope] = useState<StudySearchScope>("week");
@@ -577,7 +582,10 @@ export default function App() {
       const response = await getStudies();
       const pinned = loadPinnedProtocols();
       const responseIDs = new Set(response.map((study) => study.id));
-      const nextStudies = [...response, ...pinned.filter((study) => !responseIDs.has(study.id))];
+      const nextStudies = deduplicateStudies([
+        ...response,
+        ...pinned.filter((study) => !responseIDs.has(study.id))
+      ]);
       setStudies(nextStudies);
 	  saveStudiesCache(nextStudies);
       const protocols = nextStudies.filter((study) => !isPacsImagingStudy(study));
@@ -1450,7 +1458,7 @@ export default function App() {
                     if (study && !studies.some((item) => item.id === study.id)) {
                       pinProtocol(study);
                       setStudies((current) => {
-                        const next = [study, ...current];
+                        const next = deduplicateStudies([study, ...current]);
                         saveStudiesCache(next);
                         return next;
                       });
