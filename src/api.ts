@@ -1,5 +1,6 @@
 import type {
   AgentCommand,
+  AgentLogEntry,
   HistoricalStatistics,
   OperationStatistics,
   OperationPlan,
@@ -336,4 +337,18 @@ export async function getAgents(): Promise<number[]> {
   return Array.isArray(response)
     ? response.filter((value) => Number.isInteger(value) && value > 0)
     : [];
+}
+
+export async function getAgentLogs(
+  agentId: number,
+  date: string
+): Promise<AgentLogEntry[]> {
+  const params = new URLSearchParams({
+    agent_id: String(agentId),
+    date
+  });
+  const response = await request<AgentLogEntry[]>(
+    `/agent_logs?${params.toString()}`
+  );
+  return Array.isArray(response) ? response : [];
 }

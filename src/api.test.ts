@@ -2,6 +2,7 @@ import {
   checkHealth,
   generateReport,
   getAgentHeartbeatTimes,
+  getAgentLogs,
   getBackendVersion,
   getHistoricalStatistics,
   getOperationStatistics,
@@ -89,6 +90,28 @@ describe("Viewer API client", () => {
     await expect(getAgentHeartbeatTimes(2, "well")).resolves.toEqual(payload);
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/api/agent_status/searchby_status?agent_id=2&limit=1&status=well",
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
+  });
+
+  it("loads a selected agent log day", async () => {
+    const payload = [{
+      agent_id: 2,
+      period_start: "2026-09-23T09:00:00+07:00",
+      period_end: "2026-09-23T10:00:00+07:00",
+      content: "ready",
+      received_at: "2026-09-23T10:01:00+07:00"
+    }];
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      })
+    );
+
+    await expect(getAgentLogs(2, "2026-09-23")).resolves.toEqual(payload);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/agent_logs?agent_id=2&date=2026-09-23",
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
   });

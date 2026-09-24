@@ -208,6 +208,14 @@ if (webBundle) {
   bundleVersion = bundleHash;
 }
 html = html.replace(/<link rel="icon"[^>]*>/gi, "");
+html = html.replace(
+  /<html(?:\s[^>]*)?>/i,
+  '<html lang="ru" translate="no" class="notranslate">'
+);
+html = html.replace(
+  "</head>",
+  '    <meta name="google" content="notranslate" />\n    <meta http-equiv="Content-Language" content="ru" />\n  </head>'
+);
 html = html.replace("</head>", `${splashHead}\n  </head>`);
 html = html.replace(
   '<div id="root"></div>',
@@ -286,15 +294,12 @@ self.addEventListener("fetch", (event) => {
 
   if (request.mode === "navigate") {
     event.respondWith(
-      caches.match("/").then((cached) => {
-        const network = fetch(request)
-          .then((response) => {
-            if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put("/", response.clone()));
-            return response;
-          })
-          .catch(() => cached);
-        return cached || network;
-      })
+      fetch(request)
+        .then((response) => {
+          if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put("/", response.clone()));
+          return response;
+        })
+        .catch(() => caches.match("/"))
     );
     return;
   }

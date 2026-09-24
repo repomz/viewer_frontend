@@ -102,6 +102,14 @@ export type AgentHealth = {
   ageMs?: number;
 };
 
+export type AgentLogEntry = {
+  agent_id: number;
+  period_start: string;
+  period_end: string;
+  content: string;
+  received_at: string;
+};
+
 export type ApiHealth = {
   ok: boolean;
   checkedAt: Date;

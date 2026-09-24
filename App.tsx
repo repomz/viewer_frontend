@@ -31,8 +31,8 @@ import {
   checkHealth,
   createUserRequest,
   deleteReport,
-  deleteUserRequest,
   getAgentHeartbeatTimes,
+  getAgentLogs,
   getAgents,
   getBackendVersion,
   generateReport,
@@ -113,6 +113,7 @@ import {
 import type {
   AgentCommand,
   AgentHealth,
+  AgentLogEntry,
   ApiHealth,
   AppSettings,
   DutySchedule,
@@ -1328,19 +1329,6 @@ export default function App() {
     }
   }, []);
 
-  const removeRequest = useCallback(async (request: UserRequest) => {
-    try {
-      await deleteUserRequest(request.id, settings.userId);
-      setRequests((current) => {
-        const next = current.filter((item) => item.id !== request.id);
-        saveRequests(next);
-        return next;
-      });
-    } catch (error) {
-      setToast({ message: errorMessage(error), tone: "danger" });
-    }
-  }, [settings.userId]);
-
   const removeReport = useCallback(async (report: ReportDocument) => {
     if (!report.filename) {
       setToast({ message: "У отчёта отсутствует имя файла", tone: "danger" });
@@ -1518,11 +1506,7 @@ export default function App() {
               ) : null}
               {activeTab === "logs" && !compact ? (
                 <LogsScreen
-                  requests={requests.filter(
-                    (request) =>
-                      request.status === "error" || Boolean(request.errors)
-                  )}
-                  onDelete={(request) => void removeRequest(request)}
+                  agentIds={settings.agentIds}
                 />
               ) : null}
               {activeTab === "statistics" ? (
@@ -4091,69 +4075,122 @@ function StatisticsScreen({
   );
 }
 
-function LogsScreen({
-  requests,
-  onDelete
-}: {
-  requests: UserRequest[];
-  onDelete: (request: UserRequest) => void;
-}) {
+function LogsScreen({ agentIds }: { agentIds: number[] }) {
+  const dates = useMemo(
+    () => Array.from({ length: 7 }, (_, index) => {
+      const value = new Date();
+      value.setHours(12, 0, 0, 0);
+      value.setDate(value.getDate() - index);
+      return {
+        id: localDateKey(value),
+        label: index === 0
+          ? "Сегодня"
+          : value.toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })
+      };
+    }),
+    []
+  );
+  const [agentId, setAgentId] = useState(agentIds[0] ?? 1);
+  const [date, setDate] = useState(dates[0]!.id);
+  const [entries, setEntries] = useState<AgentLogEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (agentIds.length && !agentIds.includes(agentId)) setAgentId(agentIds[0]!);
+  }, [agentId, agentIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    setCopied(false);
+    void getAgentLogs(agentId, date)
+      .then((response) => {
+        if (!cancelled) setEntries(response);
+      })
+      .catch((reason) => {
+        if (!cancelled) {
+          setEntries([]);
+          setError(errorMessage(reason));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [agentId, date]);
+
+  const content = entries.map((entry) => entry.content.trim()).filter(Boolean).join("\n");
+  const copyLogs = async () => {
+    if (!content || Platform.OS !== "web" || !navigator.clipboard) return;
+    await navigator.clipboard.writeText(content);
+    setCopied(true);
+  };
+
   return (
     <View style={styles.logsScreen}>
-      <View style={styles.compactScreenToolbar}>
-        <View style={styles.compactScreenHeading}>
-          <Text style={styles.compactScreenTitle}>Ошибки агента</Text>
-          <Text style={styles.compactScreenMeta}>
-            Подробности неудачно завершившихся запросов
-          </Text>
-        </View>
-      </View>
-      <ScrollView
-        style={styles.flexScroll}
-        contentContainerStyle={styles.logsContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {requests.length ? requests.map((request) => {
-          const payload = parseObject(request.payload);
-          const logText = request.errors ||
-            String(parseObject(request.result).error ?? "Агент завершил запрос с ошибкой");
-          return (
-            <View key={request.id} style={styles.logCard}>
-              <View style={styles.logHeader}>
-                <View style={styles.logHeaderCopy}>
-                  <Text style={styles.logCommand}>
-                    {commandLabels[request.command] ?? request.command}
-                  </Text>
-                  <Text style={styles.logMeta}>
-                    {formatDate(request.updated_at, true)} · Агент {request.agent_id}
-                  </Text>
-                </View>
-                <IconButton
-                  icon="trash-outline"
-                  label="Удалить запись лога"
-                  onPress={() => onDelete(request)}
-                />
-              </View>
-              <Text style={styles.logPayloadLabel}>ЗАПРОС</Text>
-              <View style={styles.logPayloadBox}>
-                <Text selectable style={styles.logCode}>
-                  {JSON.stringify(payload, null, 2)}
+      <View style={styles.logsToolbar}>
+        <View style={styles.logsToolbarGroup}>
+          <Text style={styles.logsToolbarLabel}>АГЕНТ</Text>
+          <View style={styles.logsChoiceRow}>
+            {agentIds.map((id) => (
+              <Pressable
+                key={id}
+                accessibilityRole="button"
+                onPress={() => setAgentId(id)}
+                style={[styles.logsChoice, id === agentId && styles.logsChoiceActive]}
+              >
+                <Text style={[styles.logsChoiceText, id === agentId && styles.logsChoiceTextActive]}>
+                  Агент {id}
                 </Text>
-              </View>
-              <Text style={styles.logPayloadLabel}>ЛОГ ОШИБКИ</Text>
-              <View style={styles.logErrorBox}>
-                <Text selectable style={styles.logCode}>{logText}</Text>
-              </View>
-            </View>
-          );
-        }) : (
+              </Pressable>
+            ))}
+          </View>
+        </View>
+        <View style={[styles.logsToolbarGroup, styles.logsDateGroup]}>
+          <Text style={styles.logsToolbarLabel}>ДАТА</Text>
+          <View style={styles.logsChoiceRow}>
+            {dates.map((item) => (
+              <Pressable
+                key={item.id}
+                accessibilityRole="button"
+                onPress={() => setDate(item.id)}
+                style={[styles.logsChoice, item.id === date && styles.logsChoiceActive]}
+              >
+                <Text style={[styles.logsChoiceText, item.id === date && styles.logsChoiceTextActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+        <Button
+          label={copied ? "Скопировано" : "Копировать всё"}
+          icon="copy-outline"
+          variant="secondary"
+          disabled={!content}
+          onPress={() => void copyLogs()}
+        />
+      </View>
+      <View style={styles.logsDocument}>
+        {loading ? (
+          <LoadingState label="Загружаем журнал агента" />
+        ) : error ? (
+          <InlineError message={error} />
+        ) : content ? (
+          <ScrollView style={styles.flexScroll} contentContainerStyle={styles.logsDocumentContent}>
+            <Text selectable style={styles.logCode}>{content}</Text>
+          </ScrollView>
+        ) : (
           <EmptyState
-            icon="checkmark-circle-outline"
-            title="Ошибок агента нет"
-            description="Здесь появятся только запросы, завершившиеся ошибкой."
+            icon="document-text-outline"
+            title="Записей за этот день нет"
+            description="Завершённые часовые фрагменты появятся после очередной отправки агентом."
           />
         )}
-      </ScrollView>
+      </View>
     </View>
   );
 }
@@ -7524,47 +7561,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingBottom: 12
   },
-  logsContent: {
-    gap: 12,
-    paddingBottom: 24
+  logsToolbar: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 18,
+    paddingVertical: 14
   },
-  logCard: {
-    gap: 8,
-    padding: 16,
-    borderRadius: radii.lg,
+  logsToolbarGroup: { gap: 7 },
+  logsDateGroup: { flex: 1, minWidth: 0 },
+  logsToolbarLabel: {
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: "800",
+    letterSpacing: 1,
+    color: colors.textDim
+  },
+  logsChoiceRow: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  logsChoice: {
+    minHeight: 34,
+    justifyContent: "center",
+    paddingHorizontal: 12,
+    borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface
   },
-  logHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12
+  logsChoiceActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primarySoft
   },
-  logHeaderCopy: { flex: 1, minWidth: 0 },
-  logCommand: { ...typography.title, color: colors.text },
-  logMeta: { ...typography.meta, color: colors.textMuted, marginTop: 3 },
-  logPayloadLabel: {
-    marginTop: 4,
-    color: colors.textDim,
-    fontSize: 10,
-    lineHeight: 14,
-    fontWeight: "800",
-    letterSpacing: 1
-  },
-  logPayloadBox: {
-    padding: 12,
-    borderRadius: radii.md,
-    backgroundColor: "#EEF2F5"
-  },
-  logErrorBox: {
-    padding: 12,
-    borderRadius: radii.md,
+  logsChoiceText: { ...typography.meta, color: colors.textMuted, fontWeight: "700" },
+  logsChoiceTextActive: { color: colors.primaryStrong },
+  logsDocument: {
+    flex: 1,
+    minHeight: 0,
     borderWidth: 1,
-    borderColor: "rgba(216,64,64,0.2)",
-    backgroundColor: colors.dangerSoft
+    borderColor: colors.border,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surface,
+    overflow: "hidden"
   },
+  logsDocumentContent: { padding: 18, paddingBottom: 32 },
   logCode: {
     color: colors.text,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
