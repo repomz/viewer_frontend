@@ -106,8 +106,11 @@ export async function getStudies(): Promise<Study[]> {
   return Array.isArray(response) ? response : [];
 }
 
-export async function suggestProtocolStudies(patient: string): Promise<Study[]> {
-  const params = new URLSearchParams({ patient, limit: "20" });
+export async function suggestProtocolStudies(
+  patient: string,
+  scope: "year" | "archive" = "year"
+): Promise<Study[]> {
+  const params = new URLSearchParams({ patient, scope, limit: "20" });
   const response = await request<Study[]>(`/studies/suggest?${params.toString()}`);
   return Array.isArray(response) ? response : [];
 }

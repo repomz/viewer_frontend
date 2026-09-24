@@ -474,9 +474,18 @@ function confirmDeleteAll(message: string, action: () => void) {
   ]);
 }
 
+function isMobileFormFactor(): boolean {
+  if (Platform.OS !== "web") return true;
+  if (typeof window === "undefined") return false;
+  const shortestScreenSide = Math.min(window.screen.width, window.screen.height);
+  const coarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  return coarsePointer && shortestScreenSide <= 820;
+}
+
 export default function App() {
   const { width } = useWindowDimensions();
-  const compact = width < layout.mobileBreakpoint;
+  const [mobileFormFactor] = useState(isMobileFormFactor);
+  const compact = mobileFormFactor || width < layout.mobileBreakpoint;
   const [authenticated, setAuthenticated] = useState(false);
   const [appReady, setAppReady] = useState(false);
   const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false);
@@ -1199,7 +1208,7 @@ export default function App() {
 
   useEffect(() => {
     const query = search.trim();
-    if (studySearchScope !== "year" || query.length < 2) {
+    if (studySearchScope === "week" || query.length < 2) {
       setArchiveSuggestions([]);
       setArchiveSearchLoading(false);
       return;
@@ -1207,7 +1216,7 @@ export default function App() {
     let cancelled = false;
     const timer = setTimeout(() => {
       setArchiveSearchLoading(true);
-      void suggestProtocolStudies(query)
+      void suggestProtocolStudies(query, studySearchScope)
         .then((items) => {
           if (!cancelled) {
             setArchiveSuggestions(items);
@@ -2324,7 +2333,7 @@ function StudiesScreen({
   };
 
   useEffect(() => {
-    if (searchScope === "week") setDatabaseSelected(null);
+    setDatabaseSelected(null);
   }, [searchScope]);
 
   const searchScopeControls = (
@@ -2336,7 +2345,7 @@ function StudiesScreen({
         <Chip label="Год" selected={searchScope === "year"} onPress={() => onSearchScope("year")} />
       </View>
       <View style={compact ? styles.studySearchScopeItem : undefined}>
-        <Chip label="Архив" selected={false} disabled onPress={() => undefined} />
+        <Chip label="Архив" selected={searchScope === "archive"} onPress={() => onSearchScope("archive")} />
       </View>
     </View>
   );
@@ -2376,7 +2385,7 @@ function StudiesScreen({
 
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
 
-      {searchScope === "year" ? (
+      {searchScope !== "week" ? (
         <View style={styles.studyDatabaseWorkspace}>
           <View style={styles.studyDatabaseResults}>
             <Text style={styles.studySuggestionsTitle}>Поиск по началу фамилии или ФИО</Text>
@@ -2420,7 +2429,11 @@ function StudiesScreen({
                   onOpenXA={() => onOpenXA(databaseSelected)}
                 />
               ) : (
-                <EmptyState icon="reader-outline" title="Выберите пациента" description="Протокол из базы откроется здесь." />
+                <EmptyState
+                  icon="reader-outline"
+                  title="Выберите пациента"
+                  description={searchScope === "archive" ? "Архивный протокол откроется здесь." : "Протокол из базы откроется здесь."}
+                />
               )}
             </ScrollView>
           ) : null}
@@ -5063,8 +5076,8 @@ function PlanScreen({
                         ) : null}
                         <View style={[styles.planPreviousCell, compact && styles.planPreviousCellCompact]}>
 						  {entry?.previous_operations?.length ? (
-							<View style={styles.planHistoryButtons}>
-							  {entry.previous_operations.slice(0, 3).map((protocol) => (
+							<View style={[styles.planHistoryButtons, !compact && styles.planHistoryButtonsDesktop]}>
+							  {entry.previous_operations.slice(0, compact ? 1 : 3).map((protocol) => (
 								<Pressable key={protocol.id} onPress={(event) => { event.stopPropagation?.(); setPreviousProtocol(protocol); }} style={styles.planPreviousButton}>
 								  <Text numberOfLines={1} style={styles.planPreviousButtonText}>{formatShortNumericDate(protocol.time_beginning)}</Text>
 								</Pressable>
@@ -8145,6 +8158,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft
   },
 	planHistoryButtons: { flex: 1, gap: 3 },
+	planHistoryButtonsDesktop: { flexDirection: "row", flexWrap: "wrap" },
   planPreviousButtonText: {
     color: colors.primary,
     fontSize: 10,
