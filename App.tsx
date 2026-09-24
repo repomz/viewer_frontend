@@ -818,7 +818,7 @@ export default function App() {
   }, [authenticated, studies, xaStudies]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setLaunchDelayElapsed(true), 600);
+    const timer = setTimeout(() => setLaunchDelayElapsed(true), 1_000);
     return () => clearTimeout(timer);
   }, []);
 
@@ -1012,9 +1012,9 @@ export default function App() {
     if (Platform.OS === "web") {
       const preboot = document.getElementById("viewer-preboot");
       if (preboot) {
-        preboot.style.transition = "opacity 240ms ease";
+        preboot.style.transition = "opacity 420ms ease";
         preboot.style.opacity = "0";
-        window.setTimeout(() => preboot.remove(), 260);
+        window.setTimeout(() => preboot.remove(), 440);
       }
       return;
     }

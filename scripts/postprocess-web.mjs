@@ -97,8 +97,11 @@ function findRelativeFile(directory, suffix, prefix = "") {
 }
 
 const iconFontPath = findRelativeFile(dist, ".ttf");
-const inlineSplash = `data:image/jpeg;base64,${readFileSync(
-  resolve(assets, "angiography-splash-inline.jpg")
+// Embed the exact production background into the initial document. A tiny
+// blurred JPEG followed by the final WebP produced a conspicuous sharpness
+// flash during a cold PWA launch even though both files had the same crop.
+const inlineSplash = `data:image/webp;base64,${readFileSync(
+  resolve(assets, "angiography-splash.webp")
 ).toString("base64")}`;
 const iconFontPreload = iconFontPath
   ? `<link rel="preload" as="font" type="font/ttf" href="${iconFontPath}" crossorigin fetchpriority="high" />`
@@ -144,10 +147,10 @@ const splashHead = `
         display: grid;
         place-items: center;
         background-color: #07131F;
-        background-image: url('/angiography-splash.webp'), url('${inlineSplash}');
-        background-position: center, center;
-        background-size: cover, cover;
-        background-repeat: no-repeat, no-repeat;
+        background-image: url('${inlineSplash}');
+        background-position: center;
+        background-size: cover;
+        background-repeat: no-repeat;
       }
       #viewer-login-background {
         position: fixed !important;
@@ -157,16 +160,10 @@ const splashHead = `
         height: 100vh !important;
         height: 100lvh !important;
         background-color: #07131F !important;
-        background-image: url('/angiography-splash.webp'), url('${inlineSplash}') !important;
-        background-position: center center, center center !important;
-        background-size: cover, cover !important;
-        background-repeat: no-repeat, no-repeat !important;
-      }
-      #viewer-preboot::before {
-        content: '';
-        position: absolute;
-        inset: 0;
-        background: rgba(5, 12, 21, .24);
+        background-image: url('${inlineSplash}') !important;
+        background-position: center center !important;
+        background-size: cover !important;
+        background-repeat: no-repeat !important;
       }
       #viewer-preboot-version {
         position: absolute;
@@ -260,12 +257,6 @@ html = html.replace(
       });
     if ('serviceWorker' in navigator && window.isSecureContext) {
       window.addEventListener('load', function () {
-        var reloadingForUpdate = false;
-        navigator.serviceWorker.addEventListener('controllerchange', function () {
-          if (reloadingForUpdate) return;
-          reloadingForUpdate = true;
-          window.location.reload();
-        });
         navigator.serviceWorker.register('/sw.js', { scope: '/' })
           .then(function (registration) { return registration.update(); })
           .catch(function () {});

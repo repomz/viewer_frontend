@@ -23,6 +23,8 @@ const requirements = [
   [pngSize("pwa-icon-192-v6.png").join("x") === "192x192", "PWA small icon must be exactly 192x192"],
   [pngSize("pwa-icon-512-v5.png").join("x") === "512x512", "PWA large icon must be exactly 512x512"],
   [html.includes("#viewer-login-background"), "login and preboot backgrounds must share one web canvas"],
+  [html.includes("data:image/webp;base64"), "first HTML paint must embed the final splash image"],
+  [!html.includes("controllerchange"), "service worker updates must not force a visible page reload"],
   [html.includes("height: 100lvh !important"), "standalone PWA must use stable large viewport geometry"],
   [html.includes("bottom: max(6px, env(safe-area-inset-bottom, 0px))"), "mobile navigation must have one CSS safe-area owner"],
 ];
