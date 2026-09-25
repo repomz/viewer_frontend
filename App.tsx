@@ -941,6 +941,9 @@ export default function App() {
 
   useEffect(() => {
     if (!authenticated) return;
+    if (activeTab === "studies") {
+      void loadStudies();
+    }
     if (activeTab === "reports") {
       void loadReports();
     }
@@ -959,6 +962,7 @@ export default function App() {
   }, [
     activeTab,
     authenticated,
+    loadStudies,
     loadPlan,
     loadReports,
     loadStatistics,
@@ -973,6 +977,18 @@ export default function App() {
     const timer = setInterval(() => void loadReports(), 30_000);
     return () => clearInterval(timer);
   }, [activeTab, authenticated, loadReports]);
+
+  useEffect(() => {
+    if (!authenticated || activeTab !== "studies") return;
+    const timer = setInterval(() => void loadStudies(), 30_000);
+    return () => clearInterval(timer);
+  }, [activeTab, authenticated, loadStudies]);
+
+  useEffect(() => {
+    if (!authenticated || activeTab !== "plan") return;
+    const timer = setInterval(() => void loadPlan(planWeekOffset), 30_000);
+    return () => clearInterval(timer);
+  }, [activeTab, authenticated, loadPlan, planWeekOffset]);
 
   useEffect(() => {
     if (Platform.OS !== "web") return;
