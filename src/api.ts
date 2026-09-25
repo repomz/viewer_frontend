@@ -10,8 +10,11 @@ import type {
   ReportDocument,
   Study,
   UserRequest,
-  VMPStatisticsConfig
+  VMPStatisticsConfig,
+  DriveListing,
+  PlatformMetrics
 } from "./types";
+import { authToken, type AuthUser, type StoredAuth } from "./authStorage";
 
 const API_ROOT = "/api";
 const DEFAULT_TIMEOUT = 15_000;
@@ -46,7 +49,10 @@ async function request<T>(
       ...init,
       headers: {
         Accept: "application/json",
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...(init.body && !(init.body instanceof FormData)
+          ? { "Content-Type": "application/json" }
+          : {}),
+        ...(authToken() ? { Authorization: `Bearer ${authToken()}` } : {}),
         ...init.headers
       },
       signal: controller.signal
@@ -80,6 +86,70 @@ async function request<T>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function login(loginValue: string, password: string): Promise<StoredAuth> {
+  return request<StoredAuth>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ login: loginValue, password })
+  });
+}
+
+export async function getCurrentUser(): Promise<AuthUser> {
+  return request<AuthUser>("/auth/me");
+}
+
+export async function changeCredentials(input: {
+  currentPassword: string;
+  newLogin?: string;
+  newPassword?: string;
+}): Promise<StoredAuth> {
+  return request<StoredAuth>("/auth/change-credentials", {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: input.currentPassword,
+      new_login: input.newLogin ?? "",
+      new_password: input.newPassword ?? ""
+    })
+  });
+}
+
+export async function logout(): Promise<void> {
+  await request<void>("/auth/logout", { method: "POST" });
+}
+
+export async function getPlatformMetrics(): Promise<PlatformMetrics> {
+  return request<PlatformMetrics>("/admin/metrics");
+}
+
+export async function getDriveFiles(): Promise<DriveListing> {
+  return request<DriveListing>("/drive");
+}
+
+export async function uploadDriveFile(file: File): Promise<void> {
+  const form = new FormData();
+  form.append("file", file);
+  await request("/drive", { method: "POST", body: form }, 30 * 60_000);
+}
+
+export async function deleteDriveFile(id: string): Promise<void> {
+  await request(`/drive/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function downloadDriveFile(id: string, filename: string): Promise<void> {
+  const controller = new AbortController();
+  const response = await fetch(`${API_ROOT}/drive/${encodeURIComponent(id)}`, {
+    headers: { Authorization: `Bearer ${authToken()}` },
+    signal: controller.signal
+  });
+  if (!response.ok) throw new ApiError("Не удалось скачать файл", response.status);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function parseJSON(value: string): unknown {

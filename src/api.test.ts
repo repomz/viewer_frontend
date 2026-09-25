@@ -8,12 +8,29 @@ import {
   getOperationStatistics,
   getOperationPlan,
   getStudies,
+  getDriveFiles,
   saveVMPStatisticsConfig
 } from "./api";
+import * as authStorage from "./authStorage";
 
 describe("Viewer API client", () => {
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it("sends the session token to protected endpoints", async () => {
+    jest.spyOn(authStorage, "authToken").mockReturnValue("session-token");
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ files: [], used_bytes: 0, quota_bytes: 1_073_741_824 }), { status: 200 })
+    );
+
+    await expect(getDriveFiles()).resolves.toMatchObject({ files: [] });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/drive",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer session-token" })
+      })
+    );
   });
 
   it("loads the study collection", async () => {

@@ -35,6 +35,7 @@ import {
   getAgentLogs,
   getAgents,
   getBackendVersion,
+  getCurrentUser,
   generateReport,
   getHistoricalStatistics,
   getDutySchedule,
@@ -43,6 +44,8 @@ import {
   getReports,
   getStudies,
   linkStudyAngiography,
+  login as loginUser,
+  logout as logoutUser,
   getUserRequests,
   getUserRequest,
   saveOperationPlanDay,
@@ -50,6 +53,8 @@ import {
   searchStudies,
   suggestProtocolStudies
 } from "./src/api";
+import { clearAuth, loadAuth, saveAuth, type AuthUser, type StoredAuth } from "./src/authStorage";
+import { CredentialsCard, DriveScreen, MetricsScreen } from "./src/PlatformScreens";
 import packageMetadata from "./package.json";
 import { MobileDicomViewer } from "./src/MobileDicomViewer";
 import { isPacsImagingStudy } from "./src/studyClassification";
@@ -67,7 +72,6 @@ import { findProtocolAngiography } from "./src/patientMatching";
 import { mobileNavigationIndexAtX } from "./src/mobileNavigation";
 import { deduplicateStudies } from "./src/studyDeduplication";
 import {
-  defaultSettings,
   loadOperationPlanCache,
   loadOperationStatisticsCache,
   loadHistoricalStatisticsCache,
@@ -148,7 +152,7 @@ if (Platform.OS !== "web") {
   void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 }
 
-type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statistics" | "logs" | "settings";
+type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statistics" | "disk" | "metrics" | "logs" | "settings";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudySort = "time" | "operation";
@@ -187,7 +191,7 @@ const tabs: { id: Tab; label: string; shortLabel: string; icon: IconName }[] = [
   }
 ];
 
-const desktopTabs = [
+const commonDesktopTabs = [
   ...tabs,
   {
     id: "statistics" as const,
@@ -196,12 +200,30 @@ const desktopTabs = [
     icon: "stats-chart-outline" as IconName
   },
   {
-    id: "logs" as const,
-    label: "Логи",
-    shortLabel: "Логи",
-    icon: "warning-outline" as IconName
+    id: "disk" as const,
+    label: "Диск",
+    shortLabel: "Диск",
+    icon: "folder-outline" as IconName
   }
 ];
+
+function desktopTabsFor(role?: AuthUser["role"]) {
+  return [
+    ...commonDesktopTabs,
+    ...(role === "admin" ? [{
+      id: "metrics" as const,
+      label: "Метрики",
+      shortLabel: "Метрики",
+      icon: "pulse-outline" as IconName
+    }] : []),
+    ...(role === "admin" ? [{
+      id: "logs" as const,
+      label: "Логи",
+      shortLabel: "Логи",
+      icon: "warning-outline" as IconName
+    }] : [])
+  ];
+}
 
 const dayFilters: { id: NonNullable<DayFilter>; label: string }[] = [
   { id: "1", label: "Пн" },
@@ -486,7 +508,8 @@ export default function App() {
   const { width } = useWindowDimensions();
   const [mobileFormFactor] = useState(isMobileFormFactor);
   const compact = mobileFormFactor || width < layout.mobileBreakpoint;
-  const [authenticated, setAuthenticated] = useState(false);
+  const [auth, setAuth] = useState<StoredAuth | null>(loadAuth);
+  const [authenticated, setAuthenticated] = useState(() => Boolean(loadAuth()));
   const [appReady, setAppReady] = useState(false);
   const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false);
   const [autoDownloadStartAllowed, setAutoDownloadStartAllowed] = useState(false);
@@ -837,6 +860,23 @@ export default function App() {
   useEffect(() => {
     const timer = setTimeout(() => setLaunchDelayElapsed(true), 1_000);
     return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!auth) return;
+    void getCurrentUser()
+      .then((user) => {
+        const next = { ...auth, user };
+        saveAuth(next);
+        setAuth(next);
+      })
+      .catch(() => {
+        clearAuth();
+        setAuth(null);
+        setAuthenticated(false);
+      });
+  // Existing token is verified once when the application starts.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1305,33 +1345,6 @@ export default function App() {
     });
   }, [requests, studies, submitCommand]);
 
-  const saveAppSettings = useCallback(
-    (next: AppSettings) => {
-      const agentIds = [...new Set(next.agentIds)]
-        .filter((value) => Number.isInteger(value) && value > 0);
-      const selectedAgentIds = [...new Set(next.selectedAgentIds)]
-        .filter((value) => agentIds.includes(value))
-        .slice(0, 2);
-      const fallbackAgent = agentIds[0] ?? defaultSettings.agentId;
-      const normalized = {
-        agentId: selectedAgentIds[0] ?? fallbackAgent,
-        agentIds: agentIds.length ? agentIds : [fallbackAgent],
-        selectedAgentIds: selectedAgentIds.length
-          ? selectedAgentIds
-          : [fallbackAgent],
-        userId: next.userId.trim() || defaultSettings.userId,
-        autoDownloadAngiography: true
-      };
-      setSettings(normalized);
-      saveSettings(normalized);
-      setToast({
-        message: "Настройки сохранены на этом устройстве",
-        tone: "success"
-      });
-    },
-    []
-  );
-
   const removeLocalAngiography = useCallback(async (study: Study) => {
     try {
       await deleteStudyFromDevice(study.study_id);
@@ -1384,6 +1397,24 @@ export default function App() {
     }
   }, [loadReports, settings.agentId]);
 
+  const applyAuth = useCallback((next: StoredAuth) => {
+    saveAuth(next);
+    setAuth(next);
+    setSettings((current) => {
+      const updated = { ...current, userId: next.user.login };
+      saveSettings(updated);
+      return updated;
+    });
+  }, []);
+
+  const signOut = useCallback(() => {
+    void logoutUser().catch(() => undefined);
+    clearAuth();
+    setAuth(null);
+    setAuthenticated(false);
+    setActiveTab("studies");
+  }, []);
+
   const isAngiography = activeTab === "angiography";
 
   if (!authenticated) {
@@ -1396,7 +1427,9 @@ export default function App() {
           revealForm={launchDelayElapsed}
           frontendVersion={packageMetadata.version}
           backendVersion={backendVersion}
-          onEnter={() => {
+          onEnter={async (loginValue, password) => {
+            const next = await loginUser(loginValue, password);
+            applyAuth(next);
             if (appReady) setAuthenticated(true);
             else setEnterRequested(true);
           }}
@@ -1425,6 +1458,7 @@ export default function App() {
               health={health}
               agentIds={settings.agentIds}
               agentHealthById={agentHealthById}
+              role={auth?.user.role}
               onMenu={() => setMenuOpen(true)}
               onTabChange={setActiveTab}
             />
@@ -1517,11 +1551,15 @@ export default function App() {
                   onForward={(report) => void shareReport(report)}
                 />
               ) : null}
-              {activeTab === "logs" && !compact ? (
+              {activeTab === "logs" && !compact && auth?.user.role === "admin" ? (
                 <LogsScreen
                   agentIds={settings.agentIds}
                 />
               ) : null}
+              {activeTab === "metrics" && !compact && auth?.user.role === "admin" ? (
+                <MetricsScreen />
+              ) : null}
+              {activeTab === "disk" ? <DriveScreen compact={compact} /> : null}
               {activeTab === "statistics" ? (
                 <StatisticsScreen
 				  compact={compact}
@@ -1553,7 +1591,6 @@ export default function App() {
                   health={health}
                   agentHealthById={agentHealthById}
                   dicomCache={dicomCache}
-                  onSave={saveAppSettings}
                   onCheck={refreshConnectivity}
                   onClearCache={() => {
                     void clearDicomCache().then(() =>
@@ -1563,6 +1600,9 @@ export default function App() {
                       })
                     );
                   }}
+                  authUser={auth!.user}
+                  onAuthUpdated={applyAuth}
+                  onLogout={signOut}
                 />
               ) : null}
               {activeTab === "plan" ? (
@@ -1607,7 +1647,7 @@ export default function App() {
         />
         <MobileMenu
           visible={menuOpen}
-          settings={settings}
+          user={auth!.user}
           onClose={() => setMenuOpen(false)}
           onSettings={() => {
             setMenuOpen(false);
@@ -1617,6 +1657,11 @@ export default function App() {
 			setMenuOpen(false);
 			setActiveTab("statistics");
 		  }}
+          onDisk={() => {
+            setMenuOpen(false);
+            setActiveTab("disk");
+          }}
+          onLogout={signOut}
         />
         <StudyFilterSheet
           visible={filterOpen}
@@ -1656,11 +1701,13 @@ function LoginScreen({
   revealForm: boolean;
   frontendVersion: string;
   backendVersion: string;
-  onEnter: () => void;
+  onEnter: (login: string, password: string) => Promise<void>;
 }) {
   const insets = useSafeAreaInsets();
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [loginError, setLoginError] = useState("");
   const [backgroundReady, setBackgroundReady] = useState(
     Platform.OS === "web"
   );
@@ -1682,6 +1729,20 @@ function LoginScreen({
       })
     ]).start();
   }, [backgroundReady, panelOffset, panelOpacity, revealForm]);
+
+  const submit = async () => {
+    if (!login.trim() || !password || submitting) return;
+    Keyboard.dismiss();
+    setSubmitting(true);
+    setLoginError("");
+    try {
+      await onEnter(login.trim(), password);
+    } catch (error) {
+      setLoginError(errorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <View
@@ -1743,15 +1804,6 @@ function LoginScreen({
           <View style={styles.loginForm}>
             <View style={styles.loginHeadingRow}>
               <Text style={styles.loginTitle}>Вход</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Регистрация пока недоступна"
-                accessibilityState={{ disabled: true }}
-                disabled
-                style={styles.loginRegistration}
-              >
-                <Text style={styles.loginRegistrationText}>Регистрация</Text>
-              </Pressable>
             </View>
             <View style={styles.loginFields}>
               <View style={styles.loginField}>
@@ -1777,8 +1829,7 @@ function LoginScreen({
                   returnKeyType="go"
                   blurOnSubmit
                   onSubmitEditing={() => {
-                    Keyboard.dismiss();
-                    onEnter();
+                    void submit();
                   }}
                   style={styles.loginInput}
                 />
@@ -1787,16 +1838,15 @@ function LoginScreen({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Войти"
-              onPress={() => {
-                Keyboard.dismiss();
-                onEnter();
-              }}
+              disabled={!login.trim() || !password || submitting}
+              onPress={() => void submit()}
               style={({ pressed }) => [
                 styles.loginButton,
-                pressed && styles.loginButtonPressed
+                pressed && styles.loginButtonPressed,
+                (!login.trim() || !password || submitting) && styles.loginButtonDisabled
               ]}
             >
-              {entering ? (
+              {entering || submitting ? (
                 <ActivityIndicator size="small" color="#04111A" />
               ) : (
                 <>
@@ -1813,10 +1863,7 @@ function LoginScreen({
                 </Text>
               </View>
             ) : null}
-            <Text style={styles.loginTemporary}>
-              Авторизация будет подключена позднее. Сейчас вход выполняется без
-              проверки данных.
-            </Text>
+            {loginError ? <Text style={styles.loginError}>{loginError}</Text> : null}
             <Text style={styles.loginVersions}>
               Frontend {frontendVersion} · Backend {backendVersion}
             </Text>
@@ -1880,6 +1927,7 @@ function TopBar({
   health,
   agentIds,
   agentHealthById,
+  role,
   onMenu,
   onTabChange
 }: {
@@ -1888,9 +1936,11 @@ function TopBar({
   health: ApiHealth | null;
   agentIds: number[];
   agentHealthById: Record<number, AgentHealth>;
+  role?: AuthUser["role"];
   onMenu: () => void;
   onTabChange: (tab: Tab) => void;
 }) {
+  const desktopTabs = desktopTabsFor(role);
   const active = activeTab === "settings"
     ? { label: "Настройки" }
     : desktopTabs.find((item) => item.id === activeTab) ?? tabs[0]!;
@@ -5374,16 +5424,20 @@ function PlanScreen({
 
 function MobileMenu({
   visible,
-  settings,
+  user,
   onClose,
 	onSettings,
-	onStatistics
+	onStatistics,
+  onDisk,
+  onLogout
 }: {
   visible: boolean;
-  settings: AppSettings;
+  user: AuthUser;
   onClose: () => void;
   onSettings: () => void;
 	onStatistics: () => void;
+  onDisk: () => void;
+  onLogout: () => void;
 }) {
   const translateX = useRef(new Animated.Value(-380)).current;
   const insets = useSafeAreaInsets();
@@ -5440,20 +5494,28 @@ function MobileMenu({
             <View style={styles.drawerProfileCopy}>
               <Text style={styles.settingsTitle}>Клинический пользователь</Text>
               <Text style={styles.requestMetaText} numberOfLines={1}>
-                {settings.userId}
+                {user.display_name} · {user.login}
               </Text>
             </View>
           </View>
           <View style={styles.drawerMenu}>
 			<Pressable
-			  disabled
 			  accessibilityRole="button"
-			  accessibilityState={{ disabled: true }}
-			  style={[styles.drawerItem, styles.drawerItemDisabled]}
+			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
+              onPress={onSettings}
 			>
-			  <Icon name="person-outline" color={colors.textDim} />
+			  <Icon name="person-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Профиль</Text>
-			  <Badge label="Скоро" tone="neutral" />
+              <Icon name="chevron-forward" size={17} color={colors.textDim} />
+			</Pressable>
+			<Pressable
+			  accessibilityRole="button"
+			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
+              onPress={onDisk}
+			>
+			  <Icon name="folder-outline" color={colors.textMuted} />
+			  <Text style={styles.drawerItemText}>Диск</Text>
+              <Icon name="chevron-forward" size={17} color={colors.textDim} />
 			</Pressable>
 			<Pressable
 			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
@@ -5473,6 +5535,14 @@ function MobileMenu({
               <Icon name="options-outline" color={colors.textMuted} />
               <Text style={styles.drawerItemText}>Настройки</Text>
               <Icon name="chevron-forward" size={17} color={colors.textDim} />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
+              onPress={onLogout}
+            >
+              <Icon name="log-out-outline" color={colors.danger} />
+              <Text style={[styles.drawerItemText, { color: colors.danger }]}>Выйти</Text>
             </Pressable>
           </View>
           <View style={styles.drawerFooter}>
@@ -5573,21 +5643,23 @@ function SettingsScreen({
   health,
   agentHealthById,
   dicomCache,
-  onSave,
   onCheck,
-  onClearCache
+  onClearCache,
+  authUser,
+  onAuthUpdated,
+  onLogout
 }: {
   compact: boolean;
   settings: AppSettings;
   health: ApiHealth | null;
   agentHealthById: Record<number, AgentHealth>;
   dicomCache: DicomCacheSnapshot;
-  onSave: (settings: AppSettings) => void;
   onCheck: () => void;
   onClearCache: () => void;
+  authUser: AuthUser;
+  onAuthUpdated: (auth: StoredAuth) => void;
+  onLogout: () => void;
 }) {
-  const [userId, setUserId] = useState(settings.userId);
-
   return (
     <ScrollView
       style={[styles.screen, compact && styles.screenCompact]}
@@ -5595,31 +5667,7 @@ function SettingsScreen({
       contentContainerStyle={styles.scrollScreen}
     >
       <View style={styles.settingsGrid}>
-        <View style={styles.settingsCard}>
-          <View>
-            <Text style={styles.settingsTitle}>Пользователь</Text>
-            <Text style={styles.settingsDescription}>
-              Локальные параметры профиля до подключения авторизации.
-            </Text>
-          </View>
-          <Field
-            label="Идентификатор пользователя"
-            value={userId}
-            onChangeText={setUserId}
-            autoCapitalize="none"
-            hint="Временное поле до подключения авторизации."
-          />
-          <Button
-            label="Сохранить"
-            onPress={() =>
-              onSave({
-                ...settings,
-                userId,
-                autoDownloadAngiography: true
-              })
-            }
-          />
-        </View>
+        <CredentialsCard user={authUser} onUpdated={onAuthUpdated} onLogout={onLogout} />
         {compact ? (
           <View style={styles.settingsCard}>
           <View>
@@ -5698,12 +5746,12 @@ function SettingsScreen({
         </View>
       </View>
       <View style={styles.securityCard}>
-        <Icon name="shield-checkmark-outline" size={25} color={colors.warning} />
+        <Icon name="shield-checkmark-outline" size={25} color={colors.success} />
         <View style={styles.securityCopy}>
-          <Text style={styles.securityTitle}>Текущий технический допуск</Text>
+          <Text style={styles.securityTitle}>Защищённый профиль</Text>
           <Text style={styles.securityText}>
-            Backend пока работает без авторизации. Не публикуйте frontend в
-            открытом интернете до подключения TLS и ролей пользователей.
+            Вход защищён персональным логином и паролем. Не передавайте данные
+            своего профиля другим пользователям.
           </Text>
         </View>
       </View>
@@ -6054,6 +6102,7 @@ const styles = StyleSheet.create({
     backgroundColor: darkColors.primary
   },
   loginButtonPressed: { opacity: 0.82, transform: [{ scale: 0.99 }] },
+  loginButtonDisabled: { opacity: 0.55 },
   loginButtonText: {
     color: "#04111A",
     fontSize: 15,
@@ -6083,6 +6132,13 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 14,
     textAlign: "center"
+  },
+  loginError: {
+    color: "#FF9BAD",
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: "center",
+    fontWeight: "600"
   },
   loginVersions: {
     ...typography.meta,

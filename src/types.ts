@@ -124,6 +124,39 @@ export type AppSettings = {
   autoDownloadAngiography: boolean;
 };
 
+export type DriveFile = {
+  id: string;
+  name: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+};
+
+export type DriveListing = {
+  files: DriveFile[];
+  used_bytes: number;
+  quota_bytes: number;
+};
+
+export type LoginMetric = {
+  user_id: number;
+  display_name: string;
+  login: string;
+  count: number;
+};
+
+export type PlatformMetrics = {
+  date: string;
+  total_logins: number;
+  logins: LoginMetric[];
+  protocol_count: number;
+  disk_total_bytes: number;
+  disk_used_bytes: number;
+  disk_free_bytes: number;
+  memory_total_bytes: number;
+  memory_used_bytes: number;
+};
+
 export type PlanEntry = {
   patient: string;
   department: string;
