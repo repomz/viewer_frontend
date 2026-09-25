@@ -3910,12 +3910,6 @@ function StatisticsScreen({
 	if (compact) {
 		return (
 			<View style={[styles.statisticsScreen, styles.screenCompact]}>
-				<View style={styles.compactScreenToolbar}>
-					<View style={styles.compactScreenHeading}>
-						<Text style={styles.compactScreenTitle}>Статистика</Text>
-						<Text style={styles.compactScreenMeta}>Операции хирургов · {new Date().getFullYear()}</Text>
-					</View>
-				</View>
 				{error ? <InlineError message={error} onRetry={onRetry} /> : null}
 				{loading && !statistics ? <LoadingState label="Считаем операции…" /> : null}
 				{statistics ? (
@@ -4002,14 +3996,6 @@ function StatisticsScreen({
         contentContainerStyle={styles.statisticsPageContent}
         showsVerticalScrollIndicator={false}
       >
-      <View style={styles.compactScreenToolbar}>
-        <View style={styles.compactScreenHeading}>
-          <Text style={styles.compactScreenTitle}>Статистика операций</Text>
-          <Text style={styles.compactScreenMeta}>
-            Хирурги — текущий год; архив — по всем импортированным годам
-          </Text>
-        </View>
-      </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !statistics ? (
         <LoadingState label="Считаем выполненные операции…" />
@@ -6139,8 +6125,7 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: 17,
-    backgroundColor: colors.surfaceSoft
+    backgroundColor: "transparent"
   },
   mobileTitlePillDark: { backgroundColor: "transparent" },
   agentStatusNumber: {
@@ -6197,21 +6182,21 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 12,
     borderRadius: 15,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    backgroundColor: colors.surfaceSoft
+    borderWidth: 0,
+    borderColor: "transparent",
+    backgroundColor: "transparent"
   },
   desktopTabButtonDark: {
     backgroundColor: "transparent",
     borderColor: "transparent"
   },
   desktopTabButtonActive: {
-    backgroundColor: colors.primarySoft,
-    borderColor: "rgba(11,132,179,0.28)"
+    backgroundColor: "transparent",
+    borderColor: "transparent"
   },
   desktopTabButtonActiveDark: {
-    backgroundColor: darkColors.primarySoft,
-    borderColor: "rgba(53,194,255,0.24)"
+    backgroundColor: "transparent",
+    borderColor: "transparent"
   },
   desktopTabText: {
     ...typography.meta,
@@ -6358,13 +6343,13 @@ const styles = StyleSheet.create({
     gap: 7,
     paddingHorizontal: 11,
     borderRadius: radii.pill,
-    backgroundColor: colors.surfaceSoft,
-    borderWidth: 1,
-    borderColor: colors.borderSoft
+    backgroundColor: "transparent",
+    borderWidth: 0,
+    borderColor: "transparent"
   },
   healthPillDark: {
-    backgroundColor: darkColors.surface,
-    borderColor: darkColors.borderSoft
+    backgroundColor: "transparent",
+    borderColor: "transparent"
   },
   healthDot: { width: 7, height: 7, borderRadius: 7 },
   healthText: { ...typography.meta, color: colors.textMuted },
@@ -6382,7 +6367,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: 10,
-    backgroundColor: colors.surfaceSoft
+    backgroundColor: "transparent"
   },
   screen: { flex: 1, paddingHorizontal: 24, paddingTop: 22 },
   screenCompact: { paddingHorizontal: 10, paddingTop: 4 },
@@ -7261,7 +7246,7 @@ const styles = StyleSheet.create({
   statisticsWorkspace: {
     flexDirection: "row",
     gap: 14,
-    marginTop: 10
+    marginTop: 2
   },
   statisticsTablesPane: {
     flex: 1,
@@ -7361,7 +7346,7 @@ const styles = StyleSheet.create({
     elevation: 2
   },
   mobileStatisticsScroll: { flex: 1, minHeight: 0 },
-  mobileStatisticsContent: { paddingTop: 10, paddingBottom: 24, gap: 12 },
+  mobileStatisticsContent: { paddingTop: 2, paddingBottom: 24, gap: 12 },
   mobileStatisticsSelectorCard: {
     padding: 12,
     gap: 7,
