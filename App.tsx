@@ -6449,7 +6449,7 @@ const styles = StyleSheet.create({
     height: 36,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radii.pill,
+    borderRadius: 10,
     backgroundColor: colors.surfaceSoft,
     borderWidth: 1,
     borderColor: colors.borderSoft
@@ -6613,7 +6613,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radii.pill,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: darkColors.borderSoft
   },
@@ -6632,7 +6632,7 @@ const styles = StyleSheet.create({
   angioGuideButton: {
     width: 40,
     height: 40,
-    borderRadius: 20,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: darkColors.borderSoft,
     backgroundColor: darkColors.surface,
@@ -7421,7 +7421,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radii.pill,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.borderSoft,
     backgroundColor: colors.surfaceSoft
@@ -7631,7 +7631,7 @@ const styles = StyleSheet.create({
     minHeight: 34,
     justifyContent: "center",
     paddingHorizontal: 12,
-    borderRadius: radii.pill,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface
@@ -7954,7 +7954,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: radii.pill,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.canvasRaised
@@ -7993,7 +7993,7 @@ const styles = StyleSheet.create({
     minWidth: 34,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: radii.pill,
+    borderRadius: 8,
     backgroundColor: colors.primary
   },
   xaStateInactive: {
@@ -8360,7 +8360,7 @@ const styles = StyleSheet.create({
   profileAvatar: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.primarySoft

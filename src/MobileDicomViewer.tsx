@@ -1612,7 +1612,7 @@ const styles = StyleSheet.create({
   controlButton: {
     width: 44,
     height: 44,
-    borderRadius: 15,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: darkColors.surface
