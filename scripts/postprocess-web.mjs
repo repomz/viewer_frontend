@@ -134,6 +134,7 @@ const splashHead = `
         height: 100%;
         min-height: 100%;
         overflow: hidden;
+        overscroll-behavior: none;
         background: #07131F;
       }
       #root {

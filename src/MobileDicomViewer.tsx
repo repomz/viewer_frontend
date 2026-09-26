@@ -13,11 +13,11 @@ import {
   Modal,
   PanResponder,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View
 } from "react-native";
+import { ScrollView } from "./BoundedScrollView";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Icon } from "./ui";

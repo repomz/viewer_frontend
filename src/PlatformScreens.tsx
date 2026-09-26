@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View
 } from "react-native";
+import { ScrollView } from "./BoundedScrollView";
 
 import {
   changeCredentials,

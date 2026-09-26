@@ -12,7 +12,6 @@ import {
   Platform,
   Pressable,
   RefreshControl,
-  ScrollView,
   Share,
   StyleSheet,
   Text,
@@ -20,6 +19,7 @@ import {
   useWindowDimensions,
   View
 } from "react-native";
+import { ScrollView, type ScrollViewHandle } from "./src/BoundedScrollView";
 import {
   SafeAreaProvider,
   SafeAreaView,
@@ -4465,7 +4465,7 @@ function DutyScheduleScreen({
   const [saving, setSaving] = useState(false);
   const [holidayText, setHolidayText] = useState("");
   const [shiftTool, setShiftTool] = useState("6");
-  const timelineRef = useRef<ScrollView>(null);
+  const timelineRef = useRef<ScrollViewHandle>(null);
   const selectedMonth = monthKey(monthOffset);
   const today = new Date();
   const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
@@ -4939,7 +4939,7 @@ function PlanScreen({
   const [shareOpen, setShareOpen] = useState(false);
 	const [printOpen, setPrintOpen] = useState(false);
   const [previousProtocol, setPreviousProtocol] = useState<Study | null>(null);
-  const planEditorScrollRef = useRef<ScrollView>(null);
+  const planEditorScrollRef = useRef<ScrollViewHandle>(null);
 
   const openDay = (date: string) => {
     const entries = plan?.days.find((day) => day.date === date)?.entries ?? [];
