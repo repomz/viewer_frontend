@@ -4346,10 +4346,12 @@ function ReportSection({
             </Text>
             <View style={styles.operationCopy}>
               <View style={styles.operationTitleLine}>
-                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.operationPatient, { flex: 1 }]}>
+                <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Text numberOfLines={1} ellipsizeMode="tail" style={styles.operationPatient}>
                   {operation.patient || "ФИО не указано"}
                 </Text>
                 {operation.age ? <Text style={styles.operationAge}>{operation.age}</Text> : null}
+                </View>
                 <Text numberOfLines={1} style={styles.operationDepartment}>
                   {operation.department || "—"}
                 </Text>
@@ -6894,6 +6896,7 @@ const styles = StyleSheet.create({
     paddingBottom: 6,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "space-between",
     gap: 8
   },
   reportViewTabsCompact: { width: undefined, alignSelf: "stretch", flex: 1, minWidth: 0 },
