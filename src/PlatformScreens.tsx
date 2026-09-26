@@ -189,7 +189,7 @@ function metricPercent(value: number, total: number): string {
   return total > 0 ? `${Math.round((value / total) * 100)}%` : "0%";
 }
 
-export function MetricsScreen() {
+export function MetricsScreen({ compact = false }: { compact?: boolean }) {
   const [metrics, setMetrics] = useState<PlatformMetrics | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -210,17 +210,21 @@ export function MetricsScreen() {
       {metrics ? (
         <>
           <View style={styles.metricGrid}>
-            <View style={styles.metricCard}><Text style={styles.metricLabel}>Открытий за сутки</Text><Text style={styles.metricValue}>{metrics.total_logins}</Text><Text style={styles.meta}>Всего: {metrics.all_time_logins} · без администратора</Text></View>
-            <View style={styles.metricCard}><Text style={styles.metricLabel}>Протоколов в базе</Text><Text style={styles.metricValue}>{metrics.protocol_count}</Text></View>
-            <View style={styles.metricCard}><Text style={styles.metricLabel}>Диск сервера</Text><Text style={styles.metricValue}>{metricPercent(metrics.disk_used_bytes, metrics.disk_total_bytes)}</Text><Text style={styles.meta}>{formatStorageSize(metrics.disk_used_bytes)} из {formatStorageSize(metrics.disk_total_bytes)}</Text></View>
-            <View style={styles.metricCard}><Text style={styles.metricLabel}>Оперативная память</Text><Text style={styles.metricValue}>{metricPercent(metrics.memory_used_bytes, metrics.memory_total_bytes)}</Text><Text style={styles.meta}>{formatStorageSize(metrics.memory_used_bytes)} из {formatStorageSize(metrics.memory_total_bytes)}</Text></View>
+            <View style={[styles.metricCard, compact && styles.metricCardCompact]}><Text style={styles.metricLabel}>Протоколов</Text><Text style={styles.metricValue}>{metrics.protocol_count}</Text></View>
+            <View style={[styles.metricCard, compact && styles.metricCardCompact]}><Text style={styles.metricLabel}>Входов</Text><Text style={styles.meta}>За сутки <Text style={styles.loginCount}>{metrics.total_logins}</Text></Text><Text style={styles.meta}>Всего <Text style={styles.loginCount}>{metrics.all_time_logins}</Text></Text></View>
+            <View style={[styles.metricCard, compact && styles.metricCardCompact]}><Text style={styles.metricLabel}>Диск</Text><Text style={styles.metricValue}>{metricPercent(metrics.disk_used_bytes, metrics.disk_total_bytes)}</Text><Text style={styles.meta}>{formatStorageSize(metrics.disk_used_bytes)} из {formatStorageSize(metrics.disk_total_bytes)}</Text></View>
+            <View style={[styles.metricCard, compact && styles.metricCardCompact]}><Text style={styles.metricLabel}>Память</Text><Text style={styles.metricValue}>{metricPercent(metrics.memory_used_bytes, metrics.memory_total_bytes)}</Text><Text style={styles.meta}>{formatStorageSize(metrics.memory_used_bytes)} из {formatStorageSize(metrics.memory_total_bytes)}</Text></View>
           </View>
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Входы пользователей · {new Date(metrics.date).toLocaleDateString("ru-RU")}</Text>
             {metrics.logins.map((item) => (
-              <View key={item.user_id} style={styles.loginRow}>
+              <View key={item.user_id} style={[styles.loginRow, compact && styles.loginRowCompact]}>
                 <View><Text style={styles.fileName}>{item.display_name}</Text><Text style={styles.meta}>{item.login}</Text></View>
-                <View><Text style={styles.loginCount}>{item.count} за сутки</Text><Text style={styles.meta}>{item.total} всего</Text></View>
+                <View style={styles.userMetricLine}>
+                  <Text style={styles.meta}>За сутки <Text style={styles.loginCount}>{item.count}</Text></Text>
+                  <Text style={styles.meta}>Всего <Text style={styles.loginCount}>{item.total}</Text></Text>
+                  <Text style={styles.meta}>Диск <Text style={styles.loginCount}>{((item.disk_used_bytes ?? 0) / 1048576).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</Text> МБ</Text>
+                </View>
               </View>
             ))}
           </View>
@@ -252,9 +256,12 @@ const styles = StyleSheet.create({
   empty: { minHeight: 240, alignItems: "center", justifyContent: "center", gap: 9 },
   metricsContent: { gap: 12, paddingBottom: 28 },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  metricCardCompact: { flexBasis: "46%", minWidth: 0, padding: 12 },
+  loginRowCompact: { flexDirection: "column", alignItems: "stretch", paddingVertical: 10, gap: 8 },
+  userMetricLine: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 8 },
   metricCard: { flexGrow: 1, flexBasis: 220, minHeight: 118, justifyContent: "center", gap: 5, padding: 16, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   metricLabel: { ...typography.label, color: colors.textMuted },
-  metricValue: { fontSize: 30, lineHeight: 36, fontWeight: "800", color: colors.primaryStrong },
+  metricValue: { fontSize: 22, lineHeight: 28, fontWeight: "800", color: colors.primary },
   loginRow: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, borderBottomWidth: 1, borderBottomColor: colors.borderSoft },
   loginCount: { minWidth: 46, textAlign: "center", fontSize: 22, lineHeight: 28, fontWeight: "800", color: colors.primary }
 });

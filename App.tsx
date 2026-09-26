@@ -1577,7 +1577,7 @@ export default function App() {
                 />
               ) : null}
               {activeTab === "metrics" && auth?.user.role === "admin" ? (
-                <MetricsScreen />
+                <MetricsScreen compact={compact} />
               ) : null}
               {activeTab === "disk" ? <DriveScreen compact={compact} /> : null}
               {activeTab === "statistics" ? (
@@ -1662,6 +1662,7 @@ export default function App() {
           onSubmit={submitCommand}
         />
         <MobileMenu
+          compact={compact}
           visible={menuOpen}
           user={auth!.user}
           onMetrics={() => { setMenuOpen(false); setActiveTab("metrics"); }}
@@ -2589,7 +2590,7 @@ function StudyRow({
         </Text>
       </View>
       <View style={styles.studyTrailing}>
-        <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
+        <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning, true)}</Text>
         {hasXA ? (
           <Pressable
             accessibilityRole="button"
@@ -4715,8 +4716,7 @@ const formatShortNumericDate = (value: string) => {
 };
 
 async function sharePlanSnapshot(
-  plan: OperationPlan,
-  target: "MAX" | "Telegram" | "SMS"
+  plan: OperationPlan
 ): Promise<void> {
   const text = plan.days
     .flatMap((day) =>
@@ -4781,7 +4781,7 @@ async function sharePlanSnapshot(
   const file = new File([blob], "plan.png", { type: "image/png" });
   if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
     await navigator.share({
-      title: `План операций — ${target}`,
+      title: "План операций",
       text: text || "План операций",
       files: [file]
     });
@@ -4793,21 +4793,6 @@ async function sharePlanSnapshot(
   anchor.download = "plan.png";
   anchor.click();
   window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-  if (target === "Telegram") {
-    window.open(
-      `https://t.me/share/url?url=&text=${encodeURIComponent(text)}`,
-      "_blank",
-      "noopener,noreferrer"
-    );
-  } else if (target === "SMS") {
-    window.location.href = `sms:?&body=${encodeURIComponent(text)}`;
-  } else {
-    window.open(
-      `https://max.ru/:share?text=${encodeURIComponent(text)}`,
-      "_blank",
-      "noopener,noreferrer"
-    );
-  }
 }
 
 function escapePrintHTML(value: string) {
@@ -4888,8 +4873,6 @@ function PlanScreen({
   } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
-  const [shareOpen, setShareOpen] = useState(false);
-	const [printOpen, setPrintOpen] = useState(false);
   const [previousProtocol, setPreviousProtocol] = useState<Study | null>(null);
   const [previousProtocols, setPreviousProtocols] = useState<Study[]>([]);
   const planEditorScrollRef = useRef<ScrollViewHandle>(null);
@@ -4982,11 +4965,14 @@ function PlanScreen({
             onPress={() => {
               if (!plan) return;
               if (compact) {
-                setShareOpen(true);
+                void sharePlanSnapshot(plan).catch((reason) => {
+                  if (reason instanceof Error && reason.name === "AbortError") return;
+                  Alert.alert("Не удалось отправить", errorMessage(reason));
+                });
                 return;
               }
               try {
-				setPrintOpen(true);
+                printOperationPlan(plan);
               } catch (reason) {
                 Alert.alert("Не удалось распечатать", errorMessage(reason));
               }
@@ -5066,8 +5052,8 @@ function PlanScreen({
                         <View style={[styles.planPreviousCell, compact && styles.planPreviousCellCompact]}>
 						  {entry?.previous_operations?.length ? (
 							<View style={[styles.planHistoryButtons, !compact && styles.planHistoryButtonsDesktop]}>
-							  {entry.previous_operations.slice(0, compact ? 1 : 3).map((protocol) => (
-								<Pressable key={protocol.id} onPress={(event) => { event.stopPropagation?.(); setPreviousProtocols(entry.previous_operations ?? []); setPreviousProtocol(protocol); }} style={styles.planPreviousButton}>
+							  {(compact ? entry.previous_operations.slice(0, 1) : entry.previous_operations).map((protocol) => (
+								<Pressable key={protocol.id} onPress={(event) => { event.stopPropagation?.(); setPreviousProtocols(entry.previous_operations ?? []); setPreviousProtocol(protocol); }} style={[styles.planPreviousButton, !compact && (entry.previous_operations!.length < 3 ? styles.planPreviousButtonFixed : styles.planPreviousButtonFlexible)]}>
 								  <Text numberOfLines={1} style={styles.planPreviousButtonText}>{formatShortNumericDate(protocol.time_beginning)}</Text>
 								</Pressable>
 							  ))}
@@ -5092,14 +5078,6 @@ function PlanScreen({
         </View>
       ) : null}
 
-	  <Sheet visible={printOpen} title="Печать плана" onClose={() => setPrintOpen(false)}>
-		<View style={styles.filterSheetContent}>
-			<Button label="Вся неделя" icon="print-outline" onPress={() => { if (plan) printOperationPlan(plan); setPrintOpen(false); }} />
-			{plan?.days.map((day) => (
-				<Button key={day.date} label={`${weekdayTitle(day.date)} · ${formatDate(day.date)}`} variant="ghost" onPress={() => { printOperationPlan(plan, day.date); setPrintOpen(false); }} />
-			))}
-		</View>
-	  </Sheet>
 
       <Sheet
         visible={Boolean(selectedDate)}
@@ -5334,11 +5312,12 @@ function PlanScreen({
         title={previousProtocol?.patient ?? "Протокол операции"}
         onClose={() => setPreviousProtocol(null)}
         fullScreen={compact}
+        fixedHeight
         wide
       >
         {previousProtocol ? (
-          <ScrollView contentContainerStyle={styles.previousProtocolContent}>
-            {previousProtocols.length > 1 ? <View style={styles.planHistoryButtonsDesktop}>
+          <View style={{ flex: 1, minHeight: 0 }}>
+            {previousProtocols.length > 1 ? <View style={styles.previousProtocolDates}>
               {previousProtocols.map((protocol) => <Chip
                 key={protocol.id}
                 label={formatShortNumericDate(protocol.time_beginning)}
@@ -5346,6 +5325,7 @@ function PlanScreen({
                 onPress={() => setPreviousProtocol(protocol)}
               />)}
             </View> : null}
+          <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={styles.previousProtocolContent}>
             <StudyDetails
               study={previousProtocol}
               hasXA={false}
@@ -5353,37 +5333,16 @@ function PlanScreen({
               onOpenXA={() => undefined}
             />
           </ScrollView>
+          </View>
         ) : null}
       </Sheet>
 
-      <Sheet
-        visible={shareOpen}
-        title="Отправить снимок плана"
-        onClose={() => setShareOpen(false)}
-      >
-        <View style={styles.planShareOptions}>
-          {(["MAX", "Telegram", "SMS"] as const).map((target) => (
-            <Button
-              key={target}
-              label={target}
-              icon="share-outline"
-              variant="ghost"
-              onPress={() => {
-                if (!plan) return;
-                setShareOpen(false);
-                void sharePlanSnapshot(plan, target).catch((reason) =>
-                  Alert.alert("Не удалось отправить", errorMessage(reason))
-                );
-              }}
-            />
-          ))}
-        </View>
-      </Sheet>
     </View>
   );
 }
 
 function MobileMenu({
+  compact,
   visible,
   user,
   onClose,
@@ -5394,6 +5353,7 @@ function MobileMenu({
   onDisk,
   onLogout
 }: {
+  compact: boolean;
   visible: boolean;
   user: AuthUser;
   onClose: () => void;
@@ -5405,10 +5365,20 @@ function MobileMenu({
   onLogout: () => void;
 }) {
   const translateX = useRef(new Animated.Value(-380)).current;
+  const closeMenu = useCallback(() => {
+    if (!compact) { onClose(); return; }
+    Animated.timing(translateX, { toValue: -380, duration: 200, useNativeDriver: Platform.OS !== "web" }).start(({ finished }) => { if (finished) onClose(); });
+  }, [compact, onClose, translateX]);
   const closeGesture = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx < -15 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
-    onPanResponderRelease: (_event, gesture) => { if (gesture.dx < -55) onClose(); }
-  }), [onClose]);
+    onMoveShouldSetPanResponder: (_event, gesture) => compact && gesture.dx < -8 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+    onPanResponderGrant: () => translateX.stopAnimation(),
+    onPanResponderMove: (_event, gesture) => translateX.setValue(Math.min(0, gesture.dx)),
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dx < -70 || (gesture.dx < -20 && gesture.vx < -0.5)) closeMenu();
+      else Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== "web" }).start();
+    },
+    onPanResponderTerminate: () => Animated.spring(translateX, { toValue: 0, useNativeDriver: Platform.OS !== "web" }).start()
+  }), [compact, closeMenu, translateX]);
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
@@ -5427,14 +5397,14 @@ function MobileMenu({
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
-      onRequestClose={onClose}
+      animationType="none"
+      onRequestClose={() => { if (compact) closeMenu(); }}
     >
       <View style={styles.drawerRoot}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Закрыть меню"
-          onPress={onClose}
+          onPress={compact ? closeMenu : undefined}
           style={StyleSheet.absoluteFill}
         />
         <Animated.View
@@ -5455,7 +5425,7 @@ function MobileMenu({
               </View>
               <Text style={styles.headerBrandText}>VIEWER</Text>
             </View>
-            <IconButton icon="close" label="Закрыть меню" onPress={onClose} />
+            <IconButton icon="close" label="Закрыть меню" onPress={closeMenu} />
           </View>
           <View style={styles.profileCard}>
             <View style={styles.profileAvatar}>
@@ -5477,7 +5447,6 @@ function MobileMenu({
 			>
 			  <Icon name="person-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Профиль</Text>
-              <Icon name="chevron-forward" size={17} color={colors.textDim} />
 			</Pressable>
 			<Pressable
 			  accessibilityRole="button"
@@ -5486,7 +5455,6 @@ function MobileMenu({
 			>
 			  <Icon name="folder-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Диск</Text>
-              <Icon name="chevron-forward" size={17} color={colors.textDim} />
 			</Pressable>
 			<Pressable
 			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
@@ -5494,7 +5462,6 @@ function MobileMenu({
 			>
 			  <Icon name="stats-chart-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Статистика</Text>
-			  <Icon name="chevron-forward" size={17} color={colors.textDim} />
 			</Pressable>
             {user.role === "admin" ? <Pressable
               style={({ pressed }) => [
@@ -5505,7 +5472,6 @@ function MobileMenu({
             >
               <Icon name="options-outline" color={colors.textMuted} />
               <Text style={styles.drawerItemText}>Настройки</Text>
-              <Icon name="chevron-forward" size={17} color={colors.textDim} />
             </Pressable> : null}
             <Pressable
               accessibilityRole="button"
@@ -8159,7 +8125,7 @@ const styles = StyleSheet.create({
   planDepartmentCell: { flex: 0.8, minWidth: 0, flexShrink: 1 },
   planOperationCell: { flex: 1, minWidth: 0, flexShrink: 1 },
   planAdditionsCell: { flex: 1, minWidth: 0, flexShrink: 1 },
-  planPreviousCell: { flex: 1.2, minWidth: 0, flexShrink: 1 },
+  planPreviousCell: { flex: 1.2, minWidth: 150, flexShrink: 1 },
   planDayCellCompact: { flex: 0.58 },
   planPatientCellCompact: { flex: 1.65 },
   planDepartmentCellCompact: { flex: 0.52, textAlign: "center", paddingHorizontal: 1 },
@@ -8174,7 +8140,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primarySoft
   },
 	planHistoryButtons: { flex: 1, gap: 3 },
-	planHistoryButtonsDesktop: { flexDirection: "row", flexWrap: "wrap" },
+	planHistoryButtonsDesktop: { flexDirection: "row", flexWrap: "nowrap", minWidth: 0 },
+  planPreviousButtonFixed: { flex: 0, width: 72, flexShrink: 0 },
+  planPreviousButtonFlexible: { flex: 1, minWidth: 0, paddingHorizontal: 2 },
+  previousProtocolDates: { flexDirection: "row", flexWrap: "wrap", gap: 8, padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border },
   planPreviousButtonText: {
     color: colors.primary,
     fontSize: 10,

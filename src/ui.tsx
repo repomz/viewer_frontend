@@ -374,6 +374,7 @@ export function Sheet({
   children,
   wide = false,
   extraWide = false,
+  fixedHeight = false,
   fullScreen = false
 }: PropsWithChildren<{
   visible: boolean;
@@ -381,6 +382,7 @@ export function Sheet({
   onClose: () => void;
   wide?: boolean;
   extraWide?: boolean;
+  fixedHeight?: boolean;
   fullScreen?: boolean;
 }>) {
   const { width } = useWindowDimensions();
@@ -413,6 +415,7 @@ export function Sheet({
             compact && styles.sheetCompact,
             wide && styles.sheetWide,
             extraWide && styles.sheetExtraWide,
+            fixedHeight && { height: "88%" },
             fullScreen && styles.sheetFull
           ]}
         >

@@ -139,6 +139,7 @@ export type DriveListing = {
 };
 
 export type LoginMetric = {
+  disk_used_bytes: number;
   user_id: number;
   display_name: string;
   login: string;

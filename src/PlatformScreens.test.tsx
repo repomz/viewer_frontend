@@ -1,8 +1,8 @@
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
-import { CredentialsCard } from "./PlatformScreens";
-import { changeCredentials } from "./api";
+import { CredentialsCard, MetricsScreen } from "./PlatformScreens";
+import { changeCredentials, getPlatformMetrics } from "./api";
 
-jest.mock("./api", () => ({ changeCredentials: jest.fn() }));
+jest.mock("./api", () => ({ changeCredentials: jest.fn(), getPlatformMetrics: jest.fn() }));
 jest.mock("./ui", () => {
   const React = jest.requireActual("react");
   const { Text, TextInput, Pressable } = jest.requireActual("react-native");
@@ -10,6 +10,7 @@ jest.mock("./ui", () => {
     Button: ({ label, onPress, disabled }: any) => React.createElement(Pressable, { onPress, disabled }, React.createElement(Text, null, label)),
     Field: ({ label, ...props }: any) => React.createElement(TextInput, { ...props, accessibilityLabel: label }),
     Icon: () => null,
+    LoadingState: () => null,
     InlineError: ({ message }: any) => React.createElement(Text, null, message)
   };
 });
@@ -17,6 +18,20 @@ jest.mock("./ui", () => {
 const user = { id: 1, display_name: "Тест", login: "test", role: "user" as const, quota_bytes: 100 };
 
 beforeEach(() => jest.clearAllMocks());
+
+test("mobile metrics include both login totals and personal drive usage", async () => {
+  jest.mocked(getPlatformMetrics).mockResolvedValue({
+    date: "2026-09-27", total_logins: 3, all_time_logins: 9, protocol_count: 1800,
+    disk_total_bytes: 100, disk_used_bytes: 30, disk_free_bytes: 70,
+    memory_total_bytes: 100, memory_used_bytes: 20,
+    logins: [{ user_id: 1, display_name: "Тест", login: "test", count: 3, total: 9, disk_used_bytes: 2 * 1048576 }]
+  });
+  const screen = render(<MetricsScreen compact />);
+  await waitFor(() => expect(screen.getByText("Протоколов")).toBeTruthy());
+  expect(screen.getByText("Входов")).toBeTruthy();
+  expect(screen.getByText("Память")).toBeTruthy();
+  expect(screen.getByText("Диск 2 МБ")).toBeTruthy();
+});
 
 test("credentials are hidden until selected and cancel clears edits", () => {
   const screen = render(<CredentialsCard user={user} onUpdated={jest.fn()} />);
