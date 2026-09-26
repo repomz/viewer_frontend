@@ -4980,7 +4980,7 @@ function PlanScreen({
         <View style={styles.planTable}>
           <View style={[styles.planTableRow, styles.planTableHeader]}>
 			<Text style={[styles.planTableHeaderText, styles.planStatusCell]}>✓</Text>
-            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDayCell, compact && styles.planDayCellCompact]}>День</Text>
+            <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDayCell, compact && styles.planDayCellCompact]}>{compact ? "Дн" : "День"}</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPatientCell, compact && styles.planPatientCellCompact]}>Пациент</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>{compact ? "Отд." : "Отделение"}</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planOperationCell, compact && styles.planOperationCellCompact]}>{compact ? "Опер." : "Операция"}</Text>
@@ -5019,14 +5019,10 @@ function PlanScreen({
 								</Pressable>
 							) : null}
 						</View>
-                        <Text
-                          numberOfLines={1}
-                          adjustsFontSizeToFit={compact}
-                          minimumFontScale={0.72}
-                          style={[styles.planTableText, styles.planPatientCell, compact && styles.planPatientCellCompact]}
-                        >
-                          {entry ? `${index + 1}. ${entry.patient} ${planPatientAge(entry.birth_date)}` : "—"}
-                        </Text>
+                        <View style={[styles.planPatientCell, compact && styles.planPatientCellCompact, { flexDirection: "row", alignItems: "center", gap: 3 }]}>
+                          <Text numberOfLines={1} adjustsFontSizeToFit={compact} minimumFontScale={0.72} style={[styles.planTableText, { flex: 1 }, compact && { fontSize: 9 }]}>{entry ? `${index + 1}. ${entry.patient}` : "—"}</Text>
+                          {entry ? <Text style={[styles.planTableText, { flexShrink: 0, paddingHorizontal: 0 }]}>{planPatientAge(entry.birth_date)}</Text> : null}
+                        </View>
                         <Text style={[styles.planTableText, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>
                           {entry
                             ? compact
