@@ -17,6 +17,26 @@ import type {
 import { authToken, type AuthUser, type StoredAuth } from "./authStorage";
 
 const API_ROOT = "/api";
+export const recordAppOpen = (eventId: string) => request<void>("/auth/app-open", {
+  method: "POST", body: JSON.stringify({ event_id: eventId })
+});
+export type AgentConfiguration = {
+  agent_id: number;
+  received_at: string;
+  configuration: {
+    version: string;
+    description: string;
+    log_dir: string;
+    state_file: string;
+    pacs_config_path: string;
+    heartbeat_interval_min: number;
+    study_polling: { state: boolean; interval_min: number; operations_dir?: string[] };
+    xa_polling: { state: boolean; interval_min: number };
+    ct_polling: { state: boolean; interval_min: number };
+    user_requests_polling: { state: boolean; interval_min: number };
+  };
+};
+export const getAgentConfigurations = () => request<AgentConfiguration[]>("/agent_configurations");
 const DEFAULT_TIMEOUT = 15_000;
 
 export class ApiError extends Error {

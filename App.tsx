@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import { agentLogGroups } from "./src/agentLogDisplay";
 import * as SplashScreen from "expo-splash-screen";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -33,6 +34,9 @@ import {
   deleteReport,
   getAgentHeartbeatTimes,
   getAgentLogs,
+  recordAppOpen,
+  getAgentConfigurations,
+  type AgentConfiguration,
   getAgents,
   getBackendVersion,
   getCurrentUser,
@@ -152,7 +156,7 @@ if (Platform.OS !== "web") {
   void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 }
 
-type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statistics" | "disk" | "metrics" | "logs" | "settings";
+type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statistics" | "disk" | "metrics" | "logs" | "settings" | "profile";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudySort = "time" | "operation";
@@ -509,6 +513,22 @@ export default function App() {
   const [mobileFormFactor] = useState(isMobileFormFactor);
   const compact = mobileFormFactor || width < layout.mobileBreakpoint;
   const [auth, setAuth] = useState<StoredAuth | null>(loadAuth);
+  const metricsUserId = auth?.user.id;
+  const metricsRole = auth?.user.role;
+  useEffect(() => {
+    if (!metricsUserId || metricsRole === "admin" || Platform.OS !== "web") return;
+    let cancelled = false;
+    const opened = () => {
+      if (document.visibilityState !== "visible") return;
+      const eventId = crypto.randomUUID();
+      void recordAppOpen(eventId).catch(() => {
+        setTimeout(() => { if (!cancelled) void recordAppOpen(eventId).catch(() => undefined); }, 5000);
+      });
+    };
+    opened();
+    document.addEventListener("visibilitychange", opened);
+    return () => { cancelled = true; document.removeEventListener("visibilitychange", opened); };
+  }, [metricsUserId, metricsRole]);
   const [authenticated, setAuthenticated] = useState(() => Boolean(loadAuth()));
   const [appReady, setAppReady] = useState(false);
   const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false);
@@ -1556,7 +1576,7 @@ export default function App() {
                   agentIds={settings.agentIds}
                 />
               ) : null}
-              {activeTab === "metrics" && !compact && auth?.user.role === "admin" ? (
+              {activeTab === "metrics" && auth?.user.role === "admin" ? (
                 <MetricsScreen />
               ) : null}
               {activeTab === "disk" ? <DriveScreen compact={compact} /> : null}
@@ -1584,14 +1604,10 @@ export default function App() {
                   }}
                 />
               ) : null}
-              {activeTab === "settings" ? (
-                <SettingsScreen
+              {activeTab === "profile" ? (
+                <ProfileScreen
                   compact={compact}
-                  settings={settings}
-                  health={health}
-                  agentHealthById={agentHealthById}
                   dicomCache={dicomCache}
-                  onCheck={refreshConnectivity}
                   onClearCache={() => {
                     void clearDicomCache().then(() =>
                       setToast({
@@ -1602,9 +1618,9 @@ export default function App() {
                   }}
                   authUser={auth!.user}
                   onAuthUpdated={applyAuth}
-                  onLogout={signOut}
                 />
               ) : null}
+              {activeTab === "settings" && auth?.user.role === "admin" ? <AgentSettingsScreen /> : null}
               {activeTab === "plan" ? (
                 <PlanScreen
                   compact={compact}
@@ -1648,6 +1664,8 @@ export default function App() {
         <MobileMenu
           visible={menuOpen}
           user={auth!.user}
+          onMetrics={() => { setMenuOpen(false); setActiveTab("metrics"); }}
+          onProfile={() => { setMenuOpen(false); setActiveTab("profile"); }}
           onClose={() => setMenuOpen(false)}
           onSettings={() => {
             setMenuOpen(false);
@@ -1778,6 +1796,7 @@ function LoginScreen({
           </View>
         ) : null}
         <Animated.View
+          nativeID="viewer-login-panel"
           pointerEvents={revealForm && backgroundReady ? "auto" : "none"}
           style={[
             styles.loginPanel,
@@ -1874,53 +1893,6 @@ function LoginScreen({
   );
 }
 
-function StatusLine({
-  icon,
-  label,
-  meta,
-  online,
-  warning = false,
-  dark = false
-}: {
-  icon: IconName;
-  label: string;
-  meta: string;
-  online: boolean;
-  warning?: boolean;
-  dark?: boolean;
-}) {
-  const color = online
-    ? colors.success
-    : warning
-      ? colors.warning
-      : colors.danger;
-  return (
-    <View style={[styles.statusLine, dark && styles.statusLineDark]}>
-      <Icon
-        name={icon}
-        size={17}
-        color={dark ? darkColors.textMuted : colors.textMuted}
-      />
-      <View style={styles.statusLineCopy}>
-        <Text
-          style={[
-            styles.statusLineTitle,
-            dark && styles.statusLineTitleDark
-          ]}
-        >
-          {label}
-        </Text>
-        <Text
-          style={[styles.statusLineMeta, dark && styles.statusLineMetaDark]}
-        >
-          {meta}
-        </Text>
-      </View>
-      <View style={[styles.statusDot, { backgroundColor: color }]} />
-    </View>
-  );
-}
-
 function TopBar({
   compact,
   activeTab,
@@ -1943,6 +1915,7 @@ function TopBar({
   const desktopTabs = desktopTabsFor(role);
   const active = activeTab === "settings"
     ? { label: "Настройки" }
+    : activeTab === "profile" ? { label: "Профиль" }
     : desktopTabs.find((item) => item.id === activeTab) ?? tabs[0]!;
   const dark = activeTab === "angiography";
   const statusColor = (agentId: number) => {
@@ -2067,30 +2040,18 @@ function TopBar({
         })}
       </View>
       <View style={styles.topActions}>
-        <View style={[styles.healthPill, dark && styles.healthPillDark]}>
-          <View
-            style={[
-              styles.healthDot,
-              { backgroundColor: health?.ok ? colors.success : colors.danger }
-            ]}
-          />
-          <Text style={[styles.healthText, dark && styles.textMutedDark]}>
-            Сервер
-          </Text>
+        <View accessibilityLabel="Сервер" style={[styles.mobileStatusIcon, dark && styles.healthPillDark]}>
+          <Icon name="server-outline" size={15} color={health?.ok ? colors.success : colors.danger} />
         </View>
         {agentIds.map((agentId) => (
           <View
             key={agentId}
-            style={[styles.healthPill, dark && styles.healthPillDark]}
+            accessibilityLabel={`Агент ${agentId}`}
+            style={[styles.mobileStatusIcon, dark && styles.healthPillDark]}
           >
-            <View
-              style={[
-                styles.healthDot,
-                { backgroundColor: statusColor(agentId) }
-              ]}
-            />
-            <Text style={[styles.healthText, dark && styles.textMutedDark]}>
-              Агент {agentId}
+            <Icon name="hardware-chip-outline" size={15} color={statusColor(agentId)} />
+            <Text style={[styles.agentStatusNumber, dark && styles.textMutedDark]}>
+              {agentId}
             </Text>
           </View>
         ))}
@@ -3449,8 +3410,8 @@ function ReportsScreen({
   const [dressingProgress, setDressingProgress] = useState({ completed: 0, total: 0 });
 
   useEffect(() => {
-    if (!selected && reports[0]) setSelected(reports[0]);
-  }, [reports, selected]);
+    setSelected((current) => reports.find((report) => report.filename === current?.filename) ?? reports[0] ?? null);
+  }, [reports]);
 
   const choose = (report: ReportDocument) => {
     setSelected(report);
@@ -3735,6 +3696,7 @@ function DressingChecklist({
                     {shortOperationName(patient.operation)}
                   </Text>
                 </View>
+                <Text style={styles.dressingOperation}>{patient.time_beginning || "—"}</Text>
                 {compact ? <View style={[styles.dressingCheck, checked && styles.dressingCheckActive]}>
                   {checked ? <Icon name="checkmark" size={17} color={colors.white} /> : null}
                 </View> : null}
@@ -4145,6 +4107,7 @@ function StatisticsScreen({
 }
 
 function LogsScreen({ agentIds }: { agentIds: number[] }) {
+  const [importantOnly, setImportantOnly] = useState(false);
   const dates = useMemo(
     () => Array.from({ length: 7 }, (_, index) => {
       const value = new Date();
@@ -4192,6 +4155,7 @@ function LogsScreen({ agentIds }: { agentIds: number[] }) {
   }, [agentId, date]);
 
   const content = entries.map((entry) => entry.content.trim()).filter(Boolean).join("\n");
+  const logGroups = useMemo(() => agentLogGroups(content, importantOnly), [content, importantOnly]);
   const copyLogs = async () => {
     if (!content || Platform.OS !== "web" || !navigator.clipboard) return;
     await navigator.clipboard.writeText(content);
@@ -4201,6 +4165,7 @@ function LogsScreen({ agentIds }: { agentIds: number[] }) {
   return (
     <View style={styles.logsScreen}>
       <View style={styles.logsToolbar}>
+        <Chip label={importantOnly ? "Ошибки и предупреждения" : "Все уровни"} selected={importantOnly} onPress={() => setImportantOnly(!importantOnly)} />
         <View style={styles.logsToolbarGroup}>
           <Text style={styles.logsToolbarLabel}>АГЕНТ</Text>
           <View style={styles.logsChoiceRow}>
@@ -4250,7 +4215,7 @@ function LogsScreen({ agentIds }: { agentIds: number[] }) {
           <InlineError message={error} />
         ) : content ? (
           <ScrollView style={styles.flexScroll} contentContainerStyle={styles.logsDocumentContent}>
-            <Text selectable style={styles.logCode}>{content}</Text>
+            <Text selectable style={styles.logCode}>{logGroups.map((group, index) => <Text key={index} style={{ color: ["ERROR", "CRITICAL"].includes(group.level) ? colors.danger : group.level === "WARNING" ? colors.warning : colors.text }}>{group.text}{"\n"}</Text>)}</Text>
           </ScrollView>
         ) : (
           <EmptyState
@@ -4299,24 +4264,11 @@ function ReportRow({
           {data.period_days ?? 1} сут. · {total} экстренных операций
         </Text>
       </View>
-      {compact ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Удалить отчёт"
-          onPress={(event) => {
-            event.stopPropagation();
-            onDelete();
-          }}
-          style={styles.reportTrashButton}
-        >
-          <Icon name="trash-outline" size={18} color={colors.danger} />
-        </Pressable>
-      ) : (
+      {!compact ? (
         <View style={styles.reportRowActions}>
           <IconButton icon="share-outline" label="Переслать отчёт" onPress={onForward} />
-          <IconButton icon="trash-outline" label="Удалить отчёт" onPress={onDelete} />
         </View>
-      )}
+      ) : null}
     </Pressable>
   );
 }
@@ -4939,6 +4891,7 @@ function PlanScreen({
   const [shareOpen, setShareOpen] = useState(false);
 	const [printOpen, setPrintOpen] = useState(false);
   const [previousProtocol, setPreviousProtocol] = useState<Study | null>(null);
+  const [previousProtocols, setPreviousProtocols] = useState<Study[]>([]);
   const planEditorScrollRef = useRef<ScrollViewHandle>(null);
 
   const openDay = (date: string) => {
@@ -5082,7 +5035,7 @@ function PlanScreen({
                       <View key={index} style={styles.planEntryRow}>
 						<View style={styles.planStatusCell}>
 							{entry?.completed_operation ? (
-								<Pressable onPress={(event) => { event.stopPropagation?.(); setPreviousProtocol(entry.completed_operation ?? null); }}>
+								<Pressable onPress={(event) => { event.stopPropagation?.(); setPreviousProtocols([]); setPreviousProtocol(entry.completed_operation ?? null); }}>
 									<Icon name="checkmark-circle" color={colors.primary} size={18} />
 								</Pressable>
 							) : null}
@@ -5114,7 +5067,7 @@ function PlanScreen({
 						  {entry?.previous_operations?.length ? (
 							<View style={[styles.planHistoryButtons, !compact && styles.planHistoryButtonsDesktop]}>
 							  {entry.previous_operations.slice(0, compact ? 1 : 3).map((protocol) => (
-								<Pressable key={protocol.id} onPress={(event) => { event.stopPropagation?.(); setPreviousProtocol(protocol); }} style={styles.planPreviousButton}>
+								<Pressable key={protocol.id} onPress={(event) => { event.stopPropagation?.(); setPreviousProtocols(entry.previous_operations ?? []); setPreviousProtocol(protocol); }} style={styles.planPreviousButton}>
 								  <Text numberOfLines={1} style={styles.planPreviousButtonText}>{formatShortNumericDate(protocol.time_beginning)}</Text>
 								</Pressable>
 							  ))}
@@ -5378,13 +5331,21 @@ function PlanScreen({
 
       <Sheet
         visible={Boolean(previousProtocol)}
-        title="Предыдущая операция"
+        title={previousProtocol?.patient ?? "Протокол операции"}
         onClose={() => setPreviousProtocol(null)}
         fullScreen={compact}
         wide
       >
         {previousProtocol ? (
           <ScrollView contentContainerStyle={styles.previousProtocolContent}>
+            {previousProtocols.length > 1 ? <View style={styles.planHistoryButtonsDesktop}>
+              {previousProtocols.map((protocol) => <Chip
+                key={protocol.id}
+                label={formatShortNumericDate(protocol.time_beginning)}
+                selected={previousProtocol.id === protocol.id}
+                onPress={() => setPreviousProtocol(protocol)}
+              />)}
+            </View> : null}
             <StudyDetails
               study={previousProtocol}
               hasXA={false}
@@ -5426,6 +5387,8 @@ function MobileMenu({
   visible,
   user,
   onClose,
+  onProfile,
+  onMetrics,
 	onSettings,
 	onStatistics,
   onDisk,
@@ -5434,12 +5397,18 @@ function MobileMenu({
   visible: boolean;
   user: AuthUser;
   onClose: () => void;
+  onProfile: () => void;
+  onMetrics: () => void;
   onSettings: () => void;
 	onStatistics: () => void;
   onDisk: () => void;
   onLogout: () => void;
 }) {
   const translateX = useRef(new Animated.Value(-380)).current;
+  const closeGesture = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx < -15 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+    onPanResponderRelease: (_event, gesture) => { if (gesture.dx < -55) onClose(); }
+  }), [onClose]);
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
@@ -5469,6 +5438,7 @@ function MobileMenu({
           style={StyleSheet.absoluteFill}
         />
         <Animated.View
+          {...closeGesture.panHandlers}
           style={[
             styles.drawer,
             {
@@ -5492,17 +5462,18 @@ function MobileMenu({
               <Icon name="person" color={colors.primary} size={24} />
             </View>
             <View style={styles.drawerProfileCopy}>
-              <Text style={styles.settingsTitle}>Клинический пользователь</Text>
-              <Text style={styles.requestMetaText} numberOfLines={1}>
-                {user.display_name} · {user.login}
-              </Text>
+              <Text style={styles.settingsTitle}>{user.display_name}</Text>
             </View>
           </View>
           <View style={styles.drawerMenu}>
+            {user.role === "admin" ? <Pressable style={styles.drawerItem} onPress={onMetrics}>
+              <Icon name="pulse-outline" color={colors.textMuted} />
+              <Text style={styles.drawerItemText}>Метрики</Text>
+            </Pressable> : null}
 			<Pressable
 			  accessibilityRole="button"
 			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
-              onPress={onSettings}
+              onPress={onProfile}
 			>
 			  <Icon name="person-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Профиль</Text>
@@ -5525,7 +5496,7 @@ function MobileMenu({
 			  <Text style={styles.drawerItemText}>Статистика</Text>
 			  <Icon name="chevron-forward" size={17} color={colors.textDim} />
 			</Pressable>
-            <Pressable
+            {user.role === "admin" ? <Pressable
               style={({ pressed }) => [
                 styles.drawerItem,
                 pressed && styles.pressed
@@ -5535,7 +5506,7 @@ function MobileMenu({
               <Icon name="options-outline" color={colors.textMuted} />
               <Text style={styles.drawerItemText}>Настройки</Text>
               <Icon name="chevron-forward" size={17} color={colors.textDim} />
-            </Pressable>
+            </Pressable> : null}
             <Pressable
               accessibilityRole="button"
               style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
@@ -5637,28 +5608,58 @@ function StudyFilterSheet({
   );
 }
 
-function SettingsScreen({
+function AgentSettingsScreen() {
+  const [agents, setAgents] = useState<AgentConfiguration[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let active = true;
+    const load = () => getAgentConfigurations().then((data) => {
+      if (active) { setAgents(data); setError(""); }
+    }).catch((reason) => { if (active) setError(errorMessage(reason)); })
+      .finally(() => { if (active) setLoading(false); });
+    void load();
+    const timer = setInterval(() => void load(), 60_000);
+    return () => { active = false; clearInterval(timer); };
+  }, []);
+  return <ScrollView style={styles.screen} contentContainerStyle={styles.scrollScreen}>
+    {loading ? <Text style={styles.settingsDescription}>Получаем настройки…</Text> : null}
+    {error ? <Text style={styles.settingsDescription}>{error}</Text> : null}
+    {!loading && !error && agents.length === 0 ? <Text style={styles.settingsDescription}>
+      Агенты ещё не передали конфигурацию. Она появится после обновления агента и первого heartbeat.
+    </Text> : null}
+    {agents.map(({ agent_id, configuration: config, received_at }) => <View key={agent_id} style={styles.settingsCard}>
+      <Text style={styles.settingsTitle}>Агент {agent_id} · {config.description}</Text>
+      <Text style={styles.settingsDescription}>Версия {config.version} · получено {relativeTime(new Date(received_at))}</Text>
+      <Text style={styles.settingsDescription}>Последний присланный конфиг, только просмотр</Text>
+      <Text style={styles.requestMetaText}>Heartbeat: каждые {config.heartbeat_interval_min} мин</Text>
+      {([
+        ["Протоколы", config.study_polling], ["XA", config.xa_polling],
+        ["CT", config.ct_polling], ["Команды", config.user_requests_polling]
+      ] as const).map(([name, polling]) => <Text key={name} style={styles.settingsDescription}>
+        {name}: {polling.state ? "включено" : "выключено"} · интервал {polling.interval_min} мин
+      </Text>)}
+      <Text selectable style={styles.settingsDescription}>Папки протоколов: {(config.study_polling.operations_dir ?? []).join("\n") || "не заданы"}</Text>
+      <Text selectable style={styles.settingsDescription}>Логи: {config.log_dir}</Text>
+      <Text selectable style={styles.settingsDescription}>Состояние: {config.state_file}</Text>
+      <Text selectable style={styles.settingsDescription}>Конфигурация PACS: {config.pacs_config_path}</Text>
+      <Text style={styles.requestMetaText}>Отправка логов: каждый час, в :00</Text>
+    </View>)}
+  </ScrollView>;
+}
+
+function ProfileScreen({
   compact,
-  settings,
-  health,
-  agentHealthById,
   dicomCache,
-  onCheck,
   onClearCache,
   authUser,
-  onAuthUpdated,
-  onLogout
+  onAuthUpdated
 }: {
   compact: boolean;
-  settings: AppSettings;
-  health: ApiHealth | null;
-  agentHealthById: Record<number, AgentHealth>;
   dicomCache: DicomCacheSnapshot;
-  onCheck: () => void;
   onClearCache: () => void;
   authUser: AuthUser;
   onAuthUpdated: (auth: StoredAuth) => void;
-  onLogout: () => void;
 }) {
   return (
     <ScrollView
@@ -5667,7 +5668,9 @@ function SettingsScreen({
       contentContainerStyle={styles.scrollScreen}
     >
       <View style={styles.settingsGrid}>
-        <CredentialsCard user={authUser} onUpdated={onAuthUpdated} onLogout={onLogout} />
+        <View style={{ width: 430, maxWidth: "100%" }}>
+          <CredentialsCard user={authUser} onUpdated={onAuthUpdated} />
+        </View>
         {compact ? (
           <View style={styles.settingsCard}>
           <View>
@@ -5714,36 +5717,6 @@ function SettingsScreen({
           ) : null}
           </View>
         ) : null}
-        <View style={styles.settingsCard}>
-          <Text style={styles.settingsTitle}>Состояние контура</Text>
-          <StatusLine
-            icon="server-outline"
-            label="Viewer Backend"
-            online={Boolean(health?.ok)}
-            meta={health?.message ?? "Проверяем…"}
-          />
-          {settings.agentIds.map((id) => {
-            const state =
-              agentHealthById[id] ??
-              ({ online: false, status: "unknown" } satisfies AgentHealth);
-            return (
-              <StatusLine
-                key={id}
-                icon="hardware-chip-outline"
-                label={`Hospital Agent ${id}`}
-                online={state.online && state.status === "well"}
-                warning={state.status === "with_errors"}
-                meta={`Последний heartbeat: ${relativeTime(state.lastSeen)}`}
-              />
-            );
-          })}
-          <Button
-            label="Проверить соединение"
-            variant="secondary"
-            icon="refresh"
-            onPress={onCheck}
-          />
-        </View>
       </View>
       <View style={styles.securityCard}>
         <Icon name="shield-checkmark-outline" size={25} color={colors.success} />
@@ -6225,6 +6198,8 @@ const styles = StyleSheet.create({
   },
   desktopTabBar: {
     flex: 1,
+    minWidth: 0,
+    flexWrap: "wrap",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

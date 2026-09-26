@@ -143,11 +143,13 @@ export type LoginMetric = {
   display_name: string;
   login: string;
   count: number;
+  total: number;
 };
 
 export type PlatformMetrics = {
   date: string;
   total_logins: number;
+  all_time_logins: number;
   logins: LoginMetric[];
   protocol_count: number;
   disk_total_bytes: number;

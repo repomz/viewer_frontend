@@ -28,31 +28,37 @@ function message(error: unknown): string {
 
 export function CredentialsCard({
   user,
-  onUpdated,
-  onLogout
+  onUpdated
 }: {
   user: AuthUser;
   onUpdated: (auth: StoredAuth) => void;
-  onLogout: () => void;
 }) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newLogin, setNewLogin] = useState(user.login);
   const [newPassword, setNewPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState<"login" | "password" | null>(null);
+  const beginEdit = (mode: "login" | "password" | null) => {
+    setEditing(mode);
+    setCurrentPassword(""); setNewPassword(""); setNewLogin(user.login); setError("");
+  };
 
   const save = async () => {
+    if (saving || !editing || !currentPassword ||
+        (editing === "login" ? !newLogin.trim() || newLogin.trim() === user.login : !newPassword)) return;
     setSaving(true);
     setError("");
     try {
       const result = await changeCredentials({
         currentPassword,
-        newLogin: newLogin === user.login ? "" : newLogin,
-        newPassword
+        newLogin: editing === "login" ? newLogin.trim() : "",
+        newPassword: editing === "password" ? newPassword : ""
       });
       setCurrentPassword("");
       setNewPassword("");
       onUpdated(result);
+      setEditing(null);
     } catch (reason) {
       setError(message(reason));
     } finally {
@@ -69,14 +75,20 @@ export function CredentialsCard({
           <Text style={styles.meta}>{user.role === "admin" ? "Администратор" : "Пользователь"}</Text>
         </View>
       </View>
-      <Field label="Новый логин" value={newLogin} onChangeText={setNewLogin} autoCapitalize="none" />
-      <Field label="Новый пароль" value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="Оставьте пустым без изменения" />
+      <Text style={styles.meta}>Логин: {user.login}</Text>
+      {!editing ? <View style={styles.actions}>
+        <Button label="Сменить логин" variant="secondary" onPress={() => beginEdit("login")} />
+        <Button label="Сменить пароль" variant="secondary" onPress={() => beginEdit("password")} />
+      </View> : <>
+      {editing === "login" ? <Field label="Новый логин" value={newLogin} onChangeText={setNewLogin} autoCapitalize="none" /> :
+      <Field label="Новый пароль" value={newPassword} onChangeText={setNewPassword} secureTextEntry />}
       <Field label="Текущий пароль" value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry />
       {error ? <InlineError message={error} onRetry={() => void save()} /> : null}
       <View style={styles.actions}>
-        <Button label="Сохранить профиль" loading={saving} onPress={() => void save()} />
-        <Button label="Выйти" variant="ghost" icon="log-out-outline" onPress={onLogout} />
+        <Button label="Сохранить" loading={saving} disabled={!currentPassword || (editing === "login" ? !newLogin.trim() || newLogin.trim() === user.login : !newPassword)} onPress={() => void save()} />
+        <Button label="Отмена" disabled={saving} variant="ghost" onPress={() => beginEdit(null)} />
       </View>
+      </>}
     </View>
   );
 }
@@ -198,7 +210,7 @@ export function MetricsScreen() {
       {metrics ? (
         <>
           <View style={styles.metricGrid}>
-            <View style={styles.metricCard}><Text style={styles.metricLabel}>Входов за сутки</Text><Text style={styles.metricValue}>{metrics.total_logins}</Text><Text style={styles.meta}>Без администратора</Text></View>
+            <View style={styles.metricCard}><Text style={styles.metricLabel}>Открытий за сутки</Text><Text style={styles.metricValue}>{metrics.total_logins}</Text><Text style={styles.meta}>Всего: {metrics.all_time_logins} · без администратора</Text></View>
             <View style={styles.metricCard}><Text style={styles.metricLabel}>Протоколов в базе</Text><Text style={styles.metricValue}>{metrics.protocol_count}</Text></View>
             <View style={styles.metricCard}><Text style={styles.metricLabel}>Диск сервера</Text><Text style={styles.metricValue}>{metricPercent(metrics.disk_used_bytes, metrics.disk_total_bytes)}</Text><Text style={styles.meta}>{formatStorageSize(metrics.disk_used_bytes)} из {formatStorageSize(metrics.disk_total_bytes)}</Text></View>
             <View style={styles.metricCard}><Text style={styles.metricLabel}>Оперативная память</Text><Text style={styles.metricValue}>{metricPercent(metrics.memory_used_bytes, metrics.memory_total_bytes)}</Text><Text style={styles.meta}>{formatStorageSize(metrics.memory_used_bytes)} из {formatStorageSize(metrics.memory_total_bytes)}</Text></View>
@@ -208,7 +220,7 @@ export function MetricsScreen() {
             {metrics.logins.map((item) => (
               <View key={item.user_id} style={styles.loginRow}>
                 <View><Text style={styles.fileName}>{item.display_name}</Text><Text style={styles.meta}>{item.login}</Text></View>
-                <Text style={styles.loginCount}>{item.count}</Text>
+                <View><Text style={styles.loginCount}>{item.count} за сутки</Text><Text style={styles.meta}>{item.total} всего</Text></View>
               </View>
             ))}
           </View>

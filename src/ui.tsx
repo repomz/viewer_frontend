@@ -518,7 +518,7 @@ const styles = StyleSheet.create({
   iconButton: {
     width: 46,
     height: 46,
-    borderRadius: radii.pill,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: colors.canvas,

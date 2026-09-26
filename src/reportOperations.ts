@@ -17,6 +17,7 @@ export type DressingPatient = {
   age?: string | number;
   department: string;
   operation: string;
+  time_beginning?: string;
 };
 
 export type DressingDepartment = {
@@ -79,6 +80,7 @@ export function dressingDepartments(
       id,
       patient,
       age: operation.age,
+      time_beginning: operation.time_beginning,
       department,
       operation: operation.operation?.trim() || "Операция не указана"
     });
