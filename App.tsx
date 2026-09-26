@@ -8141,8 +8141,8 @@ const styles = StyleSheet.create({
   },
 	planHistoryButtons: { flex: 1, gap: 3 },
 	planHistoryButtonsDesktop: { flexDirection: "row", flexWrap: "nowrap", minWidth: 0 },
-  planPreviousButtonFixed: { flex: 0, width: 72, flexShrink: 0 },
-  planPreviousButtonFlexible: { flex: 1, minWidth: 0, paddingHorizontal: 2 },
+  planPreviousButtonFixed: { flexBasis: 72, flexGrow: 0, flexShrink: 0, minWidth: 72, width: 72 },
+  planPreviousButtonFlexible: { flexBasis: 72, flexGrow: 0, flexShrink: 1, minWidth: 0, maxWidth: 72, paddingHorizontal: 2 },
   previousProtocolDates: { flexDirection: "row", flexWrap: "wrap", gap: 8, padding: 16, borderBottomWidth: 1, borderBottomColor: colors.border },
   planPreviousButtonText: {
     color: colors.primary,
