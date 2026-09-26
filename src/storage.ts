@@ -12,7 +12,7 @@ import type {
 const SETTINGS_KEY = "viewer.settings.v1";
 const REQUESTS_KEY = "viewer.requests.v1";
 const REPORTS_KEY_PREFIX = "viewer.reports.v1";
-const PLAN_KEY_PREFIX = "viewer.operation-plan.v1";
+const PLAN_KEY_PREFIX = "viewer.operation-plan.v2";
 const STUDIES_KEY = "viewer.studies.v1";
 const XA_STUDIES_KEY = "viewer.xa-studies.v1";
 const PINNED_PROTOCOLS_KEY = "viewer.pinned-protocols.v1";

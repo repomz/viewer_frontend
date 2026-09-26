@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import { normalizeBirthDate, displayBirthDate, planPatientAge } from "./src/birthDate";
 import { agentLogGroups } from "./src/agentLogDisplay";
 import * as SplashScreen from "expo-splash-screen";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1433,6 +1434,7 @@ export default function App() {
     setAuth(null);
     setAuthenticated(false);
     setActiveTab("studies");
+    setMenuOpen(false);
   }, []);
 
   const isAngiography = activeTab === "angiography";
@@ -1449,6 +1451,8 @@ export default function App() {
           backendVersion={backendVersion}
           onEnter={async (loginValue, password) => {
             const next = await loginUser(loginValue, password);
+            setMenuOpen(false);
+            setActiveTab("studies");
             applyAuth(next);
             if (appReady) setAuthenticated(true);
             else setEnterRequested(true);
@@ -1812,7 +1816,7 @@ function LoginScreen({
             }
           ]}
         >
-          <View style={styles.loginBrand}>
+          <View nativeID="viewer-login-brand" style={styles.loginBrand}>
             <View style={styles.loginBrandIcon}>
               <Icon name="scan" size={21} color={darkColors.primary} />
             </View>
@@ -1821,7 +1825,7 @@ function LoginScreen({
               <Text style={styles.loginBrandCaption}>CLINICAL WORKSPACE</Text>
             </View>
           </View>
-          <View style={styles.loginForm}>
+          <View nativeID="viewer-login-form" style={styles.loginForm}>
             <View style={styles.loginHeadingRow}>
               <Text style={styles.loginTitle}>Вход</Text>
             </View>
@@ -1884,7 +1888,7 @@ function LoginScreen({
               </View>
             ) : null}
             {loginError ? <Text style={styles.loginError}>{loginError}</Text> : null}
-            <Text style={styles.loginVersions}>
+            <Text nativeID="viewer-login-version" style={styles.loginVersions}>
               Frontend {frontendVersion} · Backend {backendVersion}
             </Text>
           </View>
@@ -2371,7 +2375,7 @@ function StudiesScreen({
           onChangeText={onSearch}
           placeholder={compact ? "Поиск пациента" : "Пациент, хирург, операция или ID"}
           filterActive={category !== "all" || sort !== "time" || Boolean(surgeonFilter)}
-          onFilter={onFilter}
+          onFilter={searchScope === "week" ? onFilter : undefined}
         />
         {!compact ? searchScopeControls : null}
         {searchScope === "week" ? (
@@ -2590,7 +2594,10 @@ function StudyRow({
         </Text>
       </View>
       <View style={styles.studyTrailing}>
-        <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning, true)}</Text>
+        <View style={{ alignItems: "flex-end", gap: 2 }}>
+          <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
+          <Text style={[styles.studyDateCompact, { color: colors.primary }]}>{new Date(study.time_beginning).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</Text>
+        </View>
         {hasXA ? (
           <Pressable
             accessibilityRole="button"
@@ -3421,20 +3428,7 @@ function ReportsScreen({
 
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
-      {!compact ? (
-        <View style={styles.compactScreenToolbar}>
-          <View style={styles.compactScreenHeading}>
-            <Text style={styles.compactScreenTitle}>Отчёты</Text>
-            <Text style={styles.compactScreenMeta}>
-              {view === "report" ? `${reports.length} записей` : "Маршрут по отделениям"}
-            </Text>
-          </View>
-          {view === "report" ? (
-            <ReportRequestButton generating={generating} onPress={() => setPeriodOpen(true)} />
-          ) : null}
-        </View>
-      ) : null}
-      <View style={compact ? styles.reportMobileTopRow : undefined}>
+      <View style={styles.reportMobileTopRow}>
         <View style={[styles.reportViewTabs, compact && styles.reportViewTabsCompact]}>
           <Pressable
             accessibilityRole="tab"
@@ -3455,7 +3449,7 @@ function ReportsScreen({
             <Text style={[styles.reportViewTabText, view === "dressings" && styles.reportViewTabTextActive]}>Повязки</Text>
           </Pressable>
         </View>
-        {compact && view === "report" ? (
+        {view === "report" ? (
           <ReportRequestButton generating={generating} onPress={() => setPeriodOpen(true)} />
         ) : compact && view === "dressings" ? (
           <Badge
@@ -4352,12 +4346,10 @@ function ReportSection({
             </Text>
             <View style={styles.operationCopy}>
               <View style={styles.operationTitleLine}>
-                <Text style={styles.operationPatient}>
+                <Text numberOfLines={1} ellipsizeMode="tail" style={[styles.operationPatient, { flex: 1 }]}>
                   {operation.patient || "ФИО не указано"}
-                  {operation.age ? (
-                    <Text style={styles.operationAge}> {operation.age}</Text>
-                  ) : null}
                 </Text>
+                {operation.age ? <Text style={styles.operationAge}>{operation.age}</Text> : null}
                 <Text numberOfLines={1} style={styles.operationDepartment}>
                   {operation.department || "—"}
                 </Text>
@@ -4881,6 +4873,7 @@ function PlanScreen({
     const entries = plan?.days.find((day) => day.date === date)?.entries ?? [];
     const existingEntries = sortPlanEntries(entries).map((entry) => ({
       ...entry,
+      birth_date: displayBirthDate(entry.birth_date),
       additions: entry.additions || ""
     }));
     setDraft(
@@ -4921,7 +4914,7 @@ function PlanScreen({
       await onSave(
         selectedDate,
         sortPlanEntries(draft
-          .map((entry) => ({ ...entry, patient: entry.patient.trim() }))
+          .map((entry) => ({ ...entry, patient: entry.patient.trim(), birth_date: normalizeBirthDate(entry.birth_date) }))
           .filter((entry) => entry.patient))
       );
       setSelectedDate(null);
@@ -5013,7 +5006,7 @@ function PlanScreen({
                 ]}
               >
                 <Text style={[styles.planTableDayText, styles.planDayCell, compact && styles.planDayCellCompact]}>
-                  {weekdayTitle(day.date)}
+                  {compact ? weekdayTitle(day.date).replace(", ", "\n") : weekdayTitle(day.date)}
                 </Text>
                 <View style={[styles.planEntriesColumn, compact && styles.planEntriesColumnCompact]}>
                   {(day.entries.length ? sortPlanEntries(day.entries) : [null]).map(
@@ -5032,7 +5025,7 @@ function PlanScreen({
                           minimumFontScale={0.72}
                           style={[styles.planTableText, styles.planPatientCell, compact && styles.planPatientCellCompact]}
                         >
-                          {entry ? `${index + 1}. ${entry.patient}` : "—"}
+                          {entry ? `${index + 1}. ${entry.patient} ${planPatientAge(entry.birth_date)}` : "—"}
                         </Text>
                         <Text style={[styles.planTableText, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>
                           {entry
@@ -5100,6 +5093,7 @@ function PlanScreen({
             <View style={styles.planEditorColumns}>
               <View style={styles.planEditorHeaderDesktop} />
               <Text style={[styles.planFieldLabel, styles.planEditorPatientField]}>Пациент</Text>
+              <Text style={[styles.planFieldLabel, styles.planEditorBirthField]}>Дата рождения</Text>
               <Text style={[styles.planFieldLabel, styles.planEditorDepartmentField]}>Отделение</Text>
               <Text style={[styles.planFieldLabel, styles.planEditorOperationField]}>Операция</Text>
               <Text style={[styles.planFieldLabel, styles.planEditorAdditionsField]}>Дополнения</Text>
@@ -5138,8 +5132,12 @@ function PlanScreen({
                   style={[styles.planPatientInput, !compact && styles.planDesktopControl]}
                 />
                 {compact ? (
-                  <Text style={styles.planInputHint}>Фамилия и две инициалы без точек — для поиска истории.</Text>
+                  <Text style={styles.planInputHint}>Фамилия, два инициала и дата рождения — для поиска истории.</Text>
                 ) : null}
+              </View>
+              <View style={[styles.planEditorField, !compact && styles.planEditorBirthField]}>
+                {compact ? <Text style={styles.planFieldLabel}>Дата рождения</Text> : null}
+                <TextInput value={entry.birth_date ?? ""} onChangeText={(birth_date) => updateEntry(index, { birth_date })} placeholder="ДД.ММ.ГГГГ" placeholderTextColor={colors.textDim} keyboardType="numbers-and-punctuation" maxLength={10} style={[styles.planPatientInput, !compact && styles.planDesktopControl]} />
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorDepartmentField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Отделение</Text> : null}
@@ -8126,7 +8124,7 @@ const styles = StyleSheet.create({
   planOperationCell: { flex: 1, minWidth: 0, flexShrink: 1 },
   planAdditionsCell: { flex: 1, minWidth: 0, flexShrink: 1 },
   planPreviousCell: { flex: 1.2, minWidth: 150, flexShrink: 1 },
-  planDayCellCompact: { flex: 0.58 },
+  planDayCellCompact: { flex: 0.28, textAlign: "center" },
   planPatientCellCompact: { flex: 1.65 },
   planDepartmentCellCompact: { flex: 0.52, textAlign: "center", paddingHorizontal: 1 },
   planOperationCellCompact: { flex: 1, paddingHorizontal: 2, fontSize: 9, lineHeight: 12 },
@@ -8202,6 +8200,7 @@ const styles = StyleSheet.create({
   planEditorField: { minWidth: 0, gap: 5 },
   planDesktopControl: { minHeight: 34, height: 34 },
   planEditorPatientField: { flex: 1.55 },
+  planEditorBirthField: { width: 110 },
   planEditorDepartmentField: { flex: 0.9 },
   planEditorOperationField: { flex: 1.25 },
   planEditorAdditionsField: { flex: 1.2 },

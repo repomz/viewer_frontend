@@ -354,11 +354,12 @@ export async function saveOperationPlanDay(
   return request<PlanDay>(`/operation-plan/${encodeURIComponent(date)}`, {
     method: "PUT",
     body: JSON.stringify({
-      entries: entries.map(({ patient, department, operation, additions }) => ({
+      entries: entries.map(({ patient, department, operation, additions, birth_date }) => ({
         patient,
         department,
         operation,
-        additions
+        additions,
+        birth_date: birth_date || ""
       }))
     })
   });

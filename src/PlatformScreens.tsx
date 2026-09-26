@@ -215,15 +215,14 @@ export function MetricsScreen({ compact = false }: { compact?: boolean }) {
             <View style={[styles.metricCard, compact && styles.metricCardCompact]}><Text style={styles.metricLabel}>Диск</Text><Text style={styles.metricValue}>{metricPercent(metrics.disk_used_bytes, metrics.disk_total_bytes)}</Text><Text style={styles.meta}>{formatStorageSize(metrics.disk_used_bytes)} из {formatStorageSize(metrics.disk_total_bytes)}</Text></View>
             <View style={[styles.metricCard, compact && styles.metricCardCompact]}><Text style={styles.metricLabel}>Память</Text><Text style={styles.metricValue}>{metricPercent(metrics.memory_used_bytes, metrics.memory_total_bytes)}</Text><Text style={styles.meta}>{formatStorageSize(metrics.memory_used_bytes)} из {formatStorageSize(metrics.memory_total_bytes)}</Text></View>
           </View>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Входы пользователей · {new Date(metrics.date).toLocaleDateString("ru-RU")}</Text>
+          <View style={[styles.card, compact && styles.usersCardCompact]}>
             {metrics.logins.map((item) => (
               <View key={item.user_id} style={[styles.loginRow, compact && styles.loginRowCompact]}>
-                <View><Text style={styles.fileName}>{item.display_name}</Text><Text style={styles.meta}>{item.login}</Text></View>
-                <View style={styles.userMetricLine}>
-                  <Text style={styles.meta}>За сутки <Text style={styles.loginCount}>{item.count}</Text></Text>
-                  <Text style={styles.meta}>Всего <Text style={styles.loginCount}>{item.total}</Text></Text>
-                  <Text style={styles.meta}>Диск <Text style={styles.loginCount}>{((item.disk_used_bytes ?? 0) / 1048576).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</Text> МБ</Text>
+                <View style={compact ? styles.userNameCompact : undefined}><Text numberOfLines={1} style={[styles.fileName, compact && { fontSize: 12 }]}>{item.display_name}</Text>{!compact ? <Text style={styles.meta}>{item.login}</Text> : null}</View>
+                <View style={[styles.userMetricLine, compact && { flex: 1, gap: 4 }]}>
+                  <Text numberOfLines={1} style={[styles.meta, compact && styles.userMetricLabel]}>За сутки <Text style={[styles.loginCount, compact && styles.userMetricNumber]}>{item.count}</Text></Text>
+                  <Text numberOfLines={1} style={[styles.meta, compact && styles.userMetricLabel]}>Всего <Text style={[styles.loginCount, compact && styles.userMetricNumber]}>{item.total}</Text></Text>
+                  <Text numberOfLines={1} style={[styles.meta, compact && styles.userMetricLabel]}>Диск <Text style={[styles.loginCount, compact && styles.userMetricNumber]}>{((item.disk_used_bytes ?? 0) / 1048576).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</Text> МБ</Text>
                 </View>
               </View>
             ))}
@@ -256,8 +255,12 @@ const styles = StyleSheet.create({
   empty: { minHeight: 240, alignItems: "center", justifyContent: "center", gap: 9 },
   metricsContent: { gap: 12, paddingBottom: 28 },
   metricGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  metricCardCompact: { flexBasis: "46%", minWidth: 0, padding: 12 },
-  loginRowCompact: { flexDirection: "column", alignItems: "stretch", paddingVertical: 10, gap: 8 },
+  metricCardCompact: { flexBasis: "46%", minWidth: 0, minHeight: 100, padding: 10 },
+  loginRowCompact: { flexDirection: "row", alignItems: "center", minHeight: 54, gap: 6 },
+  usersCardCompact: { padding: 10, gap: 0 },
+  userNameCompact: { width: 67 },
+  userMetricLabel: { fontSize: 10, lineHeight: 24 },
+  userMetricNumber: { fontSize: 18, lineHeight: 24 },
   userMetricLine: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 8 },
   metricCard: { flexGrow: 1, flexBasis: 220, minHeight: 118, justifyContent: "center", gap: 5, padding: 16, borderRadius: radii.lg, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   metricLabel: { ...typography.label, color: colors.textMuted },

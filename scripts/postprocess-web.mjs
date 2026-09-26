@@ -165,19 +165,35 @@ const splashHead = `
       }
       html.viewer-keyboard #viewer-login {
         position: fixed !important;
-        top: 0 !important;
+        top: var(--viewer-visual-top, 0px) !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        z-index: 20;
         height: var(--viewer-visual-height) !important;
         min-height: 0 !important;
         max-height: var(--viewer-visual-height) !important;
       }
       html.viewer-keyboard #viewer-login-panel {
+        position: relative !important;
+        top: auto !important;
+        bottom: auto !important;
+        height: 100% !important;
+        max-height: 100% !important;
+        min-height: 0 !important;
+        flex: 1 1 auto !important;
         justify-content: flex-start !important;
         overflow-y: auto !important;
         padding-top: 12px !important;
         padding-bottom: 16px !important;
         gap: 12px !important;
         transform: none !important;
+        -webkit-overflow-scrolling: touch;
       }
+      html.viewer-keyboard #viewer-login-brand,
+      html.viewer-keyboard #viewer-login-version { display: none !important; }
+      html.viewer-keyboard #viewer-login-form { flex-shrink: 0; gap: 10px !important; margin: 0 auto; }
+      #viewer-login input { font-size: 16px !important; }
       #viewer-preboot-version {
         position: absolute;
         z-index: 1;
@@ -264,21 +280,28 @@ html = html.replace(
   `<script>
   (function () {
     var root = document.documentElement;
-    var baseline = window.innerHeight;
     function sync() {
       var viewport = window.visualViewport;
       var height = viewport ? viewport.height : window.innerHeight;
       var field = document.activeElement;
       var editing = !!field && /^(INPUT|TEXTAREA)$/.test(field.tagName) && !!field.closest('#viewer-login');
-      if (!editing) baseline = Math.max(height, window.innerHeight);
       root.style.setProperty('--viewer-visual-height', Math.round(height) + 'px');
-      root.classList.toggle('viewer-keyboard', editing && height < baseline - 80);
-      if (editing) { window.scrollTo(0, 0); document.documentElement.scrollTop = 0; document.body.scrollTop = 0; }
+      root.style.setProperty('--viewer-visual-top', Math.round(viewport ? viewport.offsetTop : 0) + 'px');
+      root.classList.toggle('viewer-keyboard', editing && (window.innerWidth < 900 || navigator.maxTouchPoints > 0));
+      if (editing) requestAnimationFrame(function () {
+        var panel = document.getElementById('viewer-login-panel');
+        if (!panel || document.activeElement !== field) return;
+        var inputRect = field.getBoundingClientRect();
+        var panelRect = panel.getBoundingClientRect();
+        if (inputRect.bottom > panelRect.bottom - 16) panel.scrollTop += inputRect.bottom - panelRect.bottom + 16;
+        if (inputRect.top < panelRect.top + 12) panel.scrollTop -= panelRect.top + 12 - inputRect.top;
+      });
     }
     document.addEventListener('focusin', function () { requestAnimationFrame(sync); setTimeout(sync, 150); });
     document.addEventListener('focusout', function () { setTimeout(sync, 100); });
     if (window.visualViewport) { window.visualViewport.addEventListener('resize', sync); window.visualViewport.addEventListener('scroll', sync); }
-    window.addEventListener('orientationchange', function () { baseline = 0; setTimeout(sync, 150); });
+    window.addEventListener('resize', sync);
+    window.addEventListener('orientationchange', function () { setTimeout(sync, 150); });
     sync();
   })();
     fetch('/api/version', { headers: { Accept: 'application/json' } })

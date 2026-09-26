@@ -1,4 +1,5 @@
 export type Study = {
+  birth_date?: string;
   id: string;
   created_at: string;
   updated_at: string;
@@ -161,6 +162,7 @@ export type PlatformMetrics = {
 };
 
 export type PlanEntry = {
+  birth_date?: string;
   patient: string;
   department: string;
   operation: string;

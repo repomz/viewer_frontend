@@ -97,6 +97,14 @@ export function dressingDepartments(
     .sort(([left], [right]) => left.localeCompare(right, "ru"))
     .map(([department, group]) => ({
       department,
-      patients: group.sort((left, right) => left.patient.localeCompare(right.patient, "ru"))
+      patients: group.sort((left, right) => dressingTime(left.time_beginning) - dressingTime(right.time_beginning) || left.patient.localeCompare(right.patient, "ru"))
     }));
+}
+
+function dressingTime(value?: string): number {
+  if (!value) return Number.MAX_SAFE_INTEGER;
+  const time = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (time) return Number(time[1]) * 60 + Number(time[2]);
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
 }

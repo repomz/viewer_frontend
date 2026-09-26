@@ -4,6 +4,14 @@ import {
 } from "./reportOperations";
 
 describe("report operation presentation", () => {
+  it("orders dressings by operation time rather than surname", () => {
+    const groups = dressingDepartments({ emergency_operations: [
+      { patient: "Андреев", department: "рсц", time_beginning: "12:00" },
+      { patient: "Яковлев", department: "рсц", time_beginning: "08:10" },
+      { patient: "Без времени", department: "рсц" }
+    ] });
+    expect(groups[0]?.patients.map(item => item.patient)).toEqual(["Яковлев", "Андреев", "Без времени"]);
+  });
   it("groups every intervention with intravascular imaging as KAG + stent", () => {
     expect(reportOperationCategory({ operation: "КАГ. ВСУЗИ. Стент ПНА" })).toBe("КАГ + стент");
     expect(reportOperationCategory({ operation: "БАП ПКА + внутрисосудистая визуализация" })).toBe("КАГ + стент");
