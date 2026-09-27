@@ -1,3 +1,13 @@
+/** Format incrementally without trapping Backspace on an inserted separator. */
+export function formatBirthDateInput(value: string, previous = ""): string {
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  const parts = [digits.slice(0, 2), digits.slice(2, 4), digits.slice(4)].filter(Boolean);
+  const formatted = parts.join(".");
+  return value.length >= previous.length && (digits.length === 2 || digits.length === 4)
+    ? `${formatted}.`
+    : formatted;
+}
+
 export function normalizeBirthDate(value?: string): string {
   const raw = (value ?? "").trim();
   if (!raw) return "";

@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import { normalizeBirthDate, displayBirthDate, planPatientAge } from "./src/birthDate";
+import { normalizeBirthDate, displayBirthDate, planPatientAge, formatBirthDateInput } from "./src/birthDate";
 import { agentLogGroups } from "./src/agentLogDisplay";
 import * as SplashScreen from "expo-splash-screen";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -4981,8 +4981,8 @@ function PlanScreen({
       ) : plan ? (
         <View style={styles.planTable}>
           <View style={[styles.planTableRow, styles.planTableHeader]}>
-			<Text style={[styles.planTableHeaderText, styles.planStatusCell]}>✓</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDayCell, compact && styles.planDayCellCompact]}>{compact ? "Дн" : "День"}</Text>
+			<Text style={[styles.planTableHeaderText, styles.planStatusCell, compact && styles.planStatusCellCompact]}>✓</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planPatientCell, compact && styles.planPatientCellCompact]}>Пациент</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>{compact ? "Отд." : "Отделение"}</Text>
             <Text style={[styles.planTableHeaderText, compact && styles.planTableHeaderTextCompact, styles.planOperationCell, compact && styles.planOperationCellCompact]}>{compact ? "Опер." : "Операция"}</Text>
@@ -5014,7 +5014,7 @@ function PlanScreen({
                   {(day.entries.length ? sortPlanEntries(day.entries) : [null]).map(
                     (entry, index) => (
                       <View key={index} style={styles.planEntryRow}>
-						<View style={styles.planStatusCell}>
+						<View style={[styles.planStatusCell, compact && styles.planStatusCellCompact]}>
 							{entry?.completed_operation ? (
 								<Pressable onPress={(event) => { event.stopPropagation?.(); setPreviousProtocols([]); setPreviousProtocol(entry.completed_operation ?? null); }}>
 									<Icon name="checkmark-circle" color={colors.primary} size={18} />
@@ -5022,7 +5022,7 @@ function PlanScreen({
 							) : null}
 						</View>
                         <View style={[styles.planPatientCell, compact && styles.planPatientCellCompact, { flexDirection: "row", alignItems: "center", gap: 3 }]}>
-                          <Text numberOfLines={1} adjustsFontSizeToFit={compact} minimumFontScale={0.72} style={[styles.planTableText, { flex: 1 }, compact && { fontSize: 9 }]}>{entry ? `${index + 1}. ${entry.patient}` : "—"}</Text>
+                          <Text numberOfLines={1} style={[styles.planTableText, { flexShrink: 1 }, compact && { fontSize: 12, paddingHorizontal: 1 }]}>{entry ? `${index + 1}. ${entry.patient}` : "—"}</Text>
                           {entry ? <Text style={[styles.planTableText, { flexShrink: 0, paddingHorizontal: 0 }]}>{planPatientAge(entry.birth_date)}</Text> : null}
                         </View>
                         <Text style={[styles.planTableText, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>
@@ -5135,7 +5135,7 @@ function PlanScreen({
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorBirthField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Дата рождения</Text> : null}
-                <TextInput value={entry.birth_date ?? ""} onChangeText={(birth_date) => updateEntry(index, { birth_date })} placeholder="ДД.ММ.ГГГГ" placeholderTextColor={colors.textDim} keyboardType="numbers-and-punctuation" maxLength={10} style={[styles.planPatientInput, !compact && styles.planDesktopControl]} />
+                <TextInput value={entry.birth_date ?? ""} onChangeText={(value) => updateEntry(index, { birth_date: formatBirthDateInput(value, entry.birth_date) })} placeholder="ДД.ММ.ГГГГ" placeholderTextColor={colors.textDim} keyboardType="number-pad" maxLength={10} style={[styles.planPatientInput, !compact && styles.planDesktopControl]} />
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorDepartmentField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Отделение</Text> : null}
@@ -8073,7 +8073,7 @@ const styles = StyleSheet.create({
   },
   planTableDayRowAlternate: { backgroundColor: colors.surfaceSoft },
   planEntriesColumn: { flex: 5.15 },
-  planEntriesColumnCompact: { flex: 3.9 },
+  planEntriesColumnCompact: { flex: 1, minWidth: 0 },
   planEntryRow: {
     minHeight: 34,
     flexDirection: "row",
@@ -8123,11 +8123,12 @@ const styles = StyleSheet.create({
   planOperationCell: { flex: 1, minWidth: 0, flexShrink: 1 },
   planAdditionsCell: { flex: 1, minWidth: 0, flexShrink: 1 },
   planPreviousCell: { flex: 1.2, minWidth: 150, flexShrink: 1 },
-  planDayCellCompact: { flex: 0.28, textAlign: "center" },
-  planPatientCellCompact: { flex: 1.65 },
-  planDepartmentCellCompact: { flex: 0.52, textAlign: "center", paddingHorizontal: 1 },
-  planOperationCellCompact: { flex: 1, paddingHorizontal: 2, fontSize: 9, lineHeight: 12 },
-	planPreviousCellCompact: { flex: 1.15, minWidth: 64 },
+  planDayCellCompact: { flex: 0, width: 26, flexShrink: 0, paddingHorizontal: 1, textAlign: "center" },
+  planStatusCellCompact: { width: 20, minWidth: 20 },
+  planPatientCellCompact: { flex: 1 },
+  planDepartmentCellCompact: { flex: 0, width: 36, flexShrink: 0, textAlign: "center", paddingHorizontal: 1, fontSize: 9, lineHeight: 12 },
+  planOperationCellCompact: { flex: 0, width: 62, flexShrink: 0, paddingHorizontal: 2, fontSize: 9, lineHeight: 12 },
+	planPreviousCellCompact: { flex: 0, width: 64, minWidth: 64, flexShrink: 0 },
   planPreviousButton: {
     flex: 1,
     minHeight: 32,
