@@ -184,11 +184,17 @@ const splashHead = `
         flex: 1 1 auto !important;
         justify-content: flex-start !important;
         overflow-y: auto !important;
-        padding-top: 12px !important;
+        padding-top: max(16px, calc(env(safe-area-inset-top, 0px) + 12px)) !important;
         padding-bottom: 16px !important;
         gap: 12px !important;
         transform: none !important;
         -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        scroll-padding-top: max(16px, calc(env(safe-area-inset-top, 0px) + 12px));
+      }
+      html.viewer-keyboard #viewer-preboot {
+        height: var(--viewer-login-background-height, 100lvh);
+        transform: translateY(var(--viewer-visual-top, 0px));
       }
       html.viewer-keyboard #viewer-login-brand,
       html.viewer-keyboard #viewer-login-version { display: none !important; }
@@ -280,21 +286,29 @@ html = html.replace(
   `<script>
   (function () {
     var root = document.documentElement;
+    var wasEditing = false;
     function sync() {
       var viewport = window.visualViewport;
       var height = viewport ? viewport.height : window.innerHeight;
       var field = document.activeElement;
       var editing = !!field && /^(INPUT|TEXTAREA)$/.test(field.tagName) && !!field.closest('#viewer-login');
+      editing = editing && (window.innerWidth < 900 || navigator.maxTouchPoints > 0);
+      if (editing && !wasEditing) {
+        var background = document.getElementById('viewer-preboot');
+        if (background) root.style.setProperty('--viewer-login-background-height', background.getBoundingClientRect().height + 'px');
+      }
+      wasEditing = editing;
       root.style.setProperty('--viewer-visual-height', Math.round(height) + 'px');
       root.style.setProperty('--viewer-visual-top', Math.round(viewport ? viewport.offsetTop : 0) + 'px');
-      root.classList.toggle('viewer-keyboard', editing && (window.innerWidth < 900 || navigator.maxTouchPoints > 0));
+      root.classList.toggle('viewer-keyboard', editing);
       if (editing) requestAnimationFrame(function () {
         var panel = document.getElementById('viewer-login-panel');
         if (!panel || document.activeElement !== field) return;
         var inputRect = field.getBoundingClientRect();
         var panelRect = panel.getBoundingClientRect();
+        var safeTop = parseFloat(getComputedStyle(panel).paddingTop) || 16;
         if (inputRect.bottom > panelRect.bottom - 16) panel.scrollTop += inputRect.bottom - panelRect.bottom + 16;
-        if (inputRect.top < panelRect.top + 12) panel.scrollTop -= panelRect.top + 12 - inputRect.top;
+        if (inputRect.top < panelRect.top + safeTop) panel.scrollTop -= panelRect.top + safeTop - inputRect.top;
       });
     }
     document.addEventListener('focusin', function () { requestAnimationFrame(sync); setTimeout(sync, 150); });

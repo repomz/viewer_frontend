@@ -5432,7 +5432,7 @@ function MobileMenu({
             </View>
           </View>
           <View style={styles.drawerMenu}>
-            {user.role === "admin" ? <Pressable style={styles.drawerItem} onPress={onMetrics}>
+            {compact && user.role === "admin" ? <Pressable style={styles.drawerItem} onPress={onMetrics}>
               <Icon name="pulse-outline" color={colors.textMuted} />
               <Text style={styles.drawerItemText}>Метрики</Text>
             </Pressable> : null}
@@ -5444,21 +5444,21 @@ function MobileMenu({
 			  <Icon name="person-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Профиль</Text>
 			</Pressable>
-			<Pressable
+			{compact ? <Pressable
 			  accessibilityRole="button"
 			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
               onPress={onDisk}
 			>
 			  <Icon name="folder-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Диск</Text>
-			</Pressable>
-			<Pressable
+			</Pressable> : null}
+			{compact ? <Pressable
 			  style={({ pressed }) => [styles.drawerItem, pressed && styles.pressed]}
 			  onPress={onStatistics}
 			>
 			  <Icon name="stats-chart-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Статистика</Text>
-			</Pressable>
+			</Pressable> : null}
             {user.role === "admin" ? <Pressable
               style={({ pressed }) => [
                 styles.drawerItem,
