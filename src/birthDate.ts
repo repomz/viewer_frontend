@@ -21,7 +21,7 @@ export function normalizeBirthDate(value?: string): string {
 }
 
 export function planPatientAge(value?: string, onDate = new Date()): string {
-  if (!value) return "—";
+  if (!value) return "";
   try {
     const [year = 0, month = 0, day = 0] = normalizeBirthDate(value).split("-").map(Number);
     const age = onDate.getFullYear() - year - (onDate.getMonth() + 1 < month || (onDate.getMonth() + 1 === month && onDate.getDate() < day) ? 1 : 0);

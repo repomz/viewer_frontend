@@ -20,5 +20,6 @@ test("birth date accepts Russian input and rejects impossible dates", () => {
 test("age uses calendar birthday", () => {
   expect(planPatientAge("1954-09-27", new Date(2026, 8, 26))).toBe("71");
   expect(planPatientAge("1954-09-27", new Date(2026, 8, 27))).toBe("72");
-  expect(planPatientAge()).toBe("—");
+  expect(planPatientAge()).toBe("");
+  expect(planPatientAge("")).toBe("");
 });

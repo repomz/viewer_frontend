@@ -5023,7 +5023,7 @@ function PlanScreen({
 						</View>
                         <View style={[styles.planPatientCell, compact && styles.planPatientCellCompact, { flexDirection: "row", alignItems: "center", gap: 3 }]}>
                           <Text numberOfLines={1} style={[styles.planTableText, { flexShrink: 1 }, compact && { fontSize: 12, paddingHorizontal: 1 }]}>{entry ? `${index + 1}. ${entry.patient}` : "—"}</Text>
-                          {entry ? <Text style={[styles.planTableText, { flexShrink: 0, paddingHorizontal: 0 }]}>{planPatientAge(entry.birth_date)}</Text> : null}
+                          {entry?.birth_date ? <Text style={[styles.planTableText, { flexShrink: 0, paddingHorizontal: 0 }]}>{planPatientAge(entry.birth_date)}</Text> : null}
                         </View>
                         <Text style={[styles.planTableText, styles.planDepartmentCell, compact && styles.planDepartmentCellCompact]}>
                           {entry
