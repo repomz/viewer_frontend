@@ -449,15 +449,18 @@ export function Toast({
   onDismiss: () => void;
 }) {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   return (
     <Pressable
       accessibilityRole="alert"
+      nativeID="viewer-toast"
       onPress={onDismiss}
       style={[
         styles.toast,
         {
           left: Math.max(12, (width - Math.min(400, width - 24)) / 2),
-          width: Math.min(400, width - 24)
+          width: Math.min(400, width - 24),
+          top: Math.max(16, insets.top + 12)
         },
         tone === "danger" ? styles.toastDanger : styles.toastSuccess
       ]}

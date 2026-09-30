@@ -198,9 +198,11 @@ export async function getStudies(): Promise<Study[]> {
 
 export async function suggestProtocolStudies(
   patient: string,
-  scope: "year" | "archive" = "year"
+  scope: "year" | "archive" = "year",
+  month: number | null = null
 ): Promise<Study[]> {
-  const params = new URLSearchParams({ patient, scope, limit: "20" });
+  const params = new URLSearchParams({ patient, scope, limit: scope === "year" ? "500" : "20" });
+  if (scope === "year" && month) params.set("month", String(month));
   const response = await request<Study[]>(`/studies/suggest?${params.toString()}`);
   return Array.isArray(response) ? response : [];
 }

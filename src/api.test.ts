@@ -8,12 +8,20 @@ import {
   getOperationStatistics,
   getOperationPlan,
   getStudies,
+  suggestProtocolStudies,
   getDriveFiles,
   saveVMPStatisticsConfig
 } from "./api";
 import * as authStorage from "./authStorage";
 
 describe("Viewer API client", () => {
+  it("passes the selected month to year search, but not to archive", async () => {
+    const mock = jest.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("[]", { status: 200 }));
+    await suggestProtocolStudies("", "year", 9);
+    expect(mock).toHaveBeenLastCalledWith("/api/studies/suggest?patient=&scope=year&limit=500&month=9", expect.anything());
+    await suggestProtocolStudies("Ив", "archive", 9);
+    expect(String(mock.mock.calls.at(-1)?.[0])).not.toContain("month=");
+  });
   afterEach(() => {
     jest.restoreAllMocks();
   });

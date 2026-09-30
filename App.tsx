@@ -1,5 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import { normalizeBirthDate, displayBirthDate, planPatientAge, formatBirthDateInput } from "./src/birthDate";
+import { belongsToStudyWeek } from "./src/studyWeek";
 import { agentLogGroups } from "./src/agentLogDisplay";
 import * as SplashScreen from "expo-splash-screen";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -86,7 +87,6 @@ import {
   loadReportsCache,
   loadSettings,
   loadStudiesCache,
-  loadPinnedProtocols,
   loadXAStudiesCache,
   saveOperationPlanCache,
   saveOperationStatisticsCache,
@@ -538,7 +538,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("studies");
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const initialStudies = useMemo(
-    () => deduplicateStudies(loadStudiesCache()),
+    () => deduplicateStudies(loadStudiesCache()).filter((study) => belongsToStudyWeek(study)),
     []
   );
   const [studies, setStudies] = useState<Study[]>(initialStudies);
@@ -552,6 +552,7 @@ export default function App() {
   const [category, setCategory] = useState<StudyCategory>("all");
   const [studySort, setStudySort] = useState<StudySort>("time");
   const [surgeonFilter, setSurgeonFilter] = useState<string | null>(null);
+  const [monthFilter, setMonthFilter] = useState<number | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedStudy, setSelectedStudy] = useState<Study | null>(null);
   const [xaStudies, setXaStudies] = useState<Study[]>(loadXAStudiesCache);
@@ -633,12 +634,7 @@ export default function App() {
     setStudiesLoading(cached.length === 0);
     try {
       const response = await getStudies();
-      const pinned = loadPinnedProtocols();
-      const responseIDs = new Set(response.map((study) => study.id));
-      const nextStudies = deduplicateStudies([
-        ...response,
-        ...pinned.filter((study) => !responseIDs.has(study.id))
-      ]);
+      const nextStudies = deduplicateStudies(response);
       setStudies(nextStudies);
 	  saveStudiesCache(nextStudies);
       const protocols = nextStudies.filter((study) => !isPacsImagingStudy(study));
@@ -1215,22 +1211,23 @@ export default function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 4_000);
+    const timer = setTimeout(() => setToast(null), toast.tone === "danger" ? 3_000 : 1_800);
     return () => clearTimeout(timer);
   }, [toast]);
 
   const protocolStudies = useMemo(
-    () => studies.filter((study) => !isPacsImagingStudy(study)),
+    () => studies.filter((study) => !isPacsImagingStudy(study) && belongsToStudyWeek(study)),
     [studies]
   );
 
   const studySurgeons = useMemo(
     () =>
-      [...new Set(
-        protocolStudies
+      [...new Set([
+        "киргизов", "идрисов", "старков", "шпилевой",
+        ...protocolStudies
           .map((study) => study.surgeon.trim().toLocaleLowerCase("ru"))
           .filter((surgeon) => surgeon && surgeon !== "не указано")
-      )].sort((left, right) => left.localeCompare(right, "ru")),
+      ])].sort((left, right) => left.localeCompare(right, "ru")),
     [protocolStudies]
   );
 
@@ -1269,7 +1266,7 @@ export default function App() {
 
   useEffect(() => {
     const query = search.trim();
-    if (studySearchScope === "week" || query.length < 2) {
+    if (studySearchScope === "week" || (query.length < 2 && !(studySearchScope === "year" && monthFilter !== null && query.length === 0))) {
       setArchiveSuggestions([]);
       setArchiveSearchLoading(false);
       return;
@@ -1277,7 +1274,7 @@ export default function App() {
     let cancelled = false;
     const timer = setTimeout(() => {
       setArchiveSearchLoading(true);
-      void suggestProtocolStudies(query, studySearchScope)
+      void suggestProtocolStudies(query, studySearchScope, studySearchScope === "year" ? monthFilter : null)
         .then((items) => {
           if (!cancelled) {
             setArchiveSuggestions(items);
@@ -1294,7 +1291,17 @@ export default function App() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [search, studySearchScope]);
+  }, [search, studySearchScope, monthFilter]);
+
+  const filteredArchiveSuggestions = useMemo(() => {
+    if (studySearchScope === "archive") return archiveSuggestions;
+    return archiveSuggestions.filter((study) =>
+      (category === "all" || studyCategoriesFor(study).includes(category)) &&
+      (!surgeonFilter || study.surgeon.trim().toLocaleLowerCase("ru") === surgeonFilter)
+    ).sort((a, b) => studySort === "operation"
+      ? shortOperationName(a.name_operation).localeCompare(shortOperationName(b.name_operation), "ru") || new Date(b.time_beginning).getTime() - new Date(a.time_beginning).getTime()
+      : new Date(b.time_beginning).getTime() - new Date(a.time_beginning).getTime());
+  }, [archiveSuggestions, studySearchScope, category, surgeonFilter, studySort]);
 
   const recordRequest = useCallback((request: UserRequest) => {
     setRequests((current) => {
@@ -1504,16 +1511,18 @@ export default function App() {
                   error={studiesError}
                   search={search}
                   searchScope={studySearchScope}
-                  archiveSuggestions={archiveSuggestions}
+                  archiveSuggestions={filteredArchiveSuggestions}
                   archiveSearchLoading={archiveSearchLoading}
                   dayFilter={dayFilter}
                   category={category}
                   sort={studySort}
                   surgeonFilter={surgeonFilter}
+                  monthFilter={monthFilter}
                   selected={selectedStudy}
                   onSearch={setSearch}
                   onSearchScope={(scope) => {
                     setStudySearchScope(scope);
+                    setSelectedStudy(null);
                     setArchiveSuggestions([]);
                   }}
                   onDayFilter={(value) =>
@@ -1521,15 +1530,8 @@ export default function App() {
                   }
                   onFilter={() => setFilterOpen(true)}
                   onSelect={(study) => {
-                    setSelectedStudy(study);
-                    if (study && !studies.some((item) => item.id === study.id)) {
-                      pinProtocol(study);
-                      setStudies((current) => {
-                        const next = deduplicateStudies([study, ...current]);
-                        saveStudiesCache(next);
-                        return next;
-                      });
-                    }
+                    if (studySearchScope === "week") setSelectedStudy(study);
+                    else if (study) pinProtocol(study);
                   }}
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
@@ -1696,6 +1698,9 @@ export default function App() {
           onSelect={setCategory}
           onSort={setStudySort}
           onSurgeon={setSurgeonFilter}
+          month={monthFilter}
+          onMonth={setMonthFilter}
+          showMonth={studySearchScope === "year"}
         />
         {toast ? (
           <Toast
@@ -2275,6 +2280,7 @@ function MobileNavigation({
 }
 
 function StudiesScreen({
+  monthFilter,
   compact,
   inlineDetail,
   studies,
@@ -2309,6 +2315,7 @@ function StudiesScreen({
   error: string;
   search: string;
   searchScope: StudySearchScope;
+  monthFilter: number | null;
   archiveSuggestions: Study[];
   archiveSearchLoading: boolean;
   dayFilter: DayFilter;
@@ -2374,8 +2381,8 @@ function StudiesScreen({
           value={search}
           onChangeText={onSearch}
           placeholder={compact ? "Поиск пациента" : "Пациент, хирург, операция или ID"}
-          filterActive={category !== "all" || sort !== "time" || Boolean(surgeonFilter)}
-          onFilter={searchScope === "week" ? onFilter : undefined}
+          filterActive={category !== "all" || sort !== "time" || Boolean(surgeonFilter) || (searchScope === "year" && monthFilter !== null)}
+          onFilter={searchScope !== "archive" ? onFilter : undefined}
         />
         {!compact ? searchScopeControls : null}
         {searchScope === "week" ? (
@@ -2405,7 +2412,7 @@ function StudiesScreen({
         <View style={styles.studyDatabaseWorkspace}>
           <View style={styles.studyDatabaseResults}>
             <Text style={styles.studySuggestionsTitle}>Поиск по началу фамилии или ФИО</Text>
-            {search.trim().length < 2 ? (
+            {search.trim().length < 2 && !(searchScope === "year" && monthFilter !== null && search.trim().length === 0) ? (
               <EmptyState icon="search-outline" title="Введите минимум две буквы" description="Например: Петр или Петров ИВ." />
             ) : archiveSearchLoading ? (
               <LoadingState label="Ищем протоколы в базе…" />
@@ -5491,6 +5498,7 @@ function MobileMenu({
 }
 
 function StudyFilterSheet({
+  month, onMonth, showMonth,
   visible,
   selected,
   sort,
@@ -5501,6 +5509,9 @@ function StudyFilterSheet({
   onSort,
   onSurgeon
 }: {
+  month: number | null;
+  onMonth: (value: number | null) => void;
+  showMonth: boolean;
   visible: boolean;
   selected: StudyCategory;
   sort: StudySort;
@@ -5564,6 +5575,13 @@ function StudyFilterSheet({
             ))}
           </View>
         </View>
+        {showMonth ? <View style={styles.filterSectionCard}>
+          <Text style={styles.filterSectionTitle}>МЕСЯЦ</Text>
+          <View style={styles.filterChoiceGrid}>
+            <Chip label="Все месяцы" selected={month === null} onPress={() => onMonth(null)} />
+            {["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"].map((label, index) => <Chip key={label} label={label} selected={month === index + 1} onPress={() => onMonth(month === index + 1 ? null : index + 1)} />)}
+          </View>
+        </View> : null}
         <Button label="Готово" onPress={onClose} />
       </ScrollView>
     </Sheet>

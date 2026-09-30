@@ -163,6 +163,9 @@ const splashHead = `
       #viewer-login {
         background: transparent !important;
       }
+      #viewer-toast {
+        top: max(16px, calc(env(safe-area-inset-top, 0px) + 12px)) !important;
+      }
       html.viewer-keyboard #viewer-login {
         position: fixed !important;
         top: var(--viewer-visual-top, 0px) !important;
