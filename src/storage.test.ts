@@ -4,7 +4,7 @@ import {
   loadReportsCache,
   loadStudiesCache,
   loadXAStudiesCache,
-  clearStaleProtocolAndReportCaches,
+  clearStaleClinicalCaches,
   saveDressingChecks,
   saveOperationPlanCache,
   saveReportsCache
@@ -60,7 +60,7 @@ describe("clinical data cache", () => {
     expect(loadDressingChecks("2026-08-15")).toEqual(["рсц|петров"]);
   });
 
-  it("clears stale protocol and report caches but preserves XA and plans", () => {
+  it("clears stale protocol, report, and plan caches but preserves XA", () => {
     const protocol = { id: "old-protocol" } as never;
     const xa = { id: "xa-study" } as never;
     window.localStorage.setItem("viewer.studies.v1", JSON.stringify([protocol]));
@@ -69,11 +69,11 @@ describe("clinical data cache", () => {
     const plan = { week_start: "2026-10-05", days: [] };
     saveOperationPlanCache(plan);
 
-    clearStaleProtocolAndReportCaches();
+    clearStaleClinicalCaches();
 
     expect(loadStudiesCache()).toEqual([]);
     expect(loadReportsCache(2)).toEqual([]);
     expect(loadXAStudiesCache()).toEqual([xa]);
-    expect(loadOperationPlanCache("2026-10-05")).toEqual(plan);
+    expect(loadOperationPlanCache("2026-10-05")).toBeNull();
   });
 });

@@ -90,7 +90,7 @@ import {
   loadSettings,
   loadStudiesCache,
   loadXAStudiesCache,
-  clearStaleProtocolAndReportCaches,
+  clearStaleClinicalCaches,
   saveOperationPlanCache,
   saveOperationStatisticsCache,
   saveHistoricalStatisticsCache,
@@ -514,7 +514,7 @@ function isMobileFormFactor(): boolean {
 }
 
 export default function App() {
-  clearStaleProtocolAndReportCaches();
+  clearStaleClinicalCaches();
   const { width } = useWindowDimensions();
   const [mobileFormFactor] = useState(isMobileFormFactor);
   const compact = mobileFormFactor || width < layout.mobileBreakpoint;
