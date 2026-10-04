@@ -2608,9 +2608,11 @@ function StudyRow({
         </Text>
       </View>
       <View style={styles.studyTrailing}>
-        <PaymentBadge study={study} />
         <View style={{ alignItems: "flex-end", gap: 2 }}>
-          <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
+          <View style={styles.studyDateLine}>
+            <PaymentBadge study={study} inline />
+            <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
+          </View>
           <Text style={[styles.studyDateCompact, { color: colors.primary }]}>{new Date(study.time_beginning).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</Text>
         </View>
         {hasXA ? (
@@ -2746,6 +2748,7 @@ function protocolSections(description: string): {
 function ProtocolDescription({ description, brief = "", recommendation: directRecommendation = "" }: { description: string; brief?: string; recommendation?: string }) {
   const sections = protocolSections(description);
 	const recommendation = plannedRecommendation(directRecommendation || sections.recommendation);
+	const [descriptionOpen, setDescriptionOpen] = useState(false);
   return (
     <View style={styles.protocolContent}>
       {sections.conclusion ? (
@@ -2763,8 +2766,16 @@ function ProtocolDescription({ description, brief = "", recommendation: directRe
         </View>
       ) : null}
       {brief ? <View style={styles.protocolCourse}>
-        <Text style={styles.detailLabel}>ОПИСАНИЕ</Text>
-        <Text style={styles.detailDescription}>{brief}</Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded: descriptionOpen }}
+          onPress={() => setDescriptionOpen((open) => !open)}
+          style={styles.protocolDisclosure}
+        >
+          <Text style={styles.detailLabel}>ОПИСАНИЕ</Text>
+          <Icon name={descriptionOpen ? "chevron-up" : "chevron-down"} size={16} color={colors.primary} />
+        </Pressable>
+        {descriptionOpen ? <Text style={styles.detailDescription}>{brief}</Text> : null}
       </View> : null}
     </View>
   );
@@ -4262,29 +4273,30 @@ function ReportRow({
   const data = reportData(report);
   const total = Number(data.emergency_total ?? 0);
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Открыть отчёт за ${data.date ?? "дату"}`}
-      onPress={onPress}
-      style={[styles.reportRow, selected && styles.reportRowSelected]}
-    >
-      <View style={styles.reportDateBlock}>
-        <Icon name="calendar-outline" size={18} color={colors.primary} />
-      </View>
-      <View style={styles.reportRowCopy}>
-        <Text style={styles.reportRowDate}>
-          {data.date ?? formatDate(report.generated_at)}
-        </Text>
-        <Text style={styles.reportRowMeta}>
-          {data.period_days ?? 1} сут. · {total} экстренных операций
-        </Text>
-      </View>
-      {!compact ? (
-        <View style={styles.reportRowActions}>
-          <IconButton icon="share-outline" label="Переслать отчёт" onPress={onForward} />
+    <View style={[styles.reportRow, selected && styles.reportRowSelected]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Открыть отчёт за ${data.date ?? "дату"}`}
+        onPress={onPress}
+        style={styles.reportRowMain}
+      >
+        <View style={styles.reportDateBlock}>
+          <Icon name="calendar-outline" size={18} color={colors.primary} />
         </View>
-      ) : null}
-    </Pressable>
+        <View style={styles.reportRowCopy}>
+          <Text style={styles.reportRowDate}>
+            {data.date ?? formatDate(report.generated_at)}
+          </Text>
+          <Text style={styles.reportRowMeta}>
+            {data.period_days ?? 1} сут. · {total} экстренных операций
+          </Text>
+        </View>
+      </Pressable>
+      <View style={styles.reportRowActions}>
+        {!compact ? <IconButton icon="share-outline" label="Переслать отчёт" onPress={onForward} /> : null}
+        <IconButton icon="trash-outline" label="Удалить отчёт" onPress={onDelete} />
+      </View>
+    </View>
   );
 }
 
@@ -6515,6 +6527,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     maxWidth: 88
   },
+  studyDateLine: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 4 },
   detailsCard: {
     borderRadius: radii.lg,
     backgroundColor: colors.surface,
@@ -6586,6 +6599,7 @@ const styles = StyleSheet.create({
     fontWeight: "600"
   },
   protocolCourse: { gap: 2 },
+  protocolDisclosure: { minHeight: 28, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
   detailLabel: {
     color: colors.primary,
     fontSize: 10,
@@ -7183,6 +7197,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "transparent"
   },
+  reportRowMain: { flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 8 },
   reportRowSelected: {
     backgroundColor: colors.primarySoft,
     borderColor: "rgba(11,132,179,0.3)"

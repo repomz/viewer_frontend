@@ -15,7 +15,7 @@ export function usePaymentStudy(study: Study) {
   return updated && updated.updated_at >= study.updated_at ? updated : study;
 }
 export function paymentLabel(study: Study) { return study.payment_pending ? "ВМП ?" : study.payment === "vmp" ? "ВМП" : "ОМС"; }
-export function PaymentBadge({ study, editable = false }: { study: Study; editable?: boolean }) {
+export function PaymentBadge({ study, editable = false, inline = false }: { study: Study; editable?: boolean; inline?: boolean }) {
   const current = usePaymentStudy(study);
   const user = loadAuth()?.user;
   const currentYear = new Date(study.time_beginning).toLocaleDateString("en-CA", {timeZone:"Asia/Tomsk",year:"numeric"}) === new Date().toLocaleDateString("en-CA", {timeZone:"Asia/Tomsk",year:"numeric"});
@@ -29,6 +29,7 @@ export function PaymentBadge({ study, editable = false }: { study: Study; editab
     catch {setError("Не удалось сохранить оплату");} finally {setBusy(false);}
   };
   if (!current.payment && !current.payment_pending) return null;
+  if (inline) return <Text style={{ color:current.payment_pending ? colors.danger : colors.textDim,fontSize:10,fontWeight:"400" }}>{paymentLabel(current)}</Text>;
   return <View style={{ alignItems:"flex-end",gap:6 }}>
     <Pressable disabled={!permitted || busy} onPress={()=>setOpen(!open)} accessibilityRole="button" accessibilityLabel="Оплата операции">
       <Text style={{ color:current.payment_pending ? colors.danger : colors.textDim,fontSize:12,fontWeight:"600" }}>{paymentLabel(current)}</Text>
