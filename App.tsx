@@ -4230,15 +4230,26 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
           </View>
           </ScrollView>
         </View>
-        <Button
-          label={copied ? "Скопировано" : "Копировать всё"}
-          icon="copy-outline"
-          variant="secondary"
-          compact={compact}
-          style={compact ? styles.logsCopyCompact : undefined}
-          disabled={!content}
-          onPress={() => void copyLogs()}
-        />
+        {compact ? (
+          <View style={styles.logsCompactCopyRow}>
+            <Button
+              label={copied ? "Скопировано" : "Копировать всё"}
+              icon="copy-outline"
+              variant="secondary"
+              compact
+              disabled={!content}
+              onPress={() => void copyLogs()}
+            />
+          </View>
+        ) : (
+          <Button
+            label={copied ? "Скопировано" : "Копировать всё"}
+            icon="copy-outline"
+            variant="secondary"
+            disabled={!content}
+            onPress={() => void copyLogs()}
+          />
+        )}
       </View>
       <View style={styles.logsDocument}>
         {loading ? (
@@ -7664,7 +7675,7 @@ const styles = StyleSheet.create({
   logsDateGroupCompact: { flex: 0 },
   logsDateRail: { width: "100%", flexGrow: 0 },
   logsDateRailContent: { gap: 6, paddingRight: 8 },
-  logsCopyCompact: { alignSelf: "flex-end" },
+  logsCompactCopyRow: { width: "100%", flexDirection: "row", justifyContent: "flex-end", paddingTop: 2 },
   logsChoiceRowCompact: { flexWrap: "nowrap" },
   logsToolbarLabel: {
     fontSize: 10,
