@@ -2,6 +2,9 @@ import {
   loadDressingChecks,
   loadOperationPlanCache,
   loadReportsCache,
+  loadStudiesCache,
+  loadXAStudiesCache,
+  clearStaleProtocolAndReportCaches,
   saveDressingChecks,
   saveOperationPlanCache,
   saveReportsCache
@@ -14,6 +17,8 @@ describe("clinical data cache", () => {
     Object.defineProperty(window, "localStorage", {
       configurable: true,
       value: {
+        get length() { return values.size; },
+        key: (index: number) => [...values.keys()][index] ?? null,
         clear: () => values.clear(),
         getItem: (key: string) => values.get(key) ?? null,
         setItem: (key: string, value: string) => values.set(key, value),
@@ -53,5 +58,22 @@ describe("clinical data cache", () => {
 
     expect(loadDressingChecks("2026-08-14")).toEqual(["к/о 2|иванов"]);
     expect(loadDressingChecks("2026-08-15")).toEqual(["рсц|петров"]);
+  });
+
+  it("clears stale protocol and report caches but preserves XA and plans", () => {
+    const protocol = { id: "old-protocol" } as never;
+    const xa = { id: "xa-study" } as never;
+    window.localStorage.setItem("viewer.studies.v1", JSON.stringify([protocol]));
+    window.localStorage.setItem("viewer.xa-studies.v1", JSON.stringify([xa]));
+    saveReportsCache(2, [{ filename: "old-report.json", agent_id: 2 }]);
+    const plan = { week_start: "2026-10-05", days: [] };
+    saveOperationPlanCache(plan);
+
+    clearStaleProtocolAndReportCaches();
+
+    expect(loadStudiesCache()).toEqual([]);
+    expect(loadReportsCache(2)).toEqual([]);
+    expect(loadXAStudiesCache()).toEqual([xa]);
+    expect(loadOperationPlanCache("2026-10-05")).toEqual(plan);
   });
 });

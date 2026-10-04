@@ -16,6 +16,7 @@ const PLAN_KEY_PREFIX = "viewer.operation-plan.v2";
 const STUDIES_KEY = "viewer.studies.v1";
 const XA_STUDIES_KEY = "viewer.xa-studies.v1";
 const PINNED_PROTOCOLS_KEY = "viewer.pinned-protocols.v1";
+const CLINICAL_DATA_RESET_KEY = "viewer.clinical-data-reset.20261004";
 const OPERATION_STATISTICS_KEY = "viewer.operation-statistics.v1";
 const HISTORICAL_STATISTICS_KEY = "viewer.historical-statistics.v1";
 const DUTY_SCHEDULE_KEY_PREFIX = "viewer.duty-schedule.v1";
@@ -266,4 +267,16 @@ export function saveXAStudiesCache(studies: Study[]): void {
     XA_STUDIES_KEY,
     JSON.stringify(studies.slice(0, 200))
   );
+}
+
+/** Remove client copies of protocols/reports after the server-side protocol reset. */
+export function clearStaleProtocolAndReportCaches(): void {
+  if (!hasStorage() || window.localStorage.getItem(CLINICAL_DATA_RESET_KEY)) return;
+  window.localStorage.removeItem(STUDIES_KEY);
+  window.localStorage.removeItem(PINNED_PROTOCOLS_KEY);
+  for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+    const key = window.localStorage.key(index);
+    if (key?.startsWith(`${REPORTS_KEY_PREFIX}.`)) window.localStorage.removeItem(key);
+  }
+  window.localStorage.setItem(CLINICAL_DATA_RESET_KEY, "done");
 }
