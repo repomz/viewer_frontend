@@ -4177,11 +4177,11 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
 
   return (
     <View style={styles.logsScreen}>
-      <View style={styles.logsToolbar}>
+      <View style={[styles.logsToolbar, compact && styles.logsToolbarCompact]}>
         {compact ? <Text style={styles.logsToolbarLabel}>Ошибки и предупреждения</Text> : <Chip label={importantOnly ? "Ошибки и предупреждения" : "Все уровни"} selected={importantOnly} onPress={() => setImportantOnly(!importantOnly)} />}
         <View style={styles.logsToolbarGroup}>
           <Text style={styles.logsToolbarLabel}>АГЕНТ</Text>
-          <View style={styles.logsChoiceRow}>
+          <View style={[styles.logsChoiceRow, compact && styles.logsChoiceRowCompact]}>
             {agentIds.map((id) => (
               <Pressable
                 key={id}
@@ -4196,8 +4196,9 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
             ))}
           </View>
         </View>
-        <View style={[styles.logsToolbarGroup, styles.logsDateGroup]}>
+        <View style={[styles.logsToolbarGroup, styles.logsDateGroup, compact && styles.logsDateGroupCompact]}>
           <Text style={styles.logsToolbarLabel}>ДАТА</Text>
+          <ScrollView horizontal={compact} showsHorizontalScrollIndicator={false} style={compact ? styles.logsDateRail : undefined} contentContainerStyle={compact ? styles.logsDateRailContent : undefined}>
           <View style={styles.logsChoiceRow}>
             {dates.map((item) => (
               <Pressable
@@ -4212,6 +4213,7 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
               </Pressable>
             ))}
           </View>
+          </ScrollView>
         </View>
         <Button
           label={copied ? "Скопировано" : "Копировать всё"}
@@ -7630,8 +7632,18 @@ const styles = StyleSheet.create({
     gap: 18,
     paddingVertical: 14
   },
+  logsToolbarCompact: {
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: 10,
+    paddingVertical: 8
+  },
   logsToolbarGroup: { gap: 7 },
   logsDateGroup: { flex: 1, minWidth: 0 },
+  logsDateGroupCompact: { flex: 0 },
+  logsDateRail: { width: "100%", flexGrow: 0 },
+  logsDateRailContent: { gap: 6, paddingRight: 8 },
+  logsChoiceRowCompact: { flexWrap: "nowrap" },
   logsToolbarLabel: {
     fontSize: 10,
     lineHeight: 14,
