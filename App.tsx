@@ -1535,8 +1535,8 @@ export default function App() {
                   }
                   onFilter={() => setFilterOpen(true)}
                   onSelect={(study) => {
-                    if (studySearchScope === "week") setSelectedStudy(study);
-                    else if (study) pinProtocol(study);
+                    setSelectedStudy(study);
+                    if (studySearchScope !== "week" && study) pinProtocol(study);
                   }}
                   onRetry={() => void loadStudies()}
                   onRefresh={() => void loadStudies()}
@@ -2610,10 +2610,12 @@ function StudyRow({
       <View style={styles.studyTrailing}>
         <View style={{ alignItems: "flex-end", gap: 2 }}>
           <View style={styles.studyDateLine}>
-            <PaymentBadge study={study} inline />
             <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
           </View>
-          <Text style={[styles.studyDateCompact, { color: colors.primary }]}>{new Date(study.time_beginning).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</Text>
+          <View style={styles.studyDateLine}>
+            <PaymentBadge study={study} inline />
+            <Text style={[styles.studyDateCompact, { color: colors.primary }]}>{new Date(study.time_beginning).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</Text>
+          </View>
         </View>
         {hasXA ? (
           <Pressable
@@ -2707,12 +2709,14 @@ export function plannedRecommendation(value: string): string {
     .split(/-\s+|\n+/)
     .map((item) => cleanClinicalText(item).trim())
     .filter((item) => /в\s+плановом\s+порядке/i.test(item));
-  if (items.length) return items.join("\n");
-  return beforeMaterials
+  const compactItems = (values: string[]) => values
+    .map((item) => shortOperationName(item.replace(/\s*в\s+плановом\s+порядке/gi, "").trim()).replace(/[\s.;,]+$/g, ""))
+    .filter(Boolean);
+  if (items.length) return compactItems(items).join("\n");
+  return compactItems(beforeMaterials
     .split(/(?<=[.!?])\s*/)
     .map((item) => cleanClinicalText(item).trim())
-    .filter((item) => /в\s+плановом\s+порядке/i.test(item))
-    .join("\n");
+    .filter((item) => /в\s+плановом\s+порядке/i.test(item))).join("\n");
 }
 
 function protocolSections(description: string): {
@@ -4189,7 +4193,7 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
   return (
     <View style={styles.logsScreen}>
       <View style={[styles.logsToolbar, compact && styles.logsToolbarCompact]}>
-        {compact ? <Text style={styles.logsToolbarLabel}>Ошибки и предупреждения</Text> : <Chip label={importantOnly ? "Ошибки и предупреждения" : "Все уровни"} selected={importantOnly} onPress={() => setImportantOnly(!importantOnly)} />}
+        {!compact ? <Chip label={importantOnly ? "Ошибки и предупреждения" : "Все уровни"} selected={importantOnly} onPress={() => setImportantOnly(!importantOnly)} /> : null}
         <View style={styles.logsToolbarGroup}>
           <Text style={styles.logsToolbarLabel}>АГЕНТ</Text>
           <View style={[styles.logsChoiceRow, compact && styles.logsChoiceRowCompact]}>
@@ -4230,6 +4234,8 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
           label={copied ? "Скопировано" : "Копировать всё"}
           icon="copy-outline"
           variant="secondary"
+          compact={compact}
+          style={compact ? styles.logsCopyCompact : undefined}
           disabled={!content}
           onPress={() => void copyLogs()}
         />
@@ -7658,6 +7664,7 @@ const styles = StyleSheet.create({
   logsDateGroupCompact: { flex: 0 },
   logsDateRail: { width: "100%", flexGrow: 0 },
   logsDateRailContent: { gap: 6, paddingRight: 8 },
+  logsCopyCompact: { alignSelf: "flex-end" },
   logsChoiceRowCompact: { flexWrap: "nowrap" },
   logsToolbarLabel: {
     fontSize: 10,

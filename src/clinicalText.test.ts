@@ -15,7 +15,15 @@ describe("clinical protocol presentation", () => {
       plannedRecommendation(
         "- Контроль АД.- Аспирин пожизненно- стентирование ОА-ВТК в плановом порядкеРасходные материалы: контраст"
       )
-    ).toBe("стентирование ОА-ВТК в плановом порядке");
+    ).toBe("стент ОА-ВТК");
+  });
+
+  it("shortens artery names and removes the redundant planned-order phrase from recommendations", () => {
+    expect(
+      plannedRecommendation(
+        "Коронарография с возможным стентированием огибающей артерии, передней нисходящей артерии и правой коронарной артерии в плановом порядке"
+      )
+    ).toBe("КАГ с возможным стент ОА, ПНА и ПКА");
   });
 
   it("uses the same compact operation vocabulary as the hospital agent", () => {
