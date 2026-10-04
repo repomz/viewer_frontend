@@ -4,9 +4,9 @@ export type ReportOperationCategory =
   | "КАГ"
   | "КАГ + стент"
   | "ЦАГ"
-  | "ЦАГ + ТА"
-  | "ЦАГ + ТА + БАП"
-  | "ЦАГ + ТА + стент"
+  | "ЦАГ ТА"
+  | "ЦАГ ТА + БАП"
+  | "ЦАГ ТА + стент"
   | "Тромбэкстракции"
   | "Аневризма"
   | "Другие";
@@ -38,11 +38,11 @@ export function reportOperationCategory(
     /(?:^|[^а-яa-z0-9])(?:та|тэ|ta|te)(?:$|[^а-яa-z0-9])/.test(value) ||
     /тромб(?:[\s-]*о)?[\s-]*аспирац|тромб[\s-]*экстракц|тромб[\s-]*эктом/.test(value);
   if (hasCerebralAngiography && hasThrombusAspiration) {
-    if (/стент/.test(value)) return "ЦАГ + ТА + стент";
+    if (/стент/.test(value.replace(/стент[\s-]*ретривер[а-я]*/g, ""))) return "ЦАГ ТА + стент";
     if (/ангиопласт|(?:^|[^а-яa-z0-9])бап(?:$|[^а-яa-z0-9])/.test(value)) {
-      return "ЦАГ + ТА + БАП";
+      return "ЦАГ ТА + БАП";
     }
-    return "ЦАГ + ТА";
+    return "ЦАГ ТА";
   }
   if (/всузи|внутрисосудист/.test(value)) return "КАГ + стент";
   if (hasThrombusAspiration) return "Тромбэкстракции";

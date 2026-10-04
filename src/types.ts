@@ -1,4 +1,9 @@
 export type Study = {
+  room?: 1 | 2;
+  /** Comma separated structured procedure options: ivus, vabk, ekmo. */
+  options?: string;
+  payment?: "oms" | "vmp";
+  payment_pending?: boolean;
   birth_date?: string;
   id: string;
   created_at: string;
@@ -9,7 +14,10 @@ export type Study = {
   department: string;
   name_operation: string;
   study_type: string;
-  descr_operation: string;
+  /** Legacy cached protocols; new API uses conclusion. */
+  descr_operation?: string;
+  conclusion?: string;
+  description?: string;
   recommendation?: string;
   time_beginning: string;
   time_duration: number;
@@ -162,6 +170,7 @@ export type PlatformMetrics = {
 };
 
 export type PlanEntry = {
+  vmp?: boolean;
   birth_date?: string;
   patient: string;
   department: string;

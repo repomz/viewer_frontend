@@ -1,6 +1,7 @@
 const AUTH_KEY = "viewer.auth.v1";
 
 export type AuthUser = {
+  can_confirm_payment?: boolean;
   id: number;
   display_name: string;
   login: string;

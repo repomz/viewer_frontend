@@ -1,47 +1,23 @@
-import { studyCategories, studyCategoriesFor } from "./studyOperationCategories";
-import type { Study } from "./types";
+import {studyCategories, studyCategoriesFor} from "./studyOperationCategories";
+import type {Study} from "./types";
+const study = (study_type: string, options = "") => ({
+  study_type, options, name_operation: "КАГ. Ранее стент ПКА",
+  description: "Рекомендовано ВСУЗИ.", descr_operation: "Стент проходим."
+} as Study);
 
-function study(name_operation: string, descr_operation = ""): Study {
-  return {
-    id: name_operation,
-    study_id: name_operation,
-    study_type: "",
-    patient: "Пациент",
-    age: 0,
-    name_operation,
-    descr_operation,
-    recommendation: "",
-    surgeon: "идрисов",
-    department: "к/о 2",
-    time_beginning: "2026-08-14T08:00:00Z",
-    time_duration: 0,
-    dicom_link: "",
-    created_at: "2026-08-14T08:00:00Z",
-    updated_at: "2026-08-14T08:00:00Z"
-  };
-}
-
-describe("study operation categories", () => {
-  it("uses the current statistics operation types", () => {
-    expect(studyCategories).toEqual([
-      "all", "ВСУЗИ", "КАГ", "ЦАГ", "СТЕНТ КОР", "БАП КОР",
-      "СТЕНТ ВСА", "СТЕНТ В/К", "СТЕНТ Н/К", "АНЕВРИЗМА",
-      "ИНСУЛЬТ", "Голень", "ДРУГИЕ"
-    ]);
-  });
-
-  it("keeps multi-label interventions available in every relevant filter", () => {
-    expect(studyCategoriesFor(study("КАГ. Стент ПНА + ВСУЗИ"))).toEqual([
-      "ВСУЗИ",
-      "СТЕНТ КОР"
-    ]);
-    expect(studyCategoriesFor(study("ЦАГ. Тромбэкстракция СМА"))).toEqual([
-      "ЦАГ",
-      "ИНСУЛЬТ"
-    ]);
-  });
-
-  it("uses the fallback for operations outside the current categories", () => {
-    expect(studyCategoriesFor(study("ЭМА"))).toEqual(["ДРУГИЕ"]);
-  });
+test("classification uses only structured type and options", () => {
+  expect(studyCategoriesFor(study("каг"))).toEqual(["КАГ"]);
+  expect(studyCategoriesFor(study("стент_кор", "ivus"))).toEqual(["ВСУЗИ", "СТЕНТ КОР"]);
+  expect(studyCategoriesFor(study("каг", "ivus,vabk,ekmo"))).toEqual(["ВСУЗИ", "ВАБК", "ЭКМО", "КАГ"]);
+  expect(studyCategoriesFor(study("инсульт"))).toEqual(["ИНСУЛЬТ"]);
+});
+test("new groups, options, and temporary pacing remain separate", () => {
+  expect(studyCategoriesFor(study("ВЭКС"))).toEqual(["ВЭКС"]);
+  expect(studyCategoriesFor(study("ЭКС 1к"))).toEqual(["ЭКС 1к"]);
+  expect(studyCategoriesFor(study("стент_па"))).toEqual(["СТЕНТ ПА"]);
+  expect(studyCategoriesFor(study("эма"))).toEqual(["ЭМА"]);
+  expect(studyCategoriesFor(study("ангиография периферии"))).toEqual(["АНГИО ПЕРИФЕРИИ"]);
+  expect(studyCategoriesFor(study("эмболизация периферии"))).toEqual(["ЭМБОЛИЗАЦИЯ ПЕРИФЕРИИ"]);
+  expect(studyCategoriesFor(study("unknown"))).toEqual(["ДРУГИЕ"]);
+  expect(new Set(studyCategories).size).toBe(studyCategories.length);
 });

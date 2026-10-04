@@ -1,7 +1,9 @@
 import { StatusBar } from "expo-status-bar";
+import { PaymentBadge, PaymentRulesSettings, usePaymentRules, planPaymentMode } from "./src/PaymentUI";
 import { normalizeBirthDate, displayBirthDate, planPatientAge, formatBirthDateInput } from "./src/birthDate";
 import { belongsToStudyWeek } from "./src/studyWeek";
 import { agentLogGroups } from "./src/agentLogDisplay";
+import { AgentLogAlert } from "./src/AgentLogAlert";
 import * as SplashScreen from "expo-splash-screen";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -468,7 +470,8 @@ async function shareStudyProtocol(study: Study): Promise<void> {
     formatDate(study.time_beginning, true),
     study.surgeon ? `Хирург: ${study.surgeon}` : "",
     "",
-    cleanClinicalText(study.descr_operation || "")
+    cleanClinicalText(study.conclusion ?? study.descr_operation ?? ""),
+    cleanClinicalText(study.description ?? "")
   ].filter(Boolean).join("\n");
   const title = `Протокол операции — ${study.patient}`;
   if (Platform.OS === "web") {
@@ -1577,9 +1580,10 @@ export default function App() {
                   onForward={(report) => void shareReport(report)}
                 />
               ) : null}
-              {activeTab === "logs" && !compact && auth?.user.role === "admin" ? (
+              {activeTab === "logs" && auth?.user.role === "admin" ? (
                 <LogsScreen
                   agentIds={settings.agentIds}
+                  compact={compact}
                 />
               ) : null}
               {activeTab === "metrics" && auth?.user.role === "admin" ? (
@@ -1672,6 +1676,7 @@ export default function App() {
           visible={menuOpen}
           user={auth!.user}
           onMetrics={() => { setMenuOpen(false); setActiveTab("metrics"); }}
+          onLogs={() => { setMenuOpen(false); setActiveTab("logs"); }}
           onProfile={() => { setMenuOpen(false); setActiveTab("profile"); }}
           onClose={() => setMenuOpen(false)}
           onSettings={() => {
@@ -2018,7 +2023,7 @@ function TopBar({
                 selected && dark && styles.desktopTabButtonActiveDark
               ]}
             >
-              <Icon
+              {tab.id === "logs" ? <AgentLogAlert size={17} selected={selected} color={selected ? (dark ? darkColors.primary : colors.primary) : (dark ? darkColors.textMuted : colors.textMuted)} /> : <Icon
                 name={
                   selected
                     ? (tab.icon.replace("-outline", "") as IconName)
@@ -2034,7 +2039,7 @@ function TopBar({
                       ? darkColors.textMuted
                       : colors.textMuted
                 }
-              />
+              />}
               <Text
                 style={[
                   styles.desktopTabText,
@@ -2601,6 +2606,7 @@ function StudyRow({
         </Text>
       </View>
       <View style={styles.studyTrailing}>
+        <PaymentBadge study={study} />
         <View style={{ alignItems: "flex-end", gap: 2 }}>
           <Text style={styles.studyDateCompact}>{formatDate(study.time_beginning)}</Text>
           <Text style={[styles.studyDateCompact, { color: colors.primary }]}>{new Date(study.time_beginning).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}</Text>
@@ -2636,7 +2642,7 @@ export function cleanClinicalText(value: string, operation = false): string {
       /внутрисосудист(?:ое|ый)\s+(?:ультразвуковое\s+исследование|ультразвук|исследование)/gi,
       "ВСУЗИ"
     )
-    .replace(/частичная|отмечается/gi, "")
+    .replace(/(не\s+)?(частичная|отмечается)/gi, (match, negation) => negation ? match : "")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/\s{2,}/g, " ")
     .trim();
@@ -2648,7 +2654,8 @@ export function shortOperationName(value: string): string {
     [/коронарограф[А-Яа-яЁёA-Za-z]*/gi, "КАГ"],
     [/церебральн[А-Яа-яЁёA-Za-z]*\s+(?:пан)?ангиограф[А-Яа-яЁёA-Za-z]*/gi, "ЦАГ"],
     [/(?:пан)?ангиограф[А-Яа-яЁёA-Za-z]*/gi, "АГ"],
-    [/тромб(?:о)?(?:аспирац|экстракц)[А-Яа-яЁёA-Za-z]*/gi, "ТА"],
+    [/тромб(?:о)?аспирац[А-Яа-яЁёA-Za-z]*/gi, "ТА"],
+    [/тромб(?:о)?экстракц[А-Яа-яЁёA-Za-z]*/gi, "ТЭ"],
     [/(?:механическ[А-Яа-яЁёA-Za-z]*\s+)?реканализац[А-Яа-яЁёA-Za-z]*/gi, "МР"],
     [/стентирован[А-Яа-яЁёA-Za-z]*/gi, "стент"],
     [/анги(?:о|л)?пласт[А-Яа-яЁёA-Za-z]*/gi, "БАП"],
@@ -2679,10 +2686,8 @@ export function shortOperationName(value: string): string {
     .replace(/в\s+условиях/gi, "")
     .replace(/бассейн[А-Яа-яЁёA-Za-z]*/gi, "")
     .replace(/попытк[А-Яа-яЁёA-Za-z]*|\btry\b/gi, "поп.")
-    .replace(/справа/gi, "прав.")
-    .replace(/слева/gi, "лев.")
     .replace(/(?:локальн|эндоваскулярн|трансартериальн|тотальн|селективн|транслюминальн|первичн)[А-Яа-яЁёA-Za-z]*/gi, "")
-    .replace(/(?:баллонн|механическ|артери|окклюзи|установк)[А-Яа-яЁёA-Za-z]*/gi, "")
+    .replace(/(?:баллонн|механическ|артери)[А-Яа-яЁёA-Za-z]*/gi, "")
     .replace(/ТА\s*\/\s*ТА/gi, "ТА")
     .replace(/\s+([,.;:])/g, "$1")
     .replace(/([,;:])(?=[^\s\d])/g, "$1 ")
@@ -2736,7 +2741,7 @@ function protocolSections(description: string): {
   return result;
 }
 
-function ProtocolDescription({ description, recommendation: directRecommendation = "" }: { description: string; recommendation?: string }) {
+function ProtocolDescription({ description, brief = "", recommendation: directRecommendation = "" }: { description: string; brief?: string; recommendation?: string }) {
   const sections = protocolSections(description);
 	const recommendation = plannedRecommendation(directRecommendation || sections.recommendation);
   return (
@@ -2755,9 +2760,10 @@ function ProtocolDescription({ description, recommendation: directRecommendation
           <Text style={styles.detailDescription}>{recommendation}</Text>
         </View>
       ) : null}
-      {!sections.conclusion && !recommendation ? (
-        <Text style={styles.detailDescription}>Описание пока не добавлено.</Text>
-      ) : null}
+      {brief ? <View style={styles.protocolCourse}>
+        <Text style={styles.detailLabel}>ОПИСАНИЕ</Text>
+        <Text style={styles.detailDescription}>{brief}</Text>
+      </View> : null}
     </View>
   );
 }
@@ -2788,8 +2794,10 @@ function StudyDetails({
           </Text>
           <Text style={styles.detailsSubtitle}>
             ID {study.study_id}
+            {study.room ? `   Опер ${study.room}` : ""}
           </Text>
         </View>
+        <PaymentBadge study={study} editable />
       </View>
 
       <View style={styles.detailGrid}>
@@ -2813,7 +2821,7 @@ function StudyDetails({
       </View>
 
       <View style={styles.protocolSection}>
-		<ProtocolDescription description={study.descr_operation || ""} recommendation={study.recommendation} />
+		<ProtocolDescription description={study.conclusion ?? study.descr_operation ?? ""} brief={study.description} recommendation={study.recommendation} />
       </View>
       <View style={styles.detailsActions}>
         <Button
@@ -3324,7 +3332,8 @@ function RequestCard({
                   {String(protocol.surgeon ?? "Хирург не указан")}
                 </Text>
                 <ProtocolDescription
-                  description={String(protocol.descr_operation ?? "")}
+                  description={String(protocol.conclusion ?? protocol.descr_operation ?? "")}
+                  brief={String(protocol.description ?? "")}
                 />
                 {!saved && protocol.protocol_ref ? (
                   <Button
@@ -3984,7 +3993,7 @@ function StatisticsScreen({
 								<Text style={styles.mobileStatisticsHeaderName}>Хирург</Text>
 								<Text style={styles.mobileStatisticsHeaderValue}>{mobileColumnLabel}</Text>
 							</View>
-							{visibleSurgeons.slice(0, 4).map((row) => (
+							{visibleSurgeons.map((row) => (
 								<View key={row.surgeon} style={styles.mobileStatisticsTableRow}>
 									<Text numberOfLines={1} style={styles.mobileStatisticsSurgeon}>{row.surgeon}</Text>
 									<Text style={styles.mobileStatisticsValue}>
@@ -4108,8 +4117,8 @@ function StatisticsScreen({
   );
 }
 
-function LogsScreen({ agentIds }: { agentIds: number[] }) {
-  const [importantOnly, setImportantOnly] = useState(false);
+function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolean }) {
+  const [importantOnly, setImportantOnly] = useState(true);
   const dates = useMemo(
     () => Array.from({ length: 7 }, (_, index) => {
       const value = new Date();
@@ -4157,17 +4166,17 @@ function LogsScreen({ agentIds }: { agentIds: number[] }) {
   }, [agentId, date]);
 
   const content = entries.map((entry) => entry.content.trim()).filter(Boolean).join("\n");
-  const logGroups = useMemo(() => agentLogGroups(content, importantOnly), [content, importantOnly]);
+  const logGroups = useMemo(() => agentLogGroups(content, compact || importantOnly), [content, importantOnly, compact]);
   const copyLogs = async () => {
     if (!content || Platform.OS !== "web" || !navigator.clipboard) return;
-    await navigator.clipboard.writeText(content);
+    await navigator.clipboard.writeText(logGroups.map(group => group.text).join("\n"));
     setCopied(true);
   };
 
   return (
     <View style={styles.logsScreen}>
       <View style={styles.logsToolbar}>
-        <Chip label={importantOnly ? "Ошибки и предупреждения" : "Все уровни"} selected={importantOnly} onPress={() => setImportantOnly(!importantOnly)} />
+        {compact ? <Text style={styles.logsToolbarLabel}>Ошибки и предупреждения</Text> : <Chip label={importantOnly ? "Ошибки и предупреждения" : "Все уровни"} selected={importantOnly} onPress={() => setImportantOnly(!importantOnly)} />}
         <View style={styles.logsToolbarGroup}>
           <Text style={styles.logsToolbarLabel}>АГЕНТ</Text>
           <View style={styles.logsChoiceRow}>
@@ -4215,14 +4224,14 @@ function LogsScreen({ agentIds }: { agentIds: number[] }) {
           <LoadingState label="Загружаем журнал агента" />
         ) : error ? (
           <InlineError message={error} />
-        ) : content ? (
+        ) : logGroups.length ? (
           <ScrollView style={styles.flexScroll} contentContainerStyle={styles.logsDocumentContent}>
             <Text selectable style={styles.logCode}>{logGroups.map((group, index) => <Text key={index} style={{ color: ["ERROR", "CRITICAL"].includes(group.level) ? colors.danger : group.level === "WARNING" ? colors.warning : colors.text }}>{group.text}{"\n"}</Text>)}</Text>
           </ScrollView>
         ) : (
           <EmptyState
             icon="document-text-outline"
-            title="Записей за этот день нет"
+            title={compact || importantOnly ? "Ошибок и предупреждений за этот день нет" : "Записей за этот день нет"}
             description="Завершённые часовые фрагменты появятся после очередной отправки агентом."
           />
         )}
@@ -4326,9 +4335,9 @@ function ReportSection({
     "КАГ",
     "КАГ + стент",
     "ЦАГ",
-    "ЦАГ + ТА",
-    "ЦАГ + ТА + БАП",
-    "ЦАГ + ТА + стент",
+    "ЦАГ ТА",
+    "ЦАГ ТА + БАП",
+    "ЦАГ ТА + стент",
     "Тромбэкстракции",
     "Аневризма",
     "Другие"
@@ -4508,9 +4517,9 @@ function DutyScheduleScreen({
     const printWindow = window.open("", "_blank", "width=1200,height=820");
     if (!printWindow) return;
     const header = days.map((day) => `<th>${day}</th>`).join("");
-    const rows = activeGroup.staff.flatMap((staff) => (["day", "duty"] as const).map((row, index) => {
+    const rows = activeGroup.staff.flatMap((staff) => (staff.role === "duty_only" ? ["duty"] as const : ["day", "duty"] as const).map((row, index) => {
       const cells = days.map((day) => `<td>${escapePrintHTML(shiftValue(staff, day, row))}</td>`).join("");
-      return `<tr${index === 1 ? ' class="staff-end"' : ""}>${index === 0 ? `<td rowspan="2" class="staff">${escapePrintHTML(staff.name)}</td>` : ""}${cells}</tr>`;
+      return `<tr${index === 1 || staff.role === "duty_only" ? ' class="staff-end"' : ""}>${index === 0 ? `<td rowspan="${staff.role === "duty_only" ? 1 : 2}" class="staff">${escapePrintHTML(staff.name.split(" ")[0] ?? staff.name)}</td>` : ""}${cells}</tr>`;
     })).join("");
     printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>График</title><style>@page{size:A4 landscape;margin:7mm}body{font-family:Arial,sans-serif;color:#18313f}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 10px;color:#607482}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #9eabb3;text-align:center;padding:3px;font-size:8px;height:18px}th:first-child{width:108px}.staff{font-weight:700;text-align:left;padding-left:6px}.staff-end td{border-bottom-width:2px;border-bottom-color:#6f9db2}</style></head><body><h1>График хирургов</h1><p>${escapePrintHTML(monthTitle(selectedMonth))}</p><table><thead><tr><th>Хирург</th>${header}</tr></thead><tbody>${rows}</tbody></table></body></html>`);
     printWindow.document.close();
@@ -4575,8 +4584,8 @@ function DutyScheduleScreen({
                 <Text style={styles.scheduleNameHeaderText}>Хирург</Text>
               </View>
               {activeGroup?.staff.map((staff) => (
-                <View key={staff.id} testID={`schedule-name-${staff.id}`} style={styles.scheduleStaffBlock}>
-                  <Text numberOfLines={2} style={styles.scheduleStaffName}>{staff.name}</Text>
+                <View key={staff.id} testID={`schedule-name-${staff.id}`} style={[styles.scheduleStaffBlock,staff.role === "duty_only" && { height:42,minHeight:42,maxHeight:42 }]}>
+                  <Text numberOfLines={2} style={styles.scheduleStaffName}>{staff.name.split(" ")[0]}</Text>
                 </View>
               ))}
             </View>
@@ -4591,7 +4600,7 @@ function DutyScheduleScreen({
                 })}
                 {editing && !compact ? <Text style={[styles.scheduleCell, styles.scheduleTotalHeader]}>Σ</Text> : null}
               </View>
-              {activeGroup?.staff.length ? activeGroup.staff.flatMap((staff) => (["day", "duty"] as const).map((row, rowIndex) => {
+              {activeGroup?.staff.length ? activeGroup.staff.flatMap((staff) => (staff.role === "duty_only" ? ["duty"] as const : ["day", "duty"] as const).map((row, rowIndex) => {
                 const total = rowTotal(staff, row);
                 return <View key={`${staff.id}-${row}`} testID={`schedule-row-${staff.id}-${row}`} style={styles.scheduleGridRow}>
                   {days.map((day) => {
@@ -4868,6 +4877,7 @@ function PlanScreen({
 }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [draft, setDraft] = useState<PlanEntry[]>([newPlanEntry()]);
+  const paymentRules = usePaymentRules();
   const [picker, setPicker] = useState<{
     index: number;
     type: "department" | "operation" | "additional-operation";
@@ -4917,13 +4927,17 @@ function PlanScreen({
 
   const saveDay = async () => {
     if (!selectedDate) return;
+    if (!paymentRules.data) { setSaveError(paymentRules.error || "Дождитесь загрузки правил ВМП"); return; }
+    if (draft.some(entry => entry.patient.trim() && planPaymentMode(entry.operation,paymentRules.data!.rules)==="review" && !entry.vmp)) {
+      setSaveError("Поставьте галочку ВМП у пациентов, для которых требуется ручная отметка. Окончательное решение принимается в протоколе.");return;
+    }
     setSaving(true);
     setSaveError("");
     try {
       await onSave(
         selectedDate,
         sortPlanEntries(draft
-          .map((entry) => ({ ...entry, patient: entry.patient.trim(), birth_date: normalizeBirthDate(entry.birth_date) }))
+          .map((entry) => ({ ...entry, patient: entry.patient.trim(), birth_date: normalizeBirthDate(entry.birth_date), vmp: planPaymentMode(entry.operation,paymentRules.data!.rules)==="auto" || (planPaymentMode(entry.operation,paymentRules.data!.rules)==="review" && !!entry.vmp) }))
           .filter((entry) => entry.patient))
       );
       setSelectedDate(null);
@@ -5185,6 +5199,15 @@ function PlanScreen({
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorOperationField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Операция</Text> : null}
+                {paymentRules.data && planPaymentMode(entry.operation,paymentRules.data.rules) ? <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked:planPaymentMode(entry.operation,paymentRules.data.rules)==="auto" || !!entry.vmp, disabled:planPaymentMode(entry.operation,paymentRules.data.rules)==="auto" }}
+                  disabled={planPaymentMode(entry.operation,paymentRules.data.rules)==="auto"}
+                  onPress={()=>updateEntry(index,{vmp:!entry.vmp})}
+                  style={{padding:8,borderRadius:8,backgroundColor:colors.primarySoft,marginBottom:6,flexDirection:"row",gap:6,alignItems:"center"}}>
+                  <Icon name={planPaymentMode(entry.operation,paymentRules.data.rules)==="auto" || entry.vmp ? "checkbox":"square-outline"} size={18} color={colors.primary} />
+                  <Text style={{color:colors.primary,fontSize:12,fontWeight:"600"}}>ВМП · {planPaymentMode(entry.operation,paymentRules.data.rules)==="auto" ? "автоматически":"отметить"}</Text>
+                </Pressable>:null}
                 <View style={styles.planOperationControlRow}>
                   <Pressable
                     accessibilityRole="button"
@@ -5351,6 +5374,7 @@ function MobileMenu({
   onClose,
   onProfile,
   onMetrics,
+  onLogs,
 	onSettings,
 	onStatistics,
   onDisk,
@@ -5362,6 +5386,7 @@ function MobileMenu({
   onClose: () => void;
   onProfile: () => void;
   onMetrics: () => void;
+  onLogs: () => void;
   onSettings: () => void;
 	onStatistics: () => void;
   onDisk: () => void;
@@ -5439,6 +5464,10 @@ function MobileMenu({
             </View>
           </View>
           <View style={styles.drawerMenu}>
+            {compact && user.role === "admin" ? <Pressable accessibilityRole="button" style={styles.drawerItem} onPress={onLogs}>
+              <AgentLogAlert />
+              <Text style={styles.drawerItemText}>Логи</Text>
+            </Pressable> : null}
             {compact && user.role === "admin" ? <Pressable style={styles.drawerItem} onPress={onMetrics}>
               <Icon name="pulse-outline" color={colors.textMuted} />
               <Text style={styles.drawerItemText}>Метрики</Text>
@@ -5603,6 +5632,7 @@ function AgentSettingsScreen() {
     return () => { active = false; clearInterval(timer); };
   }, []);
   return <ScrollView style={styles.screen} contentContainerStyle={styles.scrollScreen}>
+    <PaymentRulesSettings />
     {loading ? <Text style={styles.settingsDescription}>Получаем настройки…</Text> : null}
     {error ? <Text style={styles.settingsDescription}>{error}</Text> : null}
     {!loading && !error && agents.length === 0 ? <Text style={styles.settingsDescription}>

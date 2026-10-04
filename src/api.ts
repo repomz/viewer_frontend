@@ -17,6 +17,11 @@ import type {
 import { authToken, type AuthUser, type StoredAuth } from "./authStorage";
 
 const API_ROOT = "/api";
+export type PaymentRule = { field: "study_type" | "options"; value: string; mode: "auto" | "review" };
+export type PaymentRules = { rules: PaymentRule[]; study_types: string[] };
+export const getPaymentRules = () => request<PaymentRules>("/payment-rules");
+export const savePaymentRules = (rules: PaymentRule[]) => request<PaymentRules>("/payment-rules", { method: "PUT", body: JSON.stringify({ rules }) });
+export const setStudyPayment = (id: string, payment: "oms" | "vmp") => request<Study>(`/studies/${encodeURIComponent(id)}/payment`, { method: "PUT", body: JSON.stringify({ payment }) });
 export const recordAppOpen = (eventId: string) => request<void>("/auth/app-open", {
   method: "POST", body: JSON.stringify({ event_id: eventId })
 });
@@ -447,4 +452,8 @@ export async function getAgentLogs(
     `/agent_logs?${params.toString()}`
   );
   return Array.isArray(response) ? response : [];
+}
+
+export async function getAgentLogAlerts(): Promise<{has_issues: boolean}> {
+  return request<{has_issues: boolean}>("/agent_logs/alerts");
 }
