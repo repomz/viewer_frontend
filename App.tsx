@@ -536,10 +536,8 @@ export default function App() {
     return () => { cancelled = true; document.removeEventListener("visibilitychange", opened); };
   }, [metricsUserId, metricsRole]);
   const [authenticated, setAuthenticated] = useState(() => Boolean(loadAuth()));
-  const [appReady, setAppReady] = useState(false);
   const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false);
   const [autoDownloadStartAllowed, setAutoDownloadStartAllowed] = useState(false);
-  const [enterRequested, setEnterRequested] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("studies");
   const [settings, setSettings] = useState<AppSettings>(loadSettings);
   const initialStudies = useMemo(
@@ -618,7 +616,6 @@ export default function App() {
       .map((request) => String(parseObject(request.payload).study_uid ?? ""))
       .filter(Boolean)
   ));
-  const preloadStarted = useRef(false);
   const autoDownloadRunning = useRef(false);
   const autoDownloadAllowedRef = useRef(false);
   const autoDownloadRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(
@@ -886,55 +883,50 @@ export default function App() {
 
   useEffect(() => {
     if (!auth) return;
+    let cancelled = false;
     void getCurrentUser()
       .then((user) => {
+        if (cancelled || loadAuth()?.token !== auth.token) return;
         const next = { ...auth, user };
         saveAuth(next);
         setAuth(next);
       })
-      .catch(() => {
+      .catch((error) => {
+        if (cancelled || loadAuth()?.token !== auth.token) return;
+        if (!(error instanceof ApiError) || ![401, 403].includes(error.status)) return;
         clearAuth();
         setAuth(null);
         setAuthenticated(false);
       });
+    return () => { cancelled = true; };
   // Existing token is verified once when the application starts.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (preloadStarted.current) return;
-    preloadStarted.current = true;
-    const readyTimer = setTimeout(() => setAppReady(true), 250);
+    void updateBackendVersion();
+  }, [updateBackendVersion]);
+
+  useEffect(() => {
+    if (!authenticated) return;
     void Promise.allSettled([
       loadStudies(),
-      updateServerHealth(),
-      updateBackendVersion(),
-      updateAgentHealth(),
-      loadPlan(0),
-      loadReports(),
       loadStatistics(),
       loadDutySchedule()
     ]);
-    return () => clearTimeout(readyTimer);
   }, [
+    authenticated,
     loadStudies,
-    loadPlan,
-    loadReports,
     loadStatistics,
-    loadDutySchedule,
-    updateAgentHealth,
-    updateBackendVersion,
-    updateServerHealth
+    loadDutySchedule
   ]);
 
   useEffect(() => {
-    if (appReady && enterRequested) setAuthenticated(true);
-  }, [appReady, enterRequested]);
-
-  useEffect(() => {
+    if (!authenticated) return;
+    let cancelled = false;
     void getAgents()
       .then((ids) => {
-        if (!ids.length) return;
+        if (cancelled || !ids.length) return;
         setSettings((current) => {
           const agentIds = [...new Set(ids)].sort(
             (left, right) => left - right
@@ -959,7 +951,8 @@ export default function App() {
       .catch(() => {
         // Older backend deployments do not expose the agent directory yet.
       });
-  }, []);
+    return () => { cancelled = true; };
+  }, [authenticated]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -1456,8 +1449,6 @@ export default function App() {
       <SafeAreaProvider>
         <LoginScreen
           compact={compact}
-          ready={appReady}
-          entering={enterRequested && !appReady}
           revealForm={launchDelayElapsed}
           frontendVersion={packageMetadata.version}
           backendVersion={backendVersion}
@@ -1466,8 +1457,7 @@ export default function App() {
             setMenuOpen(false);
             setActiveTab("studies");
             applyAuth(next);
-            if (appReady) setAuthenticated(true);
-            else setEnterRequested(true);
+            setAuthenticated(true);
           }}
         />
       </SafeAreaProvider>
@@ -1725,16 +1715,12 @@ export default function App() {
 
 function LoginScreen({
   compact,
-  ready,
-  entering,
   revealForm,
   frontendVersion,
   backendVersion,
   onEnter
 }: {
   compact: boolean;
-  ready: boolean;
-  entering: boolean;
   revealForm: boolean;
   frontendVersion: string;
   backendVersion: string;
@@ -1884,8 +1870,11 @@ function LoginScreen({
                 (!login.trim() || !password || submitting) && styles.loginButtonDisabled
               ]}
             >
-              {entering || submitting ? (
-                <ActivityIndicator size="small" color="#04111A" />
+              {submitting ? (
+                <>
+                  <ActivityIndicator size="small" color="#04111A" />
+                  <Text style={styles.loginButtonText}>Входим…</Text>
+                </>
               ) : (
                 <>
                   <Text style={styles.loginButtonText}>Войти</Text>
@@ -1893,14 +1882,6 @@ function LoginScreen({
                 </>
               )}
             </Pressable>
-            {!ready ? (
-              <View style={styles.loginPreparing}>
-                <View style={styles.loginPreparingDot} />
-                <Text style={styles.loginPreparingText}>
-                  Подготавливаем рабочее пространство
-                </Text>
-              </View>
-            ) : null}
             {loginError ? <Text style={styles.loginError}>{loginError}</Text> : null}
             <Text nativeID="viewer-login-version" style={styles.loginVersions}>
               Frontend {frontendVersion} · Backend {backendVersion}
@@ -6113,24 +6094,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
     fontWeight: "800"
-  },
-  loginPreparing: {
-    minHeight: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7
-  },
-  loginPreparingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: darkColors.primary
-  },
-  loginPreparingText: {
-    color: darkColors.textDim,
-    fontSize: 10,
-    lineHeight: 14
   },
   loginTemporary: {
     color: darkColors.textDim,
