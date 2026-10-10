@@ -1,5 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import { PaymentBadge, PaymentRulesSettings, usePaymentRules, planPaymentMode } from "./src/PaymentUI";
+import { frequentOperationTypes, frequentStudyCategories, statisticCount, totalsOnlySurgeon, formatPlanPatientInput } from "./src/statisticsDisplay";
 import { normalizeBirthDate, displayBirthDate, planPatientAge, formatBirthDateInput } from "./src/birthDate";
 import { belongsToStudyWeek } from "./src/studyWeek";
 import { agentLogGroups } from "./src/agentLogDisplay";
@@ -72,7 +73,6 @@ import {
   reportOperationCategory
 } from "./src/reportOperations";
 import {
-  studyCategories,
   studyCategoriesFor,
   type StudyCategory
 } from "./src/studyOperationCategories";
@@ -1696,6 +1696,7 @@ export default function App() {
           onLogout={signOut}
         />
         <StudyFilterSheet
+          statistics={statistics}
           visible={filterOpen}
           selected={category}
           sort={studySort}
@@ -3929,14 +3930,11 @@ function StatisticsScreen({
 }) {
 	const [mobileColumn, setMobileColumn] = useState("total");
 	const [mobileColumnOpen, setMobileColumnOpen] = useState(false);
-	const visibleSurgeons = useMemo(
-		() =>
-			(statistics?.surgeons ?? []).filter((row) => {
-				const surgeon = row.surgeon.trim().toLocaleLowerCase("ru");
-				return surgeon !== "не указано" && !surgeon.startsWith("гергерт");
-			}),
-		[statistics]
-	);
+  const [extraColumn, setExtraColumn] = useState("");
+  const [extraColumnOpen, setExtraColumnOpen] = useState(false);
+  const visibleSurgeons = (statistics?.surgeons ?? []).filter(row => !compact || mobileColumn === "total" || !totalsOnlySurgeon(row.surgeon));
+  const frequentTypes = frequentOperationTypes(statistics);
+  const desktopTypes = [...frequentTypes, ...(statistics?.operation_types.filter(type => type.id === extraColumn && !frequentTypes.some(item => item.id === type.id)) ?? [])];
 	const selectedMobileType = statistics?.operation_types.find(
 		(type) => type.id === mobileColumn
 	);
@@ -3944,8 +3942,8 @@ function StatisticsScreen({
 		mobileColumn === "total" ? "Все операции" : selectedMobileType?.label ?? "Все операции";
 	const mobileColumnTotal =
 		mobileColumn === "total"
-			? visibleSurgeons.reduce((sum, row) => sum + row.total, 0)
-			: visibleSurgeons.reduce((sum, row) => sum + (row.counts[mobileColumn] ?? 0), 0);
+      ? statisticCount(visibleSurgeons, "total")
+      : statisticCount(visibleSurgeons, mobileColumn);
 
 	if (compact) {
 		return (
@@ -3979,7 +3977,7 @@ function StatisticsScreen({
 								<View style={styles.mobileStatisticsChoices}>
 									{[
 										{ id: "total", label: "Все операции" },
-										...statistics.operation_types
+										...frequentTypes
 									].map((type) => (
 										<Pressable
 											key={type.id}
@@ -4050,11 +4048,19 @@ function StatisticsScreen({
               </View>
               <Text style={styles.compactScreenMeta}>Только операции текущего года</Text>
             </View>
+            <View style={[styles.filterChoiceGrid, { padding: 12 }]}>
+              <Text style={styles.compactScreenMeta}>Дополнительный столбец</Text>
+              <Chip label={statistics.operation_types.find(type => type.id === extraColumn)?.label ?? "Выбрать"} selected={extraColumnOpen} onPress={() => setExtraColumnOpen(value => !value)} />
+              {extraColumnOpen ? <View style={styles.filterChoiceGrid}>
+                <Chip label="Нет" selected={!extraColumn} onPress={() => { setExtraColumn(""); setExtraColumnOpen(false); }} />
+                {statistics.operation_types.map(type => <Chip key={type.id} label={type.label} selected={extraColumn === type.id} onPress={() => { setExtraColumn(type.id); setExtraColumnOpen(false); }} />)}
+              </View> : null}
+            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator style={styles.statisticsHorizontalScroll}>
               <View>
                 <View style={styles.statisticsTableHeader}>
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsSurgeonCell]}>Хирург</Text>
-                  {statistics.operation_types.map((type) => (
+                  {desktopTypes.map((type) => (
                     <Text key={type.id} numberOfLines={1} style={styles.statisticsHeaderCell}>{type.label}</Text>
                   ))}
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsTotalHeader]}>Всего</Text>
@@ -4063,8 +4069,8 @@ function StatisticsScreen({
                   {visibleSurgeons.map((row, index) => (
                     <View key={row.surgeon} style={[styles.statisticsTableRow, index % 2 === 1 && styles.statisticsTableRowAlt]}>
                       <Text numberOfLines={1} style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>{row.surgeon}</Text>
-                      {statistics.operation_types.map((type) => (
-                        <Text key={type.id} style={styles.statisticsCell}>{row.counts[type.id] ?? 0}</Text>
+                      {desktopTypes.map((type) => (
+                        <Text key={type.id} style={styles.statisticsCell}>{totalsOnlySurgeon(row.surgeon) ? "—" : row.counts[type.id] ?? 0}</Text>
                       ))}
                       <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>{row.total}</Text>
                     </View>
@@ -4072,9 +4078,9 @@ function StatisticsScreen({
                 </View>
                 <View style={[styles.statisticsTableRow, styles.statisticsSummaryRow]}>
                   <Text style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>Всего</Text>
-                  {statistics.operation_types.map((type) => (
+                  {desktopTypes.map((type) => (
                     <Text key={type.id} style={styles.statisticsCell}>
-                      {visibleSurgeons.reduce((sum, row) => sum + (row.counts[type.id] ?? 0), 0)}
+                      {statisticCount(visibleSurgeons, type.id)}
                     </Text>
                   ))}
                   <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>
@@ -4183,7 +4189,7 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
   }, [agentId, date]);
 
   const content = entries.map((entry) => entry.content.trim()).filter(Boolean).join("\n");
-  const logGroups = useMemo(() => agentLogGroups(content, importantOnly), [content, importantOnly]);
+  const logGroups = useMemo(() => agentLogGroups(content, compact || importantOnly), [content, compact, importantOnly]);
   const copyLogs = async () => {
     if (!content || Platform.OS !== "web" || !navigator.clipboard) return;
     await navigator.clipboard.writeText(logGroups.map(group => group.text).join("\n"));
@@ -4229,11 +4235,11 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
           </View>
           </ScrollView>
         </View>
-        <View style={styles.logsActions}>
+        {!compact ? <View style={styles.logsActions}>
           <Chip label="Все логи" selected={!importantOnly} onPress={() => setImportantOnly(false)} />
           <Chip label="warning" selected={importantOnly} onPress={() => setImportantOnly(true)} />
           <IconButton label={copied ? "Скопировано" : "Копировать все"} icon={copied ? "checkmark" : "copy-outline"} onPress={() => void copyLogs()} />
-        </View>
+        </View> : null}
       </View>
       <View style={styles.logsDocument}>
         {loading ? (
@@ -4247,7 +4253,7 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
         ) : (
           <EmptyState
             icon="document-text-outline"
-            title={importantOnly ? "Ошибок и предупреждений за этот день нет" : "Записей за этот день нет"}
+            title={compact || importantOnly ? "Ошибок и предупреждений за этот день нет" : "Записей за этот день нет"}
             description="Завершённые часовые фрагменты появятся после очередной отправки агентом."
           />
         )}
@@ -4473,7 +4479,7 @@ function DutyScheduleScreen({
   useEffect(() => {
     if (!compact || !currentDay) return;
     const timer = setTimeout(() => {
-      timelineRef.current?.scrollTo({ x: Math.max(0, (currentDay - 1) * 42 - 42), animated: false });
+      timelineRef.current?.scrollTo({ x: Math.max(0, (currentDay - 1) * 42), animated: false });
     }, 80);
     return () => clearTimeout(timer);
   }, [compact, currentDay, current?.month]);
@@ -5162,8 +5168,8 @@ function PlanScreen({
                 {compact ? <Text style={styles.planFieldLabel}>Пациент</Text> : null}
                 <TextInput
                   value={entry.patient}
-                  onChangeText={(patient) => updateEntry(index, { patient })}
-                  placeholder="Петров ИВ"
+                  onChangeText={(patient) => updateEntry(index, { patient: formatPlanPatientInput(patient, entry.patient) })}
+                  placeholder="Петров И.В."
                   placeholderTextColor={colors.textDim}
                   autoCapitalize="words"
                   style={[styles.planPatientInput, !compact && styles.planDesktopControl]}
@@ -5287,7 +5293,7 @@ function PlanScreen({
                   </View>
                 ) : null}
               </View>
-              <View style={[styles.planEditorField, !compact && styles.planEditorVmpField]}>
+              {!compact || (paymentRules.data && planPaymentMode(entry.operation, paymentRules.data.rules)) ? <View style={[styles.planEditorField, !compact && styles.planEditorVmpField]}>
                 {compact ? <Text style={styles.planFieldLabel}>ВМП</Text> : null}
                 <Pressable
                   accessibilityRole="checkbox"
@@ -5299,7 +5305,7 @@ function PlanScreen({
                 >
                   <Icon name={paymentRules.data && (planPaymentMode(entry.operation, paymentRules.data.rules) === "auto" || (planPaymentMode(entry.operation, paymentRules.data.rules) === "review" && entry.vmp)) ? "checkbox" : "square-outline"} size={22} color={colors.primary} />
                 </Pressable>
-              </View>
+              </View> : null}
               <View style={[styles.planEditorField, !compact && styles.planEditorAdditionsField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Дополнения</Text> : null}
                 <TextInput
@@ -5549,6 +5555,7 @@ function MobileMenu({
 }
 
 function StudyFilterSheet({
+  statistics,
   month, onMonth, showMonth,
   visible,
   selected,
@@ -5560,6 +5567,7 @@ function StudyFilterSheet({
   onSort,
   onSurgeon
 }: {
+  statistics: OperationStatistics | null;
   month: number | null;
   onMonth: (value: number | null) => void;
   showMonth: boolean;
@@ -5574,7 +5582,7 @@ function StudyFilterSheet({
   onSurgeon: (value: string | null) => void;
 }) {
   return (
-    <Sheet visible={visible} title="Фильтр и порядок" onClose={onClose}>
+    <Sheet visible={visible} title="Фильтр и порядок" onClose={onClose} fullScreen>
       <ScrollView
         style={styles.filterSheetScroll}
         contentContainerStyle={styles.filterSheetContent}
@@ -5616,7 +5624,7 @@ function StudyFilterSheet({
         <View style={styles.filterSectionCard}>
           <Text style={styles.filterSectionTitle}>ТИП ОПЕРАЦИИ</Text>
           <View style={styles.filterChoiceGrid}>
-            {studyCategories.map((value) => (
+            {frequentStudyCategories(statistics).map((value) => (
               <Chip
                 key={value}
                 label={value === "all" ? "Все типы" : value}
@@ -5633,8 +5641,8 @@ function StudyFilterSheet({
             {["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"].map((label, index) => <Chip key={label} label={label} selected={month === index + 1} onPress={() => onMonth(month === index + 1 ? null : index + 1)} />)}
           </View>
         </View> : null}
-        <Button label="Готово" onPress={onClose} />
       </ScrollView>
+      <View style={{ padding: 16, paddingBottom: 32, flexShrink: 0 }}><Button label="Готово" onPress={onClose} /></View>
     </Sheet>
   );
 }
@@ -8474,7 +8482,7 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingTop: 18
   },
-  filterSheetScroll: { minHeight: 0 },
+  filterSheetScroll: { minHeight: 0, flex: 1 },
   filterSheetContent: { padding: 14, paddingBottom: 18, gap: 10 },
   filterSectionCard: {
     padding: 12,
