@@ -3932,7 +3932,7 @@ function StatisticsScreen({
 	const [mobileColumn, setMobileColumn] = useState("total");
 	const [mobileColumnOpen, setMobileColumnOpen] = useState(false);
   const visibleSurgeons = (statistics?.surgeons ?? []).filter(row => !compact || mobileColumn === "total" || !totalsOnlySurgeon(row.surgeon));
-  const frequentTypes = frequentOperationTypes(statistics);
+  const frequentTypes = frequentOperationTypes(statistics, compact);
 	const selectedMobileType = statistics?.operation_types.find(
 		(type) => type.id === mobileColumn
 	);
@@ -4060,7 +4060,7 @@ function StatisticsScreen({
                     <View key={row.surgeon} style={[styles.statisticsTableRow, index % 2 === 1 && styles.statisticsTableRowAlt]}>
                       <Text numberOfLines={1} style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>{row.surgeon}</Text>
                       {frequentTypes.map((type) => (
-                        <Text key={type.id} style={styles.statisticsCell}>{totalsOnlySurgeon(row.surgeon) ? "—" : row.counts[type.id] ?? 0}</Text>
+                        <Text key={type.id} style={styles.statisticsCell}>{row.counts[type.id] ?? 0}</Text>
                       ))}
                       <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>{row.total}</Text>
                     </View>

@@ -6,11 +6,12 @@ export function totalsOnlySurgeon(name: string) {
 }
 
 export function statisticCount(rows: SurgeonStatistics[], id: string) {
-  return rows.reduce((sum, row) => sum + (id === "total" ? row.total : totalsOnlySurgeon(row.surgeon) ? 0 : row.counts[id] ?? 0), 0);
+  return rows.reduce((sum, row) => sum + (id === "total" ? row.total : row.counts[id] ?? 0), 0);
 }
 
-export function frequentOperationTypes(statistics: OperationStatistics | null) {
-  return (statistics?.operation_types ?? []).filter(type => statisticCount(statistics?.surgeons ?? [], type.id) > 20);
+export function frequentOperationTypes(statistics: OperationStatistics | null, compact = false) {
+  const rows = (statistics?.surgeons ?? []).filter(row => !compact || !totalsOnlySurgeon(row.surgeon));
+  return (statistics?.operation_types ?? []).filter(type => statisticCount(rows, type.id) > 20);
 }
 
 export function frequentStudyCategories(statistics: OperationStatistics | null) {

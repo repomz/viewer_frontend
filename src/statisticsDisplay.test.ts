@@ -1,4 +1,4 @@
-import { formatPlanPatientInput, frequentOperationTypes, frequentStudyCategories, statisticCount } from "./statisticsDisplay";
+import { formatPlanPatientInput, frequentOperationTypes, frequentStudyCategories, statisticCount, totalsOnlySurgeon } from "./statisticsDisplay";
 import type { OperationStatistics, SurgeonStatistics } from "./types";
 
 const rows = [
@@ -7,11 +7,13 @@ const rows = [
   { surgeon: "Гергерт А.А.", total: 9, vmp: 0, counts: { kag: 9 } },
 ] as SurgeonStatistics[];
 
-test("all-operation totals include every surgeon, type totals exclude totals-only surgeons", () => {
+test("desktop includes every surgeon; only mobile individual types exclude totals-only surgeons", () => {
   expect(statisticCount(rows, "total")).toBe(42);
-  expect(statisticCount(rows, "kag")).toBe(11);
+  expect(statisticCount(rows, "kag")).toBe(28);
+  expect(statisticCount(rows.filter(row => !totalsOnlySurgeon(row.surgeon)), "kag")).toBe(11);
   const statistics = { surgeons: rows, operation_types: [{ id: "kag", label: "КАГ" }, { id: "tsag", label: "ЦАГ" }] } as OperationStatistics;
-  expect(frequentOperationTypes(statistics)).toEqual([]);
+  expect(frequentOperationTypes(statistics).map(type => type.id)).toEqual(["kag"]);
+  expect(frequentOperationTypes(statistics, true)).toEqual([]);
   expect(frequentStudyCategories(statistics)).toEqual(["all", "КАГ"]);
 });
 
