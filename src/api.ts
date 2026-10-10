@@ -197,8 +197,15 @@ export async function getBackendVersion(): Promise<{
 }
 
 export async function getStudies(): Promise<Study[]> {
-  const response = await request<Study[]>("/studies?page=1&page_size=100");
-  return Array.isArray(response) ? response : [];
+  const studies = new Map<string, Study>();
+  for (let page = 1; page <= 100; page += 1) {
+    const response = await request<Study[]>(`/studies?page=${page}&page_size=100`);
+    if (!Array.isArray(response)) throw new ApiError("Некорректный список протоколов");
+    for (const study of response) studies.set(study.id, study);
+    if (response.length < 100) return [...studies.values()];
+  }
+  // Do not replace the cache with a silently truncated clinical list.
+  throw new ApiError("Не удалось загрузить полный список протоколов");
 }
 
 export async function suggestProtocolStudies(

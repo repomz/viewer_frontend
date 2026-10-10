@@ -74,6 +74,23 @@ describe("Viewer API client", () => {
     );
   });
 
+  it("loads weekly protocols beyond the first hundred", async () => {
+    const first = Array.from({ length: 100 }, (_, i) => ({ id: `study-${i}` }));
+    const last = { id: "study-101", patient: "Пациент со второй страницы" };
+    const mock = jest.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(first), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([last]), { status: 200 }));
+    await expect(getStudies()).resolves.toEqual([...first, last]);
+    expect(mock).toHaveBeenLastCalledWith("/api/studies?page=2&page_size=100", expect.anything());
+  });
+
+  it("does not return an incomplete list when a later page fails", async () => {
+    jest.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: `${i}` }))), { status: 200 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 500 }));
+    await expect(getStudies()).rejects.toThrow();
+  });
+
   it("accepts the plain-text health response", async () => {
     jest
       .spyOn(globalThis, "fetch")

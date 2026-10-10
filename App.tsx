@@ -4183,7 +4183,7 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
   }, [agentId, date]);
 
   const content = entries.map((entry) => entry.content.trim()).filter(Boolean).join("\n");
-  const logGroups = useMemo(() => agentLogGroups(content, compact || importantOnly), [content, importantOnly, compact]);
+  const logGroups = useMemo(() => agentLogGroups(content, importantOnly), [content, importantOnly]);
   const copyLogs = async () => {
     if (!content || Platform.OS !== "web" || !navigator.clipboard) return;
     await navigator.clipboard.writeText(logGroups.map(group => group.text).join("\n"));
@@ -4193,7 +4193,6 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
   return (
     <View style={styles.logsScreen}>
       <View style={[styles.logsToolbar, compact && styles.logsToolbarCompact]}>
-        {!compact ? <Chip label={importantOnly ? "Ошибки и предупреждения" : "Все уровни"} selected={importantOnly} onPress={() => setImportantOnly(!importantOnly)} /> : null}
         <View style={styles.logsToolbarGroup}>
           <Text style={styles.logsToolbarLabel}>АГЕНТ</Text>
           <View style={[styles.logsChoiceRow, compact && styles.logsChoiceRowCompact]}>
@@ -4230,26 +4229,11 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
           </View>
           </ScrollView>
         </View>
-        {compact ? (
-          <View style={styles.logsCompactCopyRow}>
-            <Button
-              label={copied ? "Скопировано" : "Копировать всё"}
-              icon="copy-outline"
-              variant="secondary"
-              compact
-              disabled={!content}
-              onPress={() => void copyLogs()}
-            />
-          </View>
-        ) : (
-          <Button
-            label={copied ? "Скопировано" : "Копировать всё"}
-            icon="copy-outline"
-            variant="secondary"
-            disabled={!content}
-            onPress={() => void copyLogs()}
-          />
-        )}
+        <View style={styles.logsActions}>
+          <Chip label="Все логи" selected={!importantOnly} onPress={() => setImportantOnly(false)} />
+          <Chip label="warning" selected={importantOnly} onPress={() => setImportantOnly(true)} />
+          <IconButton label={copied ? "Скопировано" : "Копировать все"} icon={copied ? "checkmark" : "copy-outline"} onPress={() => void copyLogs()} />
+        </View>
       </View>
       <View style={styles.logsDocument}>
         {loading ? (
@@ -4263,7 +4247,7 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
         ) : (
           <EmptyState
             icon="document-text-outline"
-            title={compact || importantOnly ? "Ошибок и предупреждений за этот день нет" : "Записей за этот день нет"}
+            title={importantOnly ? "Ошибок и предупреждений за этот день нет" : "Записей за этот день нет"}
             description="Завершённые часовые фрагменты появятся после очередной отправки агентом."
           />
         )}
@@ -5148,6 +5132,7 @@ function PlanScreen({
               <Text style={[styles.planFieldLabel, styles.planEditorBirthField]}>Дата рождения</Text>
               <Text style={[styles.planFieldLabel, styles.planEditorDepartmentField]}>Отделение</Text>
               <Text style={[styles.planFieldLabel, styles.planEditorOperationField]}>Операция</Text>
+              <Text style={[styles.planFieldLabel, styles.planEditorVmpField]}>ВМП</Text>
               <Text style={[styles.planFieldLabel, styles.planEditorAdditionsField]}>Дополнения</Text>
               <Text style={[styles.planFieldLabel, styles.planEditorHistoryField]}>Предыдущая</Text>
             </View>
@@ -5184,7 +5169,7 @@ function PlanScreen({
                   style={[styles.planPatientInput, !compact && styles.planDesktopControl]}
                 />
                 {compact ? (
-                  <Text style={styles.planInputHint}>Фамилия, два инициала и дата рождения — для поиска истории.</Text>
+                  <Text style={styles.planInputHint}>Фамилия и два инициала — история за год. С датой рождения — за все годы.</Text>
                 ) : null}
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorBirthField]}>
@@ -5232,15 +5217,6 @@ function PlanScreen({
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorOperationField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Операция</Text> : null}
-                {paymentRules.data && planPaymentMode(entry.operation,paymentRules.data.rules) ? <Pressable
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked:planPaymentMode(entry.operation,paymentRules.data.rules)==="auto" || !!entry.vmp, disabled:planPaymentMode(entry.operation,paymentRules.data.rules)==="auto" }}
-                  disabled={planPaymentMode(entry.operation,paymentRules.data.rules)==="auto"}
-                  onPress={()=>updateEntry(index,{vmp:!entry.vmp})}
-                  style={{padding:8,borderRadius:8,backgroundColor:colors.primarySoft,marginBottom:6,flexDirection:"row",gap:6,alignItems:"center"}}>
-                  <Icon name={planPaymentMode(entry.operation,paymentRules.data.rules)==="auto" || entry.vmp ? "checkbox":"square-outline"} size={18} color={colors.primary} />
-                  <Text style={{color:colors.primary,fontSize:12,fontWeight:"600"}}>ВМП · {planPaymentMode(entry.operation,paymentRules.data.rules)==="auto" ? "автоматически":"отметить"}</Text>
-                </Pressable>:null}
                 <View style={styles.planOperationControlRow}>
                   <Pressable
                     accessibilityRole="button"
@@ -5310,6 +5286,19 @@ function PlanScreen({
                     ))}
                   </View>
                 ) : null}
+              </View>
+              <View style={[styles.planEditorField, !compact && styles.planEditorVmpField]}>
+                {compact ? <Text style={styles.planFieldLabel}>ВМП</Text> : null}
+                <Pressable
+                  accessibilityRole="checkbox"
+                  accessibilityLabel={`ВМП пациента ${index + 1}`}
+                  accessibilityState={{ checked: !!paymentRules.data && (planPaymentMode(entry.operation, paymentRules.data.rules) === "auto" || (planPaymentMode(entry.operation, paymentRules.data.rules) === "review" && !!entry.vmp)), disabled: !paymentRules.data || planPaymentMode(entry.operation, paymentRules.data.rules) !== "review" }}
+                  disabled={!paymentRules.data || planPaymentMode(entry.operation, paymentRules.data.rules) !== "review"}
+                  onPress={() => updateEntry(index, { vmp: !entry.vmp })}
+                  style={[styles.planVmpControl, !paymentRules.data || !planPaymentMode(entry.operation, paymentRules.data.rules) ? { opacity: 0.35 } : { backgroundColor: colors.primarySoft }]}
+                >
+                  <Icon name={paymentRules.data && (planPaymentMode(entry.operation, paymentRules.data.rules) === "auto" || (planPaymentMode(entry.operation, paymentRules.data.rules) === "review" && entry.vmp)) ? "checkbox" : "square-outline"} size={22} color={colors.primary} />
+                </Pressable>
               </View>
               <View style={[styles.planEditorField, !compact && styles.planEditorAdditionsField]}>
                 {compact ? <Text style={styles.planFieldLabel}>Дополнения</Text> : null}
@@ -7660,6 +7649,7 @@ const styles = StyleSheet.create({
   },
   logsToolbar: {
     flexDirection: "row",
+    flexWrap: "wrap",
     alignItems: "flex-end",
     gap: 18,
     paddingVertical: 14
@@ -7671,6 +7661,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8
   },
   logsToolbarGroup: { gap: 7 },
+  logsActions: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6 },
   logsDateGroup: { flex: 1, minWidth: 0 },
   logsDateGroupCompact: { flex: 0 },
   logsDateRail: { width: "100%", flexGrow: 0 },
@@ -8298,6 +8289,8 @@ const styles = StyleSheet.create({
   planEditorBirthField: { width: 110 },
   planEditorDepartmentField: { flex: 0.9 },
   planEditorOperationField: { flex: 1.25 },
+  planEditorVmpField: { width: 48 },
+  planVmpControl: { minHeight: 34, minWidth: 44, alignItems: "center", justifyContent: "center", borderRadius: 8 },
   planEditorAdditionsField: { flex: 1.2 },
   planEditorHistoryField: { flex: 1.2 },
   planEditorHistoryValue: {
