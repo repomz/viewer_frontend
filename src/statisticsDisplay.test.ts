@@ -11,8 +11,18 @@ test("all-operation totals include every surgeon, type totals exclude totals-onl
   expect(statisticCount(rows, "total")).toBe(42);
   expect(statisticCount(rows, "kag")).toBe(11);
   const statistics = { surgeons: rows, operation_types: [{ id: "kag", label: "КАГ" }, { id: "tsag", label: "ЦАГ" }] } as OperationStatistics;
-  expect(frequentOperationTypes(statistics).map(type => type.id)).toEqual(["kag"]);
+  expect(frequentOperationTypes(statistics)).toEqual([]);
   expect(frequentStudyCategories(statistics)).toEqual(["all", "КАГ"]);
+});
+
+test("statistics displays only types with strictly more than twenty operations", () => {
+  const statistics: OperationStatistics = {
+    vmp_operation_types: [], vmp_patients: [], included_study_ids: [], excluded_study_ids: [],
+    surgeons: [{ surgeon: "Идрисов", total: 41, vmp: 0, counts: { kag: 21, tsag: 20 } }],
+    operation_types: [{ id: "kag", label: "КАГ", total: 21 }, { id: "tsag", label: "ЦАГ", total: 20 }],
+  };
+  expect(frequentOperationTypes(statistics).map(type => type.id)).toEqual(["kag"]);
+  expect(statisticCount(statistics.surgeons, "total")).toBe(41);
 });
 
 test("patient initials are formatted while typing and can be deleted", () => {

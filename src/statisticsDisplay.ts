@@ -10,7 +10,7 @@ export function statisticCount(rows: SurgeonStatistics[], id: string) {
 }
 
 export function frequentOperationTypes(statistics: OperationStatistics | null) {
-  return (statistics?.operation_types ?? []).filter(type => statisticCount(statistics?.surgeons ?? [], type.id) > 10);
+  return (statistics?.operation_types ?? []).filter(type => statisticCount(statistics?.surgeons ?? [], type.id) > 20);
 }
 
 export function frequentStudyCategories(statistics: OperationStatistics | null) {

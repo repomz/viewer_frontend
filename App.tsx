@@ -1696,6 +1696,7 @@ export default function App() {
           onLogout={signOut}
         />
         <StudyFilterSheet
+          compact={compact}
           statistics={statistics}
           visible={filterOpen}
           selected={category}
@@ -3930,11 +3931,8 @@ function StatisticsScreen({
 }) {
 	const [mobileColumn, setMobileColumn] = useState("total");
 	const [mobileColumnOpen, setMobileColumnOpen] = useState(false);
-  const [extraColumn, setExtraColumn] = useState("");
-  const [extraColumnOpen, setExtraColumnOpen] = useState(false);
   const visibleSurgeons = (statistics?.surgeons ?? []).filter(row => !compact || mobileColumn === "total" || !totalsOnlySurgeon(row.surgeon));
   const frequentTypes = frequentOperationTypes(statistics);
-  const desktopTypes = [...frequentTypes, ...(statistics?.operation_types.filter(type => type.id === extraColumn && !frequentTypes.some(item => item.id === type.id)) ?? [])];
 	const selectedMobileType = statistics?.operation_types.find(
 		(type) => type.id === mobileColumn
 	);
@@ -4048,19 +4046,11 @@ function StatisticsScreen({
               </View>
               <Text style={styles.compactScreenMeta}>Только операции текущего года</Text>
             </View>
-            <View style={[styles.filterChoiceGrid, { padding: 12 }]}>
-              <Text style={styles.compactScreenMeta}>Дополнительный столбец</Text>
-              <Chip label={statistics.operation_types.find(type => type.id === extraColumn)?.label ?? "Выбрать"} selected={extraColumnOpen} onPress={() => setExtraColumnOpen(value => !value)} />
-              {extraColumnOpen ? <View style={styles.filterChoiceGrid}>
-                <Chip label="Нет" selected={!extraColumn} onPress={() => { setExtraColumn(""); setExtraColumnOpen(false); }} />
-                {statistics.operation_types.map(type => <Chip key={type.id} label={type.label} selected={extraColumn === type.id} onPress={() => { setExtraColumn(type.id); setExtraColumnOpen(false); }} />)}
-              </View> : null}
-            </View>
             <ScrollView horizontal showsHorizontalScrollIndicator style={styles.statisticsHorizontalScroll}>
               <View>
                 <View style={styles.statisticsTableHeader}>
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsSurgeonCell]}>Хирург</Text>
-                  {desktopTypes.map((type) => (
+                  {frequentTypes.map((type) => (
                     <Text key={type.id} numberOfLines={1} style={styles.statisticsHeaderCell}>{type.label}</Text>
                   ))}
                   <Text style={[styles.statisticsHeaderCell, styles.statisticsTotalHeader]}>Всего</Text>
@@ -4069,7 +4059,7 @@ function StatisticsScreen({
                   {visibleSurgeons.map((row, index) => (
                     <View key={row.surgeon} style={[styles.statisticsTableRow, index % 2 === 1 && styles.statisticsTableRowAlt]}>
                       <Text numberOfLines={1} style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>{row.surgeon}</Text>
-                      {desktopTypes.map((type) => (
+                      {frequentTypes.map((type) => (
                         <Text key={type.id} style={styles.statisticsCell}>{totalsOnlySurgeon(row.surgeon) ? "—" : row.counts[type.id] ?? 0}</Text>
                       ))}
                       <Text style={[styles.statisticsCell, styles.statisticsTotalCell]}>{row.total}</Text>
@@ -4078,7 +4068,7 @@ function StatisticsScreen({
                 </View>
                 <View style={[styles.statisticsTableRow, styles.statisticsSummaryRow]}>
                   <Text style={[styles.statisticsCell, styles.statisticsSurgeonCell]}>Всего</Text>
-                  {desktopTypes.map((type) => (
+                  {frequentTypes.map((type) => (
                     <Text key={type.id} style={styles.statisticsCell}>
                       {statisticCount(visibleSurgeons, type.id)}
                     </Text>
@@ -5555,6 +5545,7 @@ function MobileMenu({
 }
 
 function StudyFilterSheet({
+  compact,
   statistics,
   month, onMonth, showMonth,
   visible,
@@ -5567,6 +5558,7 @@ function StudyFilterSheet({
   onSort,
   onSurgeon
 }: {
+  compact: boolean;
   statistics: OperationStatistics | null;
   month: number | null;
   onMonth: (value: number | null) => void;
@@ -5582,9 +5574,9 @@ function StudyFilterSheet({
   onSurgeon: (value: string | null) => void;
 }) {
   return (
-    <Sheet visible={visible} title="Фильтр и порядок" onClose={onClose} fullScreen>
+    <Sheet visible={visible} title="Фильтр и порядок" onClose={onClose} fullScreen={compact}>
       <ScrollView
-        style={styles.filterSheetScroll}
+        style={[styles.filterSheetScroll, compact && { flex: 1 }]}
         contentContainerStyle={styles.filterSheetContent}
         showsVerticalScrollIndicator={false}
       >
@@ -8482,7 +8474,7 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingTop: 18
   },
-  filterSheetScroll: { minHeight: 0, flex: 1 },
+  filterSheetScroll: { minHeight: 0, flexShrink: 1 },
   filterSheetContent: { padding: 14, paddingBottom: 18, gap: 10 },
   filterSectionCard: {
     padding: 12,
