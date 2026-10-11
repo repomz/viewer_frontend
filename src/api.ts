@@ -383,6 +383,12 @@ export async function getDutySchedule(month: string): Promise<DutySchedule> {
   return request<DutySchedule>(`/duty-schedule/${encodeURIComponent(month)}`);
 }
 
+export async function recognizeDutySchedule(month: string, photo: Blob): Promise<DutySchedule> {
+  return request<DutySchedule>(`/duty-schedule/${encodeURIComponent(month)}/recognize`, {
+    method: "POST", body: photo, headers: { "Content-Type": photo.type }
+  }, 260_000);
+}
+
 export async function saveDutySchedule(
   month: string,
   schedule: DutySchedule

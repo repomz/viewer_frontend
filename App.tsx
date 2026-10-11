@@ -1,4 +1,6 @@
 import { StatusBar } from "expo-status-bar";
+import { scheduleRows, dutyDate, dutyNurses, selectSchedulePhoto } from "./src/dutySchedule";
+import { recognizeDutySchedule } from "./src/api";
 import { PaymentBadge, PaymentRulesSettings, usePaymentRules, planPaymentMode } from "./src/PaymentUI";
 import { frequentOperationTypes, frequentStudyCategories, statisticCount, totalsOnlySurgeon, formatPlanPatientInput } from "./src/statisticsDisplay";
 import { normalizeBirthDate, displayBirthDate, planPatientAge, formatBirthDateInput } from "./src/birthDate";
@@ -1595,6 +1597,7 @@ export default function App() {
               {activeTab === "schedule" ? (
                 <DutyScheduleScreen
                   compact={compact}
+                  admin={auth?.user.role === "admin"}
                   schedule={dutySchedule}
                   loading={dutyScheduleLoading}
                   error={dutyScheduleError}
@@ -4401,8 +4404,9 @@ const daysInMonth = (month: string) => {
   return new Date(year!, value!, 0).getDate();
 };
 
-function DutyScheduleScreen({
+export function DutyScheduleScreen({
   compact,
+  admin,
   schedule,
   loading,
   error,
@@ -4410,6 +4414,7 @@ function DutyScheduleScreen({
   onSave
 }: {
   compact: boolean;
+  admin: boolean;
   schedule: DutySchedule | null;
   loading: boolean;
   error: string;
@@ -4420,6 +4425,10 @@ function DutyScheduleScreen({
   const [current, setCurrent] = useState<DutySchedule | null>(schedule);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [recognizing, setRecognizing] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const [clock, setClock] = useState(() => new Date());
+  const [nurseSchedule, setNurseSchedule] = useState<DutySchedule | null>(null);
   const [holidayText, setHolidayText] = useState("");
   const [shiftTool, setShiftTool] = useState("6");
   const timelineRef = useRef<ScrollViewHandle>(null);
@@ -4427,10 +4436,23 @@ function DutyScheduleScreen({
   const today = new Date();
   const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
   const currentDay = selectedMonth === currentMonthKey ? today.getDate() : null;
+  const night = dutyDate(clock);
+  const nurses = dutyNurses(nurseSchedule, night.day);
 
   useEffect(() => {
-    if (monthOffset === 0 && schedule) setCurrent(schedule);
-  }, [monthOffset, schedule]);
+    const timer = setInterval(() => setClock(new Date()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setNurseSchedule(null);
+    void getDutySchedule(night.month).then((value) => { if (!cancelled) setNurseSchedule(value); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [night.month, night.day, schedule]);
+
+  useEffect(() => {
+    if (!editing && monthOffset === 0 && schedule) setCurrent(schedule);
+  }, [monthOffset, schedule, editing]);
 
   useEffect(() => {
     setHolidayText(current?.holidays.join(", ") ?? "");
@@ -4438,14 +4460,14 @@ function DutyScheduleScreen({
 
   useEffect(() => {
     let cancelled = false;
-    if (monthOffset === 0 && schedule?.month === selectedMonth) return;
+    if (editing || (monthOffset === 0 && schedule?.month === selectedMonth)) return;
     void getDutySchedule(selectedMonth).then((value) => {
       if (!cancelled) setCurrent(value);
     }).catch(() => {
       if (!cancelled) setCurrent(null);
     });
     return () => { cancelled = true; };
-  }, [monthOffset, schedule, selectedMonth]);
+  }, [monthOffset, schedule, selectedMonth, editing]);
 
   useEffect(() => {
     if (!compact || !currentDay) return;
@@ -4457,6 +4479,7 @@ function DutyScheduleScreen({
 
   const activeGroup = current?.groups.find((group) => group.id === "surgeons")
     ?? current?.groups[0];
+  const visibleGroups = current?.groups.filter((group) => group.id === "surgeons" || (!compact && group.id === "nurses")) ?? [];
   const days = Array.from({ length: daysInMonth(selectedMonth) }, (_, index) => index + 1);
   const workingDays = days.filter((day) => {
     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
@@ -4469,41 +4492,60 @@ function DutyScheduleScreen({
   const rowTotal = (staff: DutySchedule["groups"][number]["staff"][number], row: "day" | "duty") =>
     days.reduce((sum, day) => sum + (Number(shiftValue(staff, day, row)) || 0), 0);
 
-  const changeShift = (staffID: string, day: number, row: "day" | "duty") => {
-    if (!current || !editing) return;
+  const changeShift = (groupID: string, staffID: string, day: number, row: "day" | "duty") => {
+    if (!current || !editing || !admin) return;
     setCurrent({
       ...current,
       groups: current.groups.map((group) => ({
         ...group,
         staff: group.staff.map((staff) => {
-          if (staff.id !== staffID) return staff;
+          if (staff.id !== staffID || group.id !== groupID) return staff;
           const shifts = { ...staff.shifts };
           const key = shiftKey(day, row);
-          if (shifts[key] === shiftTool) delete shifts[key];
+          if (!shiftTool || (shifts[key] === shiftTool && !staff.review?.[key])) delete shifts[key];
           else shifts[key] = shiftTool;
           delete shifts[String(day)];
-          return { ...staff, shifts };
+          const review = { ...staff.review }; delete review[key];
+          return { ...staff, shifts, review };
         })
       }))
     });
   };
 
   const applyHolidays = () => {
-    if (!current) return;
+    if (!current || !admin) return;
     const holidays = holidayText.split(/[\s,;]+/).map(Number)
       .filter((day) => Number.isInteger(day) && day >= 1 && day <= days.length);
     setCurrent({ ...current, holidays: [...new Set(holidays)].sort((a, b) => a - b) });
   };
 
   const save = async () => {
-    if (!current) return;
+    if (!current || !admin) return;
     setSaving(true);
+    setLocalError("");
     try {
       await onSave(current);
       setEditing(false);
+    } catch (error) {
+      setLocalError(errorMessage(error));
     } finally {
       setSaving(false);
     }
+  };
+
+  const upload = async () => {
+    if (!admin || recognizing || Platform.OS !== "web") return;
+    setLocalError("");
+    try {
+      const photo = await selectSchedulePhoto();
+      if (!photo) return;
+      setRecognizing(true);
+      const result = await recognizeDutySchedule(selectedMonth, photo);
+      const next = { ...result, holidays: current?.holidays ?? [] };
+      await onSave(next);
+      setCurrent(next);
+    } catch (error) { setLocalError(errorMessage(error)); }
+    finally { setRecognizing(false); }
   };
 
   const printSchedule = () => {
@@ -4511,11 +4553,11 @@ function DutyScheduleScreen({
     const printWindow = window.open("", "_blank", "width=1200,height=820");
     if (!printWindow) return;
     const header = days.map((day) => `<th>${day}</th>`).join("");
-    const rows = activeGroup.staff.flatMap((staff) => (staff.role === "duty_only" ? ["duty"] as const : ["day", "duty"] as const).map((row, index) => {
-      const cells = days.map((day) => `<td>${escapePrintHTML(shiftValue(staff, day, row))}</td>`).join("");
-      return `<tr${index === 1 || staff.role === "duty_only" ? ' class="staff-end"' : ""}>${index === 0 ? `<td rowspan="${staff.role === "duty_only" ? 1 : 2}" class="staff">${escapePrintHTML(staff.name.split(" ")[0] ?? staff.name)}</td>` : ""}${cells}</tr>`;
-    })).join("");
-    printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>График</title><style>@page{size:A4 landscape;margin:7mm}body{font-family:Arial,sans-serif;color:#18313f}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 10px;color:#607482}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #9eabb3;text-align:center;padding:3px;font-size:8px;height:18px}th:first-child{width:108px}.staff{font-weight:700;text-align:left;padding-left:6px}.staff-end td{border-bottom-width:2px;border-bottom-color:#6f9db2}</style></head><body><h1>График хирургов</h1><p>${escapePrintHTML(monthTitle(selectedMonth))}</p><table><thead><tr><th>Хирург</th>${header}</tr></thead><tbody>${rows}</tbody></table></body></html>`);
+    const rows = visibleGroups.map((group) => `<tr><th colspan="${days.length + 1}">${escapePrintHTML(group.label)}</th></tr>` + group.staff.flatMap((staff) => scheduleRows(staff).map((row, index) => {
+      const cells = days.map((day) => `<td${staff.review?.[shiftKey(day, row)] ? ' style="background:#fee2e2"' : ""}>${escapePrintHTML(shiftValue(staff, day, row))}</td>`).join("");
+      return `<tr${index === scheduleRows(staff).length - 1 ? ' class="staff-end"' : ""}>${index === 0 ? `<td rowspan="${scheduleRows(staff).length}" class="staff">${escapePrintHTML(staff.name.split(" ")[0] ?? staff.name)}</td>` : ""}${cells}</tr>`;
+    })).join("")).join("");
+    printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>График</title><style>@page{size:A4 landscape;margin:7mm}body{font-family:Arial,sans-serif;color:#18313f}h1{font-size:18px;margin:0 0 4px}p{margin:0 0 10px;color:#607482}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{border:1px solid #9eabb3;text-align:center;padding:3px;font-size:8px;height:18px}thead th:first-child{width:108px}.staff{font-weight:700;text-align:left;padding-left:6px}.staff-end td{border-bottom-width:2px;border-bottom-color:#6f9db2}</style></head><body><h1>График смен</h1><p>${escapePrintHTML(monthTitle(selectedMonth))}</p><table><thead><tr><th>Сотрудник</th>${header}</tr></thead><tbody>${rows}</tbody></table></body></html>`);
     printWindow.document.close();
     printWindow.addEventListener("load", () => printWindow.print(), { once: true });
   };
@@ -4529,20 +4571,23 @@ function DutyScheduleScreen({
             <Text style={styles.compactScreenMeta}>{monthTitle(selectedMonth)}</Text>
           </View>
           <View style={styles.scheduleMonthButtons}>
-            <Button label="Текущий" compact variant={monthOffset === 0 ? "primary" : "ghost"} onPress={() => { setMonthOffset(0); setEditing(false); }} />
-            <Button label="Следующий" compact variant={monthOffset === 1 ? "primary" : "ghost"} onPress={() => { setMonthOffset(1); setEditing(false); }} />
+            <Button label="Текущий" compact disabled={recognizing || editing} variant={monthOffset === 0 ? "primary" : "ghost"} onPress={() => { setMonthOffset(0); setEditing(false); }} />
+            <Button label="Следующий" compact disabled={recognizing || editing} variant={monthOffset === 1 ? "primary" : "ghost"} onPress={() => { setMonthOffset(1); setEditing(false); }} />
           </View>
         </View>
         {!compact ? <View style={styles.scheduleToolbarActions}>
-          {!editing ? <Button label="Заполнить график" compact icon="create-outline" onPress={() => setEditing(true)} /> : null}
+          {admin && !editing ? <Button label="Внести изменения" compact icon="create-outline" onPress={() => setEditing(true)} /> : null}
           {!compact ? <Button label="Распечатать" compact icon="print-outline" variant="ghost" onPress={printSchedule} /> : null}
         </View> : null}
       </View>
+      {compact && admin ? <Button label="Загрузить график" icon="image-outline" loading={recognizing} disabled={recognizing || editing} onPress={() => void upload()} /> : null}
+      {recognizing ? <Text style={styles.compactScreenMeta}>Читаем фотографию и сверяем ячейки. Это может занять несколько минут…</Text> : null}
+      {localError ? <Text accessibilityRole="alert" style={{ color: "#b42336" }}>{localError}</Text> : null}
       {error && monthOffset === 0 ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !current ? <LoadingState label="Открываем график…" /> : null}
       {current ? (
         <ScrollView style={styles.schedulePage} contentContainerStyle={styles.schedulePageContent}>
-          {editing && !compact ? (
+          {editing && admin ? (
             <View style={styles.scheduleEditorPanel}>
               <View style={styles.scheduleEditorTopRow}>
                 <View style={styles.scheduleHolidayTools}>
@@ -4554,17 +4599,19 @@ function DutyScheduleScreen({
                     <Text style={styles.scheduleNormLabel}>Норма месяца</Text>
                     <Text style={styles.scheduleNorm}>{monthlyNorm} ч</Text>
                   </View>
-                  <Button label="Внести изменения" icon="checkmark" loading={saving} onPress={() => void save()} />
+                  <Button label="Сохранить график" icon="checkmark" loading={saving} onPress={() => void save()} />
+                  <Button label="Отмена" variant="ghost" disabled={saving} onPress={() => { setEditing(false); }} />
                 </View>
               </View>
               <View style={styles.scheduleShiftTools}>
                 <Text style={styles.scheduleToolsTitle}>Значение для ячейки</Text>
                 <View style={styles.scheduleToolChips}>
-                  {["6", "18", "24", "О", "Б"].map((value) => <Chip key={value} label={value} selected={shiftTool === value} onPress={() => setShiftTool(value)} />)}
+                  {["6", "8", "16", "18", "24", "О", "Б", ""].map((value) => <Chip key={value} label={value || "Очистить"} selected={shiftTool === value} onPress={() => setShiftTool(value)} />)}
                 </View>
                 <View style={styles.scheduleLegend}>
                   <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>6</Text> — дневные часы</Text>
                   <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>18</Text> — ночное дежурство</Text>
+                  <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>16</Text> — ночное дежурство медсестры</Text>
                   <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>24</Text> — суточное дежурство</Text>
                   <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>О</Text> — отпуск</Text>
                   <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>Б</Text> — больничный</Text>
@@ -4572,18 +4619,21 @@ function DutyScheduleScreen({
               </View>
             </View>
           ) : null}
+          {current.groups.some((group) => group.staff.some((staff) => Object.values(staff.review ?? {}).some(Boolean))) ? <Text style={{ color: "#b42336" }}>Красные ячейки требуют проверки{compact ? " в web-версии" : " — выберите значение и нажмите на ячейку"}.</Text> : null}
+          {visibleGroups.map((activeGroup) => <View key={activeGroup.id} style={{ gap: 8 }}>
+          {!compact ? <Text style={styles.scheduleStaffName}>{activeGroup.label}</Text> : null}
           <View style={styles.scheduleGridShell}>
             <View style={[styles.scheduleNamesColumn, compact && styles.scheduleNamesColumnCompact]}>
               <View testID="schedule-name-header" style={[styles.scheduleCell, styles.scheduleNameHeader]}>
-                <Text style={styles.scheduleNameHeaderText}>Хирург</Text>
+                <Text style={styles.scheduleNameHeaderText}>{activeGroup.id === "surgeons" ? "Хирург" : "Медсестра"}</Text>
               </View>
               {activeGroup?.staff.map((staff) => (
-                <View key={staff.id} testID={`schedule-name-${staff.id}`} style={[styles.scheduleStaffBlock,staff.role === "duty_only" && { height:42,minHeight:42,maxHeight:42 }]}>
+                <View key={staff.id} testID={`schedule-name-${staff.id}`} style={[styles.scheduleStaffBlock,scheduleRows(staff).length === 1 && { height:42,minHeight:42,maxHeight:42 }]}>
                   <Text numberOfLines={2} style={styles.scheduleStaffName}>{staff.name.split(" ")[0]}</Text>
                 </View>
               ))}
             </View>
-            <ScrollView ref={timelineRef} horizontal showsHorizontalScrollIndicator style={styles.scheduleTimelineScroll} contentContainerStyle={styles.scheduleTimelineContent}>
+            <ScrollView ref={activeGroup.id === "surgeons" ? timelineRef : undefined} horizontal showsHorizontalScrollIndicator style={styles.scheduleTimelineScroll} contentContainerStyle={styles.scheduleTimelineContent}>
               <View style={styles.scheduleTimelineGrid}>
                 <View testID="schedule-days-header" style={styles.scheduleGridRow}>
                 {days.map((day) => {
@@ -4594,13 +4644,13 @@ function DutyScheduleScreen({
                 })}
                 {editing && !compact ? <Text style={[styles.scheduleCell, styles.scheduleTotalHeader]}>Σ</Text> : null}
               </View>
-              {activeGroup?.staff.length ? activeGroup.staff.flatMap((staff) => (staff.role === "duty_only" ? ["duty"] as const : ["day", "duty"] as const).map((row, rowIndex) => {
+              {activeGroup?.staff.length ? activeGroup.staff.flatMap((staff) => scheduleRows(staff).map((row, rowIndex) => {
                 const total = rowTotal(staff, row);
                 return <View key={`${staff.id}-${row}`} testID={`schedule-row-${staff.id}-${row}`} style={styles.scheduleGridRow}>
                   {days.map((day) => {
                     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
                     const marked = date.getDay() === 0 || date.getDay() === 6 || current.holidays.includes(day);
-                    return <Pressable key={day} onPress={() => changeShift(staff.id, day, row)} style={[styles.scheduleCell, styles.scheduleShiftCell, marked && styles.scheduleHolidayCell, day === currentDay && styles.scheduleTodayCell, rowIndex === 1 && styles.scheduleSurgeonEndCell]}>
+                    return <Pressable key={day} disabled={!editing || !admin} accessibilityLabel={`${staff.name}, ${day}: ${shiftValue(staff, day, row) || "пусто"}${staff.review?.[shiftKey(day, row)] ? ", проверить" : ""}`} onPress={() => changeShift(activeGroup.id, staff.id, day, row)} style={[styles.scheduleCell, styles.scheduleShiftCell, marked && styles.scheduleHolidayCell, day === currentDay && styles.scheduleTodayCell, rowIndex === 1 && styles.scheduleSurgeonEndCell, staff.review?.[shiftKey(day, row)] && { backgroundColor: "#fee2e2", borderColor: "#dc2626", borderWidth: 1 }]}>
                     <Text style={[styles.scheduleShiftText, day === currentDay && styles.scheduleTodayText]}>{shiftValue(staff, day, row)}</Text>
                     </Pressable>;
                   })}
@@ -4612,6 +4662,12 @@ function DutyScheduleScreen({
               </View>
             </ScrollView>
           </View>
+          </View>)}
+          {compact ? <View style={{ paddingVertical: 12, gap: 6 }}>
+            <Text style={styles.scheduleStaffName}>Ночная медсестра · {night.label}</Text>
+            <Text style={styles.compactScreenMeta}>{nurses.names.length ? nurses.names.join(", ") + " · до 08:00 следующих суток" : "Подтверждённое дежурство не указано"}</Text>
+            {nurses.uncertain ? <Text style={{ color: "#b42336" }}>В графике есть нераспознанные ячейки. Уточните дежурную медсестру.</Text> : null}
+          </View> : null}
         </ScrollView>
       ) : null}
     </View>

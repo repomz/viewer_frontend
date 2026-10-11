@@ -186,6 +186,7 @@ export type DutyScheduleStaff = {
   name: string;
   role?: string;
   shifts: Record<string, string>;
+  review?: Record<string, boolean>;
 };
 
 export type DutyScheduleGroup = {
