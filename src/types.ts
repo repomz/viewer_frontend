@@ -196,6 +196,8 @@ export type DutyScheduleGroup = {
 };
 
 export type DutySchedule = {
+  published?: boolean;
+  source_uploaded_at?: string;
   month: string;
   holidays: number[];
   groups: DutyScheduleGroup[];

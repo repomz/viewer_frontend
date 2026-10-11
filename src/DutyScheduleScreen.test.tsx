@@ -20,7 +20,9 @@ beforeEach(() => {
 afterEach(() => { jest.clearAllTimers(); jest.useRealTimers(); jest.restoreAllMocks(); });
 
 test("web viewers see nurses but cannot edit or upload", async () => {
-  const screen=render(<DutyScheduleScreen compact={false} admin={false} schedule={schedule} loading={false} error="" onRetry={()=>{}} onSave={async()=>{}}/>);
+  const published = {...schedule, published:true, source_uploaded_at:"2026-10-11T00:00:00Z",groups:schedule.groups.map(g=>({...g,staff:g.staff.map(s=>({...s,review:{}}))}))};
+  jest.mocked(api.getDutySchedule).mockResolvedValue(published);
+  const screen=render(<DutyScheduleScreen compact={false} admin={false} schedule={published} loading={false} error="" onRetry={()=>{}} onSave={async()=>{}}/>);
   await act(async()=>{});
   expect(screen.getByTestId("schedule-name-nurse")).toBeTruthy();
   expect(screen.queryByText("Внести изменения")).toBeNull();
@@ -60,9 +62,27 @@ test("mobile photo recognition saves immediately without confirmation", async ()
     const save=jest.fn(async()=>{});
     const screen=render(<DutyScheduleScreen compact admin schedule={schedule} loading={false} error="" onRetry={()=>{}} onSave={save}/>);
     await act(async()=>fireEvent.press(screen.getByLabelText("Загрузить график")));
-    expect(save).toHaveBeenCalledWith(schedule);
+    expect(save).not.toHaveBeenCalled(); // Recognition now persists atomically on the server.
     expect(screen.queryByText("Сохранить график")).toBeNull();
     expect(screen.queryByTestId("schedule-name-nurse")).toBeNull();
     screen.unmount();
   } finally { Object.defineProperty(Platform, "OS", {configurable:true,value:originalOS}); }
+});
+
+test("unpublished or flagged cached schedules are hidden from regular users", async () => {
+  const screen=render(<DutyScheduleScreen compact admin={false} schedule={{...schedule,published:true,source_uploaded_at:"2026-10-11"}} loading={false} error="" onRetry={()=>{}} onSave={async()=>{}}/>);
+  await act(async()=>{});
+  expect(screen.queryByTestId("schedule-name-surgeon")).toBeNull();
+  expect(screen.getByText(/График ещё не опубликован/)).toBeTruthy();
+  screen.unmount();
+});
+
+test("mobile review information is an overlay, not an extra table row", async () => {
+  const screen=render(<DutyScheduleScreen compact admin schedule={schedule} loading={false} error="" onRetry={()=>{}} onSave={async()=>{}}/>);
+  await act(async()=>{});
+  expect(screen.queryByText(/Красные ячейки требуют/)).toBeNull();
+  fireEvent.press(screen.getByLabelText("Информация о графике"));
+  expect(screen.getByText(/Красные ячейки требуют/)).toBeTruthy();
+  expect(screen.getByTestId("schedule-row-surgeon-duty").props.style).toMatchObject({height:42});
+  screen.unmount();
 });

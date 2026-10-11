@@ -85,7 +85,6 @@ import {
   loadOperationPlanCache,
   loadOperationStatisticsCache,
   loadHistoricalStatisticsCache,
-  loadDutyScheduleCache,
   loadDressingChecks,
   loadRequests,
   loadReportsCache,
@@ -591,9 +590,7 @@ export default function App() {
   const [historicalStatistics, setHistoricalStatistics] = useState<HistoricalStatistics | null>(loadHistoricalStatisticsCache);
   const [statisticsLoading, setStatisticsLoading] = useState(false);
   const [statisticsError, setStatisticsError] = useState("");
-  const [dutySchedule, setDutySchedule] = useState<DutySchedule | null>(() =>
-    loadDutyScheduleCache(new Date().toISOString().slice(0, 7))
-  );
+  const [dutySchedule, setDutySchedule] = useState<DutySchedule | null>(null);
   const [dutyScheduleLoading, setDutyScheduleLoading] = useState(false);
   const [dutyScheduleError, setDutyScheduleError] = useState("");
   const [requestedXAStudyUID, setRequestedXAStudyUID] = useState<string | null>(null);
@@ -768,9 +765,7 @@ export default function App() {
 
   const loadDutySchedule = useCallback(async () => {
     const month = new Date().toISOString().slice(0, 7);
-    const cached = loadDutyScheduleCache(month);
-    if (cached) setDutySchedule(cached);
-    setDutyScheduleLoading(!cached);
+    setDutyScheduleLoading(true);
     setDutyScheduleError("");
     try {
       const response = await getDutySchedule(month);
@@ -4437,7 +4432,10 @@ export function DutyScheduleScreen({
   const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
   const currentDay = selectedMonth === currentMonthKey ? today.getDate() : null;
   const night = dutyDate(clock);
-  const nurses = dutyNurses(nurseSchedule, night.day);
+  const ready = (value: DutySchedule | null) => Boolean(value?.published && value.source_uploaded_at && !value.groups.some((group) => group.staff.some((staff) => Object.values(staff.review ?? {}).some(Boolean))));
+  const canView = admin || ready(current);
+  const nurses = dutyNurses(admin || ready(nurseSchedule) ? nurseSchedule : null, night.day);
+  const [noticeOpen, setNoticeOpen] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setClock(new Date()), 30_000);
@@ -4461,6 +4459,7 @@ export function DutyScheduleScreen({
   useEffect(() => {
     let cancelled = false;
     if (editing || (monthOffset === 0 && schedule?.month === selectedMonth)) return;
+    setCurrent(null);
     void getDutySchedule(selectedMonth).then((value) => {
       if (!cancelled) setCurrent(value);
     }).catch(() => {
@@ -4479,7 +4478,9 @@ export function DutyScheduleScreen({
 
   const activeGroup = current?.groups.find((group) => group.id === "surgeons")
     ?? current?.groups[0];
-  const visibleGroups = current?.groups.filter((group) => group.id === "surgeons" || (!compact && group.id === "nurses")).map((group) => ({ ...group, staff: group.staff.filter((staff) => group.id !== "surgeons" || !/^тер[её]шин(?:\s|$)/i.test(staff.name)) })) ?? [];
+  const visibleGroups = canView ? current?.groups.filter((group) => group.id === "surgeons" || (!compact && group.id === "nurses")).map((group) => ({ ...group, staff: group.staff.filter((staff) => group.id !== "surgeons" || !/^тер[её]шин(?:\s|$)/i.test(staff.name)) })) ?? [] : [];
+  const needsReview = current?.groups.some((group) => group.staff.some((staff) => Object.values(staff.review ?? {}).some(Boolean)));
+  const notice = localError || (error && monthOffset === 0 ? error : "") || (needsReview ? "Красные ячейки требуют проверки в web-версии. До исправления график виден только администратору." : "");
   const days = Array.from({ length: daysInMonth(selectedMonth) }, (_, index) => index + 1);
   const workingDays = days.filter((day) => {
     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
@@ -4541,10 +4542,9 @@ export function DutyScheduleScreen({
       if (!photo) return;
       setRecognizing(true);
       const result = await recognizeDutySchedule(selectedMonth, photo);
-      const next = { ...result, holidays: current?.holidays ?? [] };
-      await onSave(next);
-      setCurrent(next);
-    } catch (error) { setLocalError(errorMessage(error)); }
+      setCurrent(result);
+      onRetry();
+    } catch (error) { setLocalError(errorMessage(error)); setNoticeOpen(true); }
     finally { setRecognizing(false); }
   };
 
@@ -4576,14 +4576,18 @@ export function DutyScheduleScreen({
           </View>
         </View>
         {!compact ? <View style={styles.scheduleToolbarActions}>
+          {notice ? <Pressable accessibilityRole="button" accessibilityLabel="Информация о графике" onPress={() => setNoticeOpen(!noticeOpen)} style={{ padding: 10 }}><Icon name="warning-outline" size={22} color="#b42336" /></Pressable> : null}
           {admin && !editing ? <Button label="Внести изменения" compact icon="create-outline" onPress={() => setEditing(true)} /> : null}
-          {!compact ? <Button label="Распечатать" compact icon="print-outline" variant="ghost" onPress={printSchedule} /> : null}
+          {!compact && canView ? <Button label="Распечатать" compact icon="print-outline" variant="ghost" onPress={printSchedule} /> : null}
         </View> : null}
       </View>
-      {localError ? <Text accessibilityRole="alert" style={{ color: "#b42336" }}>{localError}</Text> : null}
-      {error && monthOffset === 0 ? <InlineError message={error} onRetry={onRetry} /> : null}
+      {noticeOpen && notice ? <View style={{ position: "absolute", top: 70, left: 18, right: 18, zIndex: 20, padding: 14, gap: 8, borderRadius: 12, backgroundColor: colors.surface, borderWidth: 1, borderColor: "#b42336" }}>
+        <Text accessibilityRole="alert" style={{ color: "#b42336" }}>{notice}</Text>
+        <Button label="Понятно" compact onPress={() => setNoticeOpen(false)} />
+      </View> : null}
       {loading && !current ? <LoadingState label="Открываем график…" /> : null}
-      {current ? (
+      {current && !canView ? <Text style={{ padding: 18, color: colors.textMuted }}>График ещё не опубликован. Он появится после загрузки и проверки администратором.</Text> : null}
+      {current && canView ? (
         <ScrollView style={styles.schedulePage} contentContainerStyle={styles.schedulePageContent}>
           {editing && admin ? (
             <View style={styles.scheduleEditorPanel}>
@@ -4617,7 +4621,6 @@ export function DutyScheduleScreen({
               </View>
             </View>
           ) : null}
-          {current.groups.some((group) => group.staff.some((staff) => Object.values(staff.review ?? {}).some(Boolean))) ? <Text style={{ color: "#b42336" }}>Красные ячейки требуют проверки{compact ? " в web-версии" : " — выберите значение и нажмите на ячейку"}.</Text> : null}
           {visibleGroups.map((activeGroup) => <View key={activeGroup.id} style={{ gap: 8 }}>
           {!compact ? <Text style={styles.scheduleStaffName}>{activeGroup.label}</Text> : null}
           <View style={styles.scheduleGridShell}>
@@ -4664,15 +4667,14 @@ export function DutyScheduleScreen({
           {compact ? <View style={{ paddingVertical: 12, gap: 8 }}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
               <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
-                <Text style={styles.compactScreenMeta}>Опер медсестра:</Text>
-                <Text style={styles.scheduleStaffName}>{nurses.names.length ? nurses.names.join(", ") : "Дежурство не указано"}</Text>
+                <Text numberOfLines={1} style={styles.compactScreenMeta}>{recognizing ? "Распознаём график…" : "Опер медсестра:"}</Text>
+                <Text numberOfLines={1} style={styles.scheduleStaffName}>{nurses.names.length ? nurses.names.join(", ") : "Дежурство не указано"}</Text>
               </View>
+              {notice ? <Pressable accessibilityRole="button" accessibilityLabel="Информация о графике" onPress={() => setNoticeOpen(!noticeOpen)} style={{ padding: 10 }}><Icon name="warning-outline" size={22} color="#b42336" /></Pressable> : null}
               {admin ? <Pressable accessibilityRole="button" accessibilityLabel="Загрузить график" accessibilityState={{ disabled: recognizing || editing, busy: recognizing }} disabled={recognizing || editing} onPress={() => void upload()} style={({ pressed }) => ({ width: 46, height: 46, borderRadius: 10, flexShrink: 0, alignItems: "center", justifyContent: "center", backgroundColor: colors.canvas, borderWidth: 1, borderColor: colors.border, opacity: pressed || editing ? 0.6 : 1 })}>
                 {recognizing ? <ActivityIndicator color={colors.primary} /> : <Icon name="cloud-upload-outline" size={21} color={colors.primary} />}
               </Pressable> : null}
             </View>
-            {recognizing ? <Text style={styles.compactScreenMeta}>Распознаём график…</Text> : null}
-            {nurses.uncertain ? <Text style={{ color: "#b42336" }}>В графике есть нераспознанные ячейки. Уточните дежурную медсестру.</Text> : null}
           </View> : null}
         </ScrollView>
       ) : null}
