@@ -31,8 +31,9 @@ test("mobile shows surgeons and duty nurse, not nurse grid", async () => {
   const screen=render(<DutyScheduleScreen compact admin schedule={schedule} loading={false} error="" onRetry={()=>{}} onSave={async()=>{}}/>);
   await act(async()=>{});
   expect(screen.queryByTestId("schedule-name-nurse")).toBeNull();
-  expect(screen.getByText("Медсестра · до 08:00 следующих суток")).toBeTruthy();
-  expect(screen.getByText("Загрузить график")).toBeTruthy();
+  expect(screen.getByText("Опер медсестра:")).toBeTruthy();
+  expect(screen.getByText("Медсестра")).toBeTruthy();
+  expect(screen.getByLabelText("Загрузить график")).toBeTruthy();
   screen.unmount();
 });
 test("admin corrections clear review flags and save both groups", async () => {
@@ -58,7 +59,7 @@ test("mobile photo recognition saves immediately without confirmation", async ()
     jest.spyOn(api, "recognizeDutySchedule").mockResolvedValue(schedule);
     const save=jest.fn(async()=>{});
     const screen=render(<DutyScheduleScreen compact admin schedule={schedule} loading={false} error="" onRetry={()=>{}} onSave={save}/>);
-    await act(async()=>fireEvent.press(screen.getByText("Загрузить график")));
+    await act(async()=>fireEvent.press(screen.getByLabelText("Загрузить график")));
     expect(save).toHaveBeenCalledWith(schedule);
     expect(screen.queryByText("Сохранить график")).toBeNull();
     expect(screen.queryByTestId("schedule-name-nurse")).toBeNull();

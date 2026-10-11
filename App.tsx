@@ -4479,7 +4479,7 @@ export function DutyScheduleScreen({
 
   const activeGroup = current?.groups.find((group) => group.id === "surgeons")
     ?? current?.groups[0];
-  const visibleGroups = current?.groups.filter((group) => group.id === "surgeons" || (!compact && group.id === "nurses")) ?? [];
+  const visibleGroups = current?.groups.filter((group) => group.id === "surgeons" || (!compact && group.id === "nurses")).map((group) => ({ ...group, staff: group.staff.filter((staff) => group.id !== "surgeons" || !/^тер[её]шин(?:\s|$)/i.test(staff.name)) })) ?? [];
   const days = Array.from({ length: daysInMonth(selectedMonth) }, (_, index) => index + 1);
   const workingDays = days.filter((day) => {
     const date = new Date(`${selectedMonth}-${String(day).padStart(2, "0")}T12:00:00`);
@@ -4580,8 +4580,6 @@ export function DutyScheduleScreen({
           {!compact ? <Button label="Распечатать" compact icon="print-outline" variant="ghost" onPress={printSchedule} /> : null}
         </View> : null}
       </View>
-      {compact && admin ? <Button label="Загрузить график" icon="image-outline" loading={recognizing} disabled={recognizing || editing} onPress={() => void upload()} /> : null}
-      {recognizing ? <Text style={styles.compactScreenMeta}>Читаем фотографию и сверяем ячейки. Это может занять несколько минут…</Text> : null}
       {localError ? <Text accessibilityRole="alert" style={{ color: "#b42336" }}>{localError}</Text> : null}
       {error && monthOffset === 0 ? <InlineError message={error} onRetry={onRetry} /> : null}
       {loading && !current ? <LoadingState label="Открываем график…" /> : null}
@@ -4663,9 +4661,17 @@ export function DutyScheduleScreen({
             </ScrollView>
           </View>
           </View>)}
-          {compact ? <View style={{ paddingVertical: 12, gap: 6 }}>
-            <Text style={styles.scheduleStaffName}>Ночная медсестра · {night.label}</Text>
-            <Text style={styles.compactScreenMeta}>{nurses.names.length ? nurses.names.join(", ") + " · до 08:00 следующих суток" : "Подтверждённое дежурство не указано"}</Text>
+          {compact ? <View style={{ paddingVertical: 12, gap: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                <Text style={styles.compactScreenMeta}>Опер медсестра:</Text>
+                <Text style={styles.scheduleStaffName}>{nurses.names.length ? nurses.names.join(", ") : "Дежурство не указано"}</Text>
+              </View>
+              {admin ? <Pressable accessibilityRole="button" accessibilityLabel="Загрузить график" accessibilityState={{ disabled: recognizing || editing, busy: recognizing }} disabled={recognizing || editing} onPress={() => void upload()} style={({ pressed }) => ({ width: 46, height: 46, borderRadius: 10, flexShrink: 0, alignItems: "center", justifyContent: "center", backgroundColor: colors.canvas, borderWidth: 1, borderColor: colors.border, opacity: pressed || editing ? 0.6 : 1 })}>
+                {recognizing ? <ActivityIndicator color={colors.primary} /> : <Icon name="cloud-upload-outline" size={21} color={colors.primary} />}
+              </Pressable> : null}
+            </View>
+            {recognizing ? <Text style={styles.compactScreenMeta}>Распознаём график…</Text> : null}
             {nurses.uncertain ? <Text style={{ color: "#b42336" }}>В графике есть нераспознанные ячейки. Уточните дежурную медсестру.</Text> : null}
           </View> : null}
         </ScrollView>
