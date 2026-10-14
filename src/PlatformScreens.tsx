@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Platform,
   Pressable,
@@ -19,7 +19,7 @@ import {
 import { formatStorageSize } from "./dicomOfflineCache";
 import { colors, radii, typography } from "./theme";
 import type { DriveFile, DriveListing, PlatformMetrics } from "./types";
-import { Button, Field, Icon, InlineError, LoadingState } from "./ui";
+import { Button, Field, Icon, InlineError, LoadingState, Sheet } from "./ui";
 import type { AuthUser, StoredAuth } from "./authStorage";
 
 function message(error: unknown): string {
@@ -190,22 +190,36 @@ function metricPercent(value: number, total: number): string {
 }
 
 export function MetricsScreen({ compact = false }: { compact?: boolean }) {
+  const today = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Tomsk",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+  const [date,setDate]=useState(today);
+  const requestSequence=useRef(0);
+  const invalidateRequests=useCallback(()=>{requestSequence.current++;},[]);
+  const [selectedUser,setSelectedUser]=useState<number|null>(null);
+  const timeLabel=(value:string)=>new Date(value).toLocaleTimeString("ru-RU",{timeZone:"Asia/Tomsk",hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  const changeDay=(offset:number)=>{const day=new Date(`${date}T12:00:00Z`);day.setUTCDate(day.getUTCDate()+offset);setDate(day.toISOString().slice(0,10));};
   const [metrics, setMetrics] = useState<PlatformMetrics | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    const sequence=++requestSequence.current;
     setError("");
-    try { setMetrics(await getPlatformMetrics()); }
-    catch (reason) { setError(message(reason)); }
-    finally { setLoading(false); }
-  }, []);
+    try {const result=await getPlatformMetrics(date);if(sequence===requestSequence.current)setMetrics(result);}
+    catch (reason) {if(sequence===requestSequence.current){setMetrics(null);setError(message(reason));}}
+    finally {if(sequence===requestSequence.current)setLoading(false);}
+  }, [date]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {setMetrics(null);setSelectedUser(null);void load();return invalidateRequests;}, [load,invalidateRequests]);
 
   if (loading) return <LoadingState label="Загружаем метрики…" />;
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.metricsContent} showsVerticalScrollIndicator={false}>
+      <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:8}}>
+        <Button compact label="‹" onPress={()=>changeDay(-1)} />
+        <Text style={styles.meta}>{date.split("-").reverse().join(".")} · Томск</Text>
+        <Button compact label="Сегодня" onPress={()=>setDate(today)} />
+        <Button compact label="›" disabled={date>=today} onPress={()=>changeDay(1)} />
+      </View>
       {error ? <InlineError message={error} onRetry={() => void load()} /> : null}
       {metrics ? (
         <>
@@ -217,16 +231,24 @@ export function MetricsScreen({ compact = false }: { compact?: boolean }) {
           </View>
           <View style={[styles.card, compact && styles.usersCardCompact]}>
             {metrics.logins.map((item) => (
-              <View key={item.user_id} style={[styles.loginRow, compact && styles.loginRowCompact]}>
+              <Pressable key={item.user_id} disabled={!compact} accessibilityRole={compact ? "button" : undefined} accessibilityLabel={`Входы: ${item.display_name}`} onPress={()=>setSelectedUser(item.user_id)} style={[styles.loginRow, compact && styles.loginRowCompact]}>
                 <View style={compact ? styles.userNameCompact : undefined}><Text numberOfLines={1} style={[styles.fileName, compact && { fontSize: 12 }]}>{item.display_name}</Text>{!compact ? <Text style={styles.meta}>{item.login}</Text> : null}</View>
+                {!compact ? <View style={{flex:1,flexDirection:"row",flexWrap:"wrap",gap:6,paddingVertical:10}}>{(item.times??[]).map((time,index)=><Text key={`${time}-${index}`} style={{...styles.meta,backgroundColor:colors.surfaceSoft,paddingHorizontal:8,paddingVertical:4,borderRadius:6}}>{timeLabel(time)}</Text>)}{!item.times?.length?<Text style={styles.meta}>Входов за этот день нет</Text>:null}</View>:null}
                 <View style={[styles.userMetricLine, compact && { flex: 1, gap: 4 }]}>
                   <Text numberOfLines={1} style={[styles.meta, compact && styles.userMetricLabel]}>За сутки <Text style={[styles.loginCount, compact && styles.userMetricNumber]}>{item.count}</Text></Text>
                   <Text numberOfLines={1} style={[styles.meta, compact && styles.userMetricLabel]}>Всего <Text style={[styles.loginCount, compact && styles.userMetricNumber]}>{item.total}</Text></Text>
                   <Text numberOfLines={1} style={[styles.meta, compact && styles.userMetricLabel]}>Диск <Text style={[styles.loginCount, compact && styles.userMetricNumber]}>{((item.disk_used_bytes ?? 0) / 1048576).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</Text> МБ</Text>
                 </View>
-              </View>
+              </Pressable>
             ))}
           </View>
+          <Sheet visible={selectedUser!==null} title={`${metrics.logins.find(item=>item.user_id===selectedUser)?.display_name??"Входы"} · ${date.split("-").reverse().join(".")}`} onClose={()=>setSelectedUser(null)}>
+            <ScrollView style={{maxHeight:420}} contentContainerStyle={{padding:16,gap:10}}>
+              <Text style={styles.meta}>Время Томска</Text>
+              {(metrics.logins.find(item=>item.user_id===selectedUser)?.times??[]).map((time,index)=><Text key={`${time}-${index}`} style={styles.fileName}>{timeLabel(time)}</Text>)}
+              {!metrics.logins.find(item=>item.user_id===selectedUser)?.times?.length?<Text style={styles.meta}>За этот день входов нет</Text>:null}
+            </ScrollView>
+          </Sheet>
         </>
       ) : null}
     </ScrollView>

@@ -26,9 +26,11 @@ export const recordAppOpen = (eventId: string) => request<void>("/auth/app-open"
   method: "POST", body: JSON.stringify({ event_id: eventId })
 });
 export type AgentConfiguration = {
+  pending_request_id?: string;
   agent_id: number;
   received_at: string;
   configuration: {
+    remote_configuration?: boolean;
     version: string;
     description: string;
     log_dir: string;
@@ -42,6 +44,8 @@ export type AgentConfiguration = {
   };
 };
 export const getAgentConfigurations = () => request<AgentConfiguration[]>("/agent_configurations");
+export type EditableAgentConfiguration = Pick<AgentConfiguration["configuration"], "description" | "heartbeat_interval_min" | "study_polling" | "xa_polling" | "ct_polling" | "user_requests_polling">;
+export const updateAgentConfiguration = (id:number, configuration:EditableAgentConfiguration) => request<UserRequest>(`/agent_configurations/${id}`, {method:"PUT",body:JSON.stringify(configuration)});
 const DEFAULT_TIMEOUT = 15_000;
 
 export class ApiError extends Error {
@@ -143,8 +147,8 @@ export async function logout(): Promise<void> {
   await request<void>("/auth/logout", { method: "POST" });
 }
 
-export async function getPlatformMetrics(): Promise<PlatformMetrics> {
-  return request<PlatformMetrics>("/admin/metrics");
+export async function getPlatformMetrics(date?: string): Promise<PlatformMetrics> {
+  return request<PlatformMetrics>(`/admin/metrics${date ? `?date=${encodeURIComponent(date)}` : ""}`);
 }
 
 export async function getDriveFiles(): Promise<DriveListing> {

@@ -10,6 +10,7 @@ jest.mock("./ui", () => {
     Button: ({ label, onPress, disabled }: any) => React.createElement(Pressable, { onPress, disabled }, React.createElement(Text, null, label)),
     Field: ({ label, ...props }: any) => React.createElement(TextInput, { ...props, accessibilityLabel: label }),
     Icon: () => null,
+    Sheet: ({visible,children}:any) => visible ? children : null,
     LoadingState: () => null,
     InlineError: ({ message }: any) => React.createElement(Text, null, message)
   };
@@ -24,13 +25,16 @@ test("mobile metrics include both login totals and personal drive usage", async 
     date: "2026-09-27", total_logins: 3, all_time_logins: 9, protocol_count: 1800,
     disk_total_bytes: 100, disk_used_bytes: 30, disk_free_bytes: 70,
     memory_total_bytes: 100, memory_used_bytes: 20,
-    logins: [{ user_id: 1, display_name: "Тест", login: "test", count: 3, total: 9, disk_used_bytes: 2 * 1048576 }]
+    logins: [{ user_id: 1, display_name: "Тест", login: "test", count: 3, total: 9, disk_used_bytes: 2 * 1048576, times:["2026-09-27T03:15:20Z"] }]
   });
   const screen = render(<MetricsScreen compact />);
   await waitFor(() => expect(screen.getByText("Протоколов")).toBeTruthy());
   expect(screen.getByText("Входов")).toBeTruthy();
   expect(screen.getByText("Память")).toBeTruthy();
   expect(screen.getByText("Диск 2 МБ")).toBeTruthy();
+  expect(screen.queryByText("10:15:20")).toBeNull();
+  fireEvent.press(screen.getByLabelText("Входы: Тест"));
+  expect(screen.getByText("10:15:20")).toBeTruthy();
 });
 
 test("credentials are hidden until selected and cancel clears edits", () => {

@@ -2,6 +2,7 @@ import { StatusBar } from "expo-status-bar";
 import { scheduleRows, dutyDate, dutyNurses, selectSchedulePhoto } from "./src/dutySchedule";
 import { recognizeDutySchedule } from "./src/api";
 import { PaymentBadge, PaymentRulesSettings, usePaymentRules, planPaymentMode } from "./src/PaymentUI";
+import { AgentConfigurationEditor } from "./src/AgentConfigurationEditor";
 import { frequentOperationTypes, frequentStudyCategories, statisticCount, totalsOnlySurgeon, formatPlanPatientInput } from "./src/statisticsDisplay";
 import { normalizeBirthDate, displayBirthDate, planPatientAge, formatBirthDateInput } from "./src/birthDate";
 import { belongsToStudyWeek } from "./src/studyWeek";
@@ -161,7 +162,7 @@ if (Platform.OS !== "web") {
   void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 }
 
-type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statistics" | "disk" | "metrics" | "logs" | "settings" | "profile";
+type Tab = "studies" | "plan" | "angiography" | "reports" | "schedule" | "statistics" | "disk" | "metrics" | "logs" | "settings" | "profile" | "payment";
 type ToastState = { message: string; tone: "success" | "danger" } | null;
 type DayFilter = "1" | "2" | "3" | "4" | "5" | "6" | "7" | null;
 type StudySort = "time" | "operation";
@@ -358,15 +359,6 @@ function formatDuration(minutes: number): string {
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
   return rest ? `${hours} ч ${rest} мин` : `${hours} ч`;
-}
-
-function relativeTime(date?: Date): string {
-  if (!date) return "нет данных";
-  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
-  if (seconds < 60) return `${seconds} сек. назад`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes} мин. назад`;
-  return formatDate(date.toISOString(), true);
 }
 
 function statusMeta(status: string): {
@@ -1621,6 +1613,7 @@ export default function App() {
                 />
               ) : null}
               {activeTab === "settings" && auth?.user.role === "admin" ? <AgentSettingsScreen /> : null}
+              {activeTab === "payment" && auth?.user.role === "admin" ? <PaymentRulesSettings /> : null}
               {activeTab === "plan" ? (
                 <PlanScreen
                   compact={compact}
@@ -1668,6 +1661,7 @@ export default function App() {
           onMetrics={() => { setMenuOpen(false); setActiveTab("metrics"); }}
           onLogs={() => { setMenuOpen(false); setActiveTab("logs"); }}
           onProfile={() => { setMenuOpen(false); setActiveTab("profile"); }}
+          onPayment={() => { setMenuOpen(false); setActiveTab("payment"); }}
           onClose={() => setMenuOpen(false)}
           onSettings={() => {
             setMenuOpen(false);
@@ -1914,6 +1908,7 @@ function TopBar({
   const active = activeTab === "settings"
     ? { label: "Настройки" }
     : activeTab === "profile" ? { label: "Профиль" }
+    : activeTab === "payment" ? { label: "ВМП" }
     : desktopTabs.find((item) => item.id === activeTab) ?? tabs[0]!;
   const dark = activeTab === "angiography";
   const statusColor = (agentId: number) => {
@@ -5431,6 +5426,7 @@ function PlanScreen({
 }
 
 function MobileMenu({
+  onPayment,
   compact,
   visible,
   user,
@@ -5443,6 +5439,7 @@ function MobileMenu({
   onDisk,
   onLogout
 }: {
+  onPayment: () => void;
   compact: boolean;
   visible: boolean;
   user: AuthUser;
@@ -5558,6 +5555,10 @@ function MobileMenu({
 			  <Icon name="stats-chart-outline" color={colors.textMuted} />
 			  <Text style={styles.drawerItemText}>Статистика</Text>
 			</Pressable> : null}
+            {user.role === "admin" ? <Pressable style={styles.drawerItem} onPress={onPayment}>
+              <Icon name="medical-outline" color={colors.textMuted} />
+              <Text style={styles.drawerItemText}>ВМП</Text>
+            </Pressable> : null}
             {user.role === "admin" ? <Pressable
               style={({ pressed }) => [
                 styles.drawerItem,
@@ -5688,6 +5689,7 @@ function AgentSettingsScreen() {
   const [agents, setAgents] = useState<AgentConfiguration[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const refresh = useCallback(()=>{void getAgentConfigurations().then(setAgents).catch(reason=>setError(errorMessage(reason)));},[]);
   useEffect(() => {
     let active = true;
     const load = () => getAgentConfigurations().then((data) => {
@@ -5699,29 +5701,12 @@ function AgentSettingsScreen() {
     return () => { active = false; clearInterval(timer); };
   }, []);
   return <ScrollView style={styles.screen} contentContainerStyle={styles.scrollScreen}>
-    <PaymentRulesSettings />
     {loading ? <Text style={styles.settingsDescription}>Получаем настройки…</Text> : null}
     {error ? <Text style={styles.settingsDescription}>{error}</Text> : null}
     {!loading && !error && agents.length === 0 ? <Text style={styles.settingsDescription}>
       Агенты ещё не передали конфигурацию. Она появится после обновления агента и первого heartbeat.
     </Text> : null}
-    {agents.map(({ agent_id, configuration: config, received_at }) => <View key={agent_id} style={styles.settingsCard}>
-      <Text style={styles.settingsTitle}>Агент {agent_id} · {config.description}</Text>
-      <Text style={styles.settingsDescription}>Версия {config.version} · получено {relativeTime(new Date(received_at))}</Text>
-      <Text style={styles.settingsDescription}>Последний присланный конфиг, только просмотр</Text>
-      <Text style={styles.requestMetaText}>Heartbeat: каждые {config.heartbeat_interval_min} мин</Text>
-      {([
-        ["Протоколы", config.study_polling], ["XA", config.xa_polling],
-        ["CT", config.ct_polling], ["Команды", config.user_requests_polling]
-      ] as const).map(([name, polling]) => <Text key={name} style={styles.settingsDescription}>
-        {name}: {polling.state ? "включено" : "выключено"} · интервал {polling.interval_min} мин
-      </Text>)}
-      <Text selectable style={styles.settingsDescription}>Папки протоколов: {(config.study_polling.operations_dir ?? []).join("\n") || "не заданы"}</Text>
-      <Text selectable style={styles.settingsDescription}>Логи: {config.log_dir}</Text>
-      <Text selectable style={styles.settingsDescription}>Состояние: {config.state_file}</Text>
-      <Text selectable style={styles.settingsDescription}>Конфигурация PACS: {config.pacs_config_path}</Text>
-      <Text style={styles.requestMetaText}>Отправка логов: каждый час, в :00</Text>
-    </View>)}
+    {agents.map(agent=><AgentConfigurationEditor key={agent.agent_id} agent={agent} onApplied={refresh} />)}
   </ScrollView>;
 }
 
