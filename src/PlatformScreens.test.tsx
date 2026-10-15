@@ -32,6 +32,10 @@ test("mobile metrics include both login totals and personal drive usage", async 
   expect(screen.getByText("Входов")).toBeTruthy();
   expect(screen.getByText("Память")).toBeTruthy();
   expect(screen.getByText("Диск 2 МБ")).toBeTruthy();
+  expect(getPlatformMetrics).toHaveBeenCalledWith();
+  expect(screen.queryByText("Сегодня")).toBeNull();
+  expect(screen.queryByText("‹")).toBeNull();
+  expect(screen.queryByText("›")).toBeNull();
   expect(screen.queryByText("10:15:20")).toBeNull();
   fireEvent.press(screen.getByLabelText("Входы: Тест"));
   expect(screen.getByText("10:15:20")).toBeTruthy();

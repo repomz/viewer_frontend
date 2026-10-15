@@ -190,13 +190,10 @@ function metricPercent(value: number, total: number): string {
 }
 
 export function MetricsScreen({ compact = false }: { compact?: boolean }) {
-  const today = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Tomsk",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
-  const [date,setDate]=useState(today);
   const requestSequence=useRef(0);
   const invalidateRequests=useCallback(()=>{requestSequence.current++;},[]);
   const [selectedUser,setSelectedUser]=useState<number|null>(null);
   const timeLabel=(value:string)=>new Date(value).toLocaleTimeString("ru-RU",{timeZone:"Asia/Tomsk",hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  const changeDay=(offset:number)=>{const day=new Date(`${date}T12:00:00Z`);day.setUTCDate(day.getUTCDate()+offset);setDate(day.toISOString().slice(0,10));};
   const [metrics, setMetrics] = useState<PlatformMetrics | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -204,22 +201,16 @@ export function MetricsScreen({ compact = false }: { compact?: boolean }) {
   const load = useCallback(async () => {
     const sequence=++requestSequence.current;
     setError("");
-    try {const result=await getPlatformMetrics(date);if(sequence===requestSequence.current)setMetrics(result);}
+    try {const result=await getPlatformMetrics();if(sequence===requestSequence.current)setMetrics(result);}
     catch (reason) {if(sequence===requestSequence.current){setMetrics(null);setError(message(reason));}}
     finally {if(sequence===requestSequence.current)setLoading(false);}
-  }, [date]);
+  }, []);
 
   useEffect(() => {setMetrics(null);setSelectedUser(null);void load();return invalidateRequests;}, [load,invalidateRequests]);
 
   if (loading) return <LoadingState label="Загружаем метрики…" />;
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.metricsContent} showsVerticalScrollIndicator={false}>
-      <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",gap:8}}>
-        <Button compact label="‹" onPress={()=>changeDay(-1)} />
-        <Text style={styles.meta}>{date.split("-").reverse().join(".")} · Томск</Text>
-        <Button compact label="Сегодня" onPress={()=>setDate(today)} />
-        <Button compact label="›" disabled={date>=today} onPress={()=>changeDay(1)} />
-      </View>
       {error ? <InlineError message={error} onRetry={() => void load()} /> : null}
       {metrics ? (
         <>
@@ -242,7 +233,7 @@ export function MetricsScreen({ compact = false }: { compact?: boolean }) {
               </Pressable>
             ))}
           </View>
-          <Sheet visible={selectedUser!==null} title={`${metrics.logins.find(item=>item.user_id===selectedUser)?.display_name??"Входы"} · ${date.split("-").reverse().join(".")}`} onClose={()=>setSelectedUser(null)}>
+          <Sheet visible={selectedUser!==null} title={`${metrics.logins.find(item=>item.user_id===selectedUser)?.display_name??"Входы"} · ${metrics.date.split("-").reverse().join(".")}`} onClose={()=>setSelectedUser(null)}>
             <ScrollView style={{maxHeight:420}} contentContainerStyle={{padding:16,gap:10}}>
               <Text style={styles.meta}>Время Томска</Text>
               {(metrics.logins.find(item=>item.user_id===selectedUser)?.times??[]).map((time,index)=><Text key={`${time}-${index}`} style={styles.fileName}>{timeLabel(time)}</Text>)}
