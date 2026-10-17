@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import { activeTransfer, isTransfer, transferUID, transferLabel } from "./src/transferProgress";
 import { scheduleRows, dutyDate, dutyNurses, selectSchedulePhoto } from "./src/dutySchedule";
 import { recognizeDutySchedule } from "./src/api";
 import { PaymentBadge, PaymentRulesSettings, usePaymentRules, planPaymentMode } from "./src/PaymentUI";
@@ -608,6 +609,7 @@ export default function App() {
       .filter(Boolean)
   ));
   const autoDownloadRunning = useRef(false);
+  const submittingTransfers = useRef(new Set<string>());
   const autoDownloadAllowedRef = useRef(false);
   const autoDownloadRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null
@@ -1305,6 +1307,13 @@ export default function App() {
       agentId = settings.agentId,
       source: "user" | "automatic" = "user"
     ) => {
+      const uid = String(payload.study_uid ?? "");
+      const key = `${agentId}:${command}:${uid}`;
+      const transfer = ["get_ct", "get_xa"].includes(command);
+      if (transfer && (submittingTransfers.current.has(key) || requests.some((item) =>
+        activeTransfer(item) && item.command === command && item.agent_id === agentId && transferUID(item) === uid
+      ))) return true;
+      if (transfer) submittingTransfers.current.add(key);
       try {
         const created = await createUserRequest({
           userId: settings.userId,
@@ -1325,9 +1334,11 @@ export default function App() {
           setToast({ message: "Запрос не отправлен", tone: "danger" });
         }
         return false;
+      } finally {
+        submittingTransfers.current.delete(key);
       }
     },
-    [recordRequest, settings]
+    [recordRequest, settings, requests]
   );
 
   useEffect(() => {
@@ -1532,6 +1543,7 @@ export default function App() {
               >
                 <AngiographyScreen
                   compact={compact}
+                  requests={requests}
                   studies={xaStudies}
                   loading={xaLoading}
                   error={xaError}
@@ -1649,7 +1661,7 @@ export default function App() {
           settings={settings}
           initialCommand={commandModality}
           requests={requests}
-          studies={studies}
+          studies={[...studies, ...xaStudies]}
           agentHealthById={agentHealthById}
           onClose={() => setCommandOpen(false)}
           onSubmit={submitCommand}
@@ -2848,6 +2860,7 @@ function DetailItem({ label, value }: { label: string; value: string }) {
 
 function AngiographyScreen({
   compact,
+  requests,
   studies,
   loading,
   error,
@@ -2860,6 +2873,7 @@ function AngiographyScreen({
   onInitialStudyHandled
 }: {
   compact: boolean;
+  requests: UserRequest[];
   studies: Study[];
   loading: boolean;
   error: string;
@@ -2957,6 +2971,14 @@ function AngiographyScreen({
           </Pressable>
         </View>
       </View>
+      {requests.filter(activeTransfer).filter((r) => r.command === `get_${studyFilter}`).slice(0, 3).map((r) => (
+        <View key={r.id} style={{ paddingHorizontal: 14, paddingVertical: 8 }}>
+          <Text style={{ color: darkColors.text, fontSize: 13 }}>
+            {String(parseObject(r.payload).patient || `${studyFilter.toUpperCase()} · агент ${r.agent_id}`)}
+          </Text>
+          <Text style={{ color: darkColors.primary, fontSize: 12 }}>{transferLabel(r)}</Text>
+        </View>
+      ))}
       {loading && !studies.length ? (
         <LoadingState label="Проверяем XA-исследования…" />
       ) : studies.length ? (
@@ -3200,12 +3222,14 @@ function AngiographyScreen({
 function RequestCard({
   compact,
   request,
+  requests,
   studies,
   onSubmit,
   onRefresh
 }: {
   compact: boolean;
   request: UserRequest;
+  requests: UserRequest[];
   studies: Study[];
   onSubmit: (
     command: AgentCommand,
@@ -3215,6 +3239,7 @@ function RequestCard({
   onRefresh: () => void;
 }) {
   const [resultOpen, setResultOpen] = useState(false);
+  const [submittingUID, setSubmittingUID] = useState<string | null>(null);
   const meta = statusMeta(request.status);
   const payload = parseObject(request.payload);
   const result = parseObject(request.result);
@@ -3254,6 +3279,7 @@ function RequestCard({
           <Badge label={meta.label} tone={meta.tone} />
         </View>
         <Text style={styles.requestSubject}>{subject}</Text>
+        {isTransfer(request) ? <Text style={styles.resultMetaText}>{transferLabel(request)}</Text> : null}
         <View style={styles.requestMeta}>
           <Text style={styles.requestMetaText}>
             {formatDate(request.created_at, true)}
@@ -3349,6 +3375,10 @@ function RequestCard({
             const modality = String(
               result.modality ?? study.modality ?? "XA"
             ).toUpperCase();
+            const delivery = requests.find((r) => isTransfer(r) && transferUID(r) === uid && activeTransfer(r))
+              ?? requests.find((r) => isTransfer(r) && transferUID(r) === uid);
+            const ready = studies.some((s) => s.study_id === uid) || delivery?.status === "completed";
+            const busy = submittingUID === uid || Boolean(delivery && activeTransfer(delivery));
             return (
               <View key={`${uid}-${index}`} style={styles.pacsResult}>
                 <View style={styles.resultHeader}>
@@ -3369,17 +3399,20 @@ function RequestCard({
                 <Text style={styles.resultMetaText}>
                   {String(study.study_date ?? study.date ?? "Дата не указана")}
                 </Text>
-                {uid ? (
+                {delivery ? <Text style={styles.resultMetaText}>{transferLabel(delivery)}</Text> : null}
+                {ready ? <Badge label="Доступно в MAPDR" tone="success" /> : uid ? (
                   <Button
-                    label={`Загрузить ${modality}`}
+                    label={busy ? "Загрузка запрошена" : `Загрузить ${modality}`}
+                    disabled={busy}
                     icon="cloud-download-outline"
-                    onPress={() =>
-                      void onSubmit(
+                    onPress={async () => {
+                      setSubmittingUID(uid);
+                      try { await onSubmit(
                         modality === "CT" ? "get_ct" : "get_xa",
-                        { study_uid: uid },
+                        { study_uid: uid, patient: String(study.patient ?? study.name ?? "") },
                         request.agent_id
-                      )
-                    }
+                      ); } finally { setSubmittingUID(null); }
+                    }}
                   />
                 ) : null}
               </View>
@@ -5971,6 +6004,7 @@ function CommandSheet({
                 key={request.id}
                 compact
                 request={request}
+                requests={requests}
                 studies={studies}
                 onSubmit={onSubmit}
                 onRefresh={() => undefined}
