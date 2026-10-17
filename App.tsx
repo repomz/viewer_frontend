@@ -1,5 +1,5 @@
 import { StatusBar } from "expo-status-bar";
-import { activeTransfer, isTransfer, transferUID, transferLabel } from "./src/transferProgress";
+import { activeTransfer, isTransfer, transferUID, transferLabel, studyTransfer } from "./src/transferProgress";
 import { scheduleRows, dutyDate, dutyNurses, selectSchedulePhoto } from "./src/dutySchedule";
 import { recognizeDutySchedule } from "./src/api";
 import { PaymentBadge, PaymentRulesSettings, usePaymentRules, planPaymentMode } from "./src/PaymentUI";
@@ -3375,8 +3375,7 @@ function RequestCard({
             const modality = String(
               result.modality ?? study.modality ?? "XA"
             ).toUpperCase();
-            const delivery = requests.find((r) => isTransfer(r) && transferUID(r) === uid && activeTransfer(r))
-              ?? requests.find((r) => isTransfer(r) && transferUID(r) === uid);
+            const delivery = studyTransfer(requests, uid);
             const ready = studies.some((s) => s.study_id === uid) || delivery?.status === "completed";
             const busy = submittingUID === uid || Boolean(delivery && activeTransfer(delivery));
             return (
@@ -3399,7 +3398,7 @@ function RequestCard({
                 <Text style={styles.resultMetaText}>
                   {String(study.study_date ?? study.date ?? "Дата не указана")}
                 </Text>
-                {delivery ? <Text style={styles.resultMetaText}>{transferLabel(delivery)}</Text> : null}
+                {!ready && delivery ? <Text style={styles.resultMetaText}>{transferLabel(delivery)}</Text> : null}
                 {ready ? <Badge label="Доступно в MAPDR" tone="success" /> : uid ? (
                   <Button
                     label={busy ? "Загрузка запрошена" : `Загрузить ${modality}`}
