@@ -105,6 +105,28 @@ http {
             proxy_max_temp_file_size 0;
         }
 
+        # Delivery of thousands of CT slices may take longer than ordinary API calls.
+        location = /api/ct_studies {
+            client_max_body_size 32m;
+            proxy_pass ${BACKEND_URL}/ct_studies;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 1800s;
+            proxy_send_timeout 300s;
+        }
+        location = /api/xa_studies {
+            client_max_body_size 32m;
+            proxy_pass ${BACKEND_URL}/xa_studies;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 10s;
+            proxy_read_timeout 1800s;
+            proxy_send_timeout 300s;
+        }
+
         location ^~ /api/ {
             proxy_pass ${BACKEND_URL}/;
             proxy_http_version 1.1;
