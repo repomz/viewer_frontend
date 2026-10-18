@@ -9,6 +9,7 @@ import { normalizeBirthDate, displayBirthDate, planPatientAge, formatBirthDateIn
 import { belongsToStudyWeek } from "./src/studyWeek";
 import { agentLogGroups } from "./src/agentLogDisplay";
 import { AgentLogAlert } from "./src/AgentLogAlert";
+import { AgentFileRequest } from "./src/AgentFileRequest";
 import * as SplashScreen from "expo-splash-screen";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -4237,6 +4238,7 @@ function LogsScreen({ agentIds, compact }: { agentIds: number[]; compact: boolea
           <IconButton label={copied ? "Скопировано" : "Копировать все"} icon={copied ? "checkmark" : "copy-outline"} onPress={() => void copyLogs()} />
         </View> : null}
       </View>
+      <AgentFileRequest key={agentId} agentId={agentId} />
       <View style={styles.logsDocument}>
         {loading ? (
           <LoadingState label="Загружаем журнал агента" />

@@ -474,3 +474,10 @@ export async function getAgentLogs(
 export async function getAgentLogAlerts(): Promise<{has_issues: boolean}> {
   return request<{has_issues: boolean}>("/agent_logs/alerts");
 }
+
+export function requestAgentFile(agentId: number, path: string): Promise<UserRequest> {
+  return request<UserRequest>("/agent_files", {method: "POST", body: JSON.stringify({agent_id: agentId, path})});
+}
+export function getAgentFileRequests(agentId: number): Promise<UserRequest[]> {
+  return request<UserRequest[]>(`/agent_files?agent_id=${agentId}`);
+}
