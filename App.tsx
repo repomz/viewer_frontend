@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import { buildMedicalForms, medicalFormDate, type MedicalFormKind } from "./src/planMedicalForms";
 import { activeTransfer, isTransfer, transferUID, transferLabel, studyTransfer } from "./src/transferProgress";
 import { scheduleRows, dutyDate, dutyNurses, selectSchedulePhoto } from "./src/dutySchedule";
 import { recognizeDutySchedule } from "./src/api";
@@ -4963,6 +4964,38 @@ function PlanScreen({
   onSave: (date: string, entries: PlanEntry[]) => Promise<void>;
 }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [anesthesiologist, setAnesthesiologist] = useState("");
+  const [anesthesiaMethod, setAnesthesiaMethod] = useState("миа, возможный общий");
+  const [formsBusy, setFormsBusy] = useState(false);
+  const [formsError, setFormsError] = useState("");
+  const printMedicalForms = async (kind: MedicalFormKind) => {
+    if (Platform.OS !== "web" || formsBusy) return;
+    setFormsError("");
+    const popup = window.open("", "_blank");
+    if (!popup) { setFormsError("Разрешите всплывающие окна для печати"); return; }
+    popup.opener = null;
+    popup.document.title = "Подготовка документов";
+    popup.document.body.textContent = "Подготовка документов для печати…";
+    setFormsBusy(true);
+    try {
+      const today = medicalFormDate();
+      const monday = new Date(`${today}T12:00:00Z`);
+      monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
+      const currentPlan = await getOperationPlan(monday.toISOString().slice(0, 10));
+      const entries = sortPlanEntries((currentPlan.days.find(day => day.date === today)?.entries || []).filter(entry => entry.patient.trim()));
+      const html = buildMedicalForms(kind, today, entries, anesthesiologist, anesthesiaMethod);
+      if (popup.closed) return;
+      popup.document.open();
+      popup.addEventListener("load", () => { void popup.document.fonts.ready.then(() => { if (!popup.closed) { popup.focus(); popup.print(); } }); }, { once: true });
+      popup.document.write(html);
+      popup.document.close();
+      setConsentOpen(false);
+    } catch (reason) {
+      popup.close();
+      setFormsError(errorMessage(reason));
+    } finally { setFormsBusy(false); }
+  };
   const [draft, setDraft] = useState<PlanEntry[]>([newPlanEntry()]);
   const paymentRules = usePaymentRules();
   const [picker, setPicker] = useState<{
@@ -5037,7 +5070,7 @@ function PlanScreen({
 
   return (
     <View style={[styles.screen, compact && styles.screenCompact]}>
-      <View style={styles.planToolbar}>
+      <View style={[styles.planToolbar, { flexWrap: "wrap" }]}>
         <View style={styles.planWeekSelector}>
           {([0, 1] as const).map((offset) => (
             <Pressable
@@ -5062,6 +5095,14 @@ function PlanScreen({
           ))}
         </View>
         <View style={styles.planToolbarActions}>
+          {!compact && Platform.OS === "web" ? <>
+          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => void printMedicalForms("radiation")} style={styles.planWeekOption}>
+            <Text style={styles.planWeekOptionText}>{formsBusy ? "Подготовка…" : "Лучевая нагрузка"}</Text>
+          </Pressable>
+          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => { setFormsError(""); setConsentOpen(true); }} style={styles.planWeekOption}>
+            <Text style={styles.planWeekOptionText}>Согласие анестезиолога</Text>
+          </Pressable>
+          </> : null}
           <IconButton
             icon={compact ? "share-outline" : "print-outline"}
             label={compact ? "Отправить снимок" : "Распечатать план"}
@@ -5178,6 +5219,20 @@ function PlanScreen({
       ) : null}
 
 
+      {formsError ? <Text accessibilityRole="alert" style={{ color: "#b42318" }}>{formsError}</Text> : null}
+      <Sheet visible={consentOpen} title="Согласие анестезиолога" onClose={() => setConsentOpen(false)}>
+        <View style={{ gap: 14, padding: 16 }}>
+          <Text>Документы для всех пациентов сегодняшнего плана</Text>
+          <Text>ФИО анестезиолога</Text>
+          <TextInput accessibilityLabel="ФИО анестезиолога" value={anesthesiologist} onChangeText={setAnesthesiologist} placeholder="Студницкий А.В." style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16 }} />
+          <Text>Вид анестезии</Text>
+          <TextInput accessibilityLabel="Вид анестезии" value={anesthesiaMethod} onChangeText={setAnesthesiaMethod} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16 }} />
+          {formsError ? <Text style={{ color: "#b42318" }}>{formsError}</Text> : null}
+          <Pressable accessibilityRole="button" disabled={formsBusy || !anesthesiologist.trim() || !anesthesiaMethod.trim()} onPress={() => void printMedicalForms("anesthesia")} style={[styles.planWeekOption, styles.planWeekOptionActive, { opacity: formsBusy || !anesthesiologist.trim() ? 0.5 : 1 }]}>
+            <Text style={styles.planWeekOptionText}>{formsBusy ? "Подготовка…" : "Распечатать согласия"}</Text>
+          </Pressable>
+        </View>
+      </Sheet>
       <Sheet
         visible={Boolean(selectedDate)}
         title={selectedDate ? `План на ${formatDate(selectedDate)}` : "План дня"}
@@ -8151,7 +8206,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10
   },
-  planToolbarActions: { flexDirection: "row", alignItems: "center", gap: 5 },
+  planToolbarActions: { flexDirection: "row", alignItems: "center", gap: 5, flexWrap: "wrap", justifyContent: "flex-end", flexShrink: 1 },
   planWeekSelector: {
     alignSelf: "flex-start",
     flexDirection: "row",
