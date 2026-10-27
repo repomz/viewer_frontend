@@ -77,6 +77,30 @@ test("unpublished or flagged cached schedules are hidden from regular users", as
   screen.unmount();
 });
 
+test("November photo is sent to November even while October refreshes", async () => {
+  const originalOS = Platform.OS;
+  Object.defineProperty(Platform, "OS", { configurable: true, value: "web" });
+  try {
+    const november = { ...schedule, month: "2026-11" };
+    jest.mocked(api.getDutySchedule).mockImplementation(async month => month === "2026-11" ? november : schedule);
+    let select!: (photo: Blob) => void;
+    jest.spyOn(scheduleTools, "selectSchedulePhoto").mockImplementation(() => new Promise(resolve => { select = resolve; }));
+    const recognize = jest.spyOn(api, "recognizeDutySchedule").mockResolvedValue(november);
+    const retry = jest.fn();
+    const props = { compact: true, admin: true, schedule, loading: false, error: "", onRetry: retry, onSave: async () => {} };
+    const screen = render(<DutyScheduleScreen {...props} />);
+    await act(async () => fireEvent.press(screen.getByLabelText("Следующий")));
+    await act(async () => fireEvent.press(screen.getByLabelText("Загрузить график")));
+    screen.rerender(<DutyScheduleScreen {...props} schedule={{ ...schedule }} />);
+    const photo = new Blob(["photo"], { type: "image/jpeg" });
+    await act(async () => select(photo));
+    expect(recognize).toHaveBeenCalledWith("2026-11", photo);
+    expect(retry).not.toHaveBeenCalled();
+    expect(screen.getByText(/ноябрь/i)).toBeTruthy();
+    screen.unmount();
+  } finally { Object.defineProperty(Platform, "OS", { configurable: true, value: originalOS }); }
+});
+
 test("mobile review information is an overlay, not an extra table row", async () => {
   const screen=render(<DutyScheduleScreen compact admin schedule={schedule} loading={false} error="" onRetry={()=>{}} onSave={async()=>{}}/>);
   await act(async()=>{});

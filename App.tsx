@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import { desktopIdleExpired, rememberDesktopActivity, watchDesktopIdle } from "./src/desktopIdle";
 import { buildMedicalForms, medicalFormDate, type MedicalFormKind } from "./src/planMedicalForms";
 import { AnesthesiologistPicker } from "./src/AnesthesiologistPicker";
 import { activeTransfer, isTransfer, transferUID, transferLabel, studyTransfer } from "./src/transferProgress";
@@ -515,7 +516,12 @@ export default function App() {
   const { width } = useWindowDimensions();
   const [mobileFormFactor] = useState(isMobileFormFactor);
   const compact = mobileFormFactor || width < layout.mobileBreakpoint;
-  const [auth, setAuth] = useState<StoredAuth | null>(loadAuth);
+  const [auth, setAuth] = useState<StoredAuth | null>(() => {
+    const saved = loadAuth();
+    if (saved && Platform.OS === "web" && !mobileFormFactor && desktopIdleExpired(saved.token)) { clearAuth(); return null; }
+    return saved;
+  });
+  const [authChecked, setAuthChecked] = useState(!auth);
   const metricsUserId = auth?.user.id;
   const metricsRole = auth?.user.role;
   useEffect(() => {
@@ -532,7 +538,7 @@ export default function App() {
     document.addEventListener("visibilitychange", opened);
     return () => { cancelled = true; document.removeEventListener("visibilitychange", opened); };
   }, [metricsUserId, metricsRole]);
-  const [authenticated, setAuthenticated] = useState(() => Boolean(loadAuth()));
+  const [authenticated, setAuthenticated] = useState(() => Boolean(auth));
   const [launchDelayElapsed, setLaunchDelayElapsed] = useState(false);
   const [autoDownloadStartAllowed, setAutoDownloadStartAllowed] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("studies");
@@ -761,7 +767,7 @@ export default function App() {
   }, []);
 
   const loadDutySchedule = useCallback(async () => {
-    const month = new Date().toISOString().slice(0, 7);
+    const month = medicalFormDate().slice(0, 7);
     setDutyScheduleLoading(true);
     setDutyScheduleError("");
     try {
@@ -891,7 +897,7 @@ export default function App() {
         clearAuth();
         setAuth(null);
         setAuthenticated(false);
-      });
+      }).finally(() => { if (!cancelled) setAuthChecked(true); });
     return () => { cancelled = true; };
   // Existing token is verified once when the application starts.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1074,14 +1080,14 @@ export default function App() {
   }, [activeTab, authenticated]);
 
   useEffect(() => {
-    if (!launchDelayElapsed) return;
+    if (!launchDelayElapsed || !authChecked) return;
     if (Platform.OS === "web") {
       const preboot = document.getElementById("viewer-preboot");
       preboot?.classList.add("viewer-entry-ready");
       return;
     }
     void SplashScreen.hideAsync().catch(() => undefined);
-  }, [launchDelayElapsed]);
+  }, [launchDelayElapsed, authChecked]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -1428,6 +1434,7 @@ export default function App() {
 
   const applyAuth = useCallback((next: StoredAuth) => {
     saveAuth(next);
+    if (Platform.OS === "web" && !isMobileFormFactor()) rememberDesktopActivity(next.token);
     setAuth(next);
     setSettings((current) => {
       const updated = { ...current, userId: next.user.login };
@@ -1446,6 +1453,15 @@ export default function App() {
   }, []);
 
   const isAngiography = activeTab === "angiography";
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || mobileFormFactor || !authenticated || !auth) return;
+    return watchDesktopIdle(auth.token, signOut);
+  }, [authenticated, auth?.token, mobileFormFactor, signOut]);
+
+  // Keep the same static launch artwork until the saved session is checked.
+  // Never briefly expose the workspace before a rejected session shows login.
+  if (Platform.OS === "web" && !authChecked) return <View style={{ flex: 1, backgroundColor: "transparent" }} />;
 
   if (!authenticated) {
     return (
@@ -1742,7 +1758,7 @@ function LoginScreen({
     Platform.OS === "web"
   );
   const panelOpacity = useRef(new Animated.Value(0)).current;
-  const panelOffset = useRef(new Animated.Value(14)).current;
+  const panelOffset = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (!revealForm || !backgroundReady) return;
@@ -1800,7 +1816,7 @@ function LoginScreen({
         ) : null}
         <Animated.View
           pointerEvents="none"
-          style={[styles.loginBackgroundShade, { opacity: panelOpacity }]}
+          style={[styles.loginBackgroundShade, Platform.OS === "web" && { opacity: 0 }]}
         />
         {!backgroundReady ? (
           <View style={styles.loginLaunchLoader}>
@@ -4414,10 +4430,9 @@ function ReportSection({
 }
 
 const monthKey = (offset = 0) => {
-  const date = new Date();
-  date.setDate(1);
-  date.setMonth(date.getMonth() + offset);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  const date = new Date(`${medicalFormDate().slice(0, 7)}-01T12:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() + offset);
+  return date.toISOString().slice(0, 7);
 };
 
 const monthTitle = (month: string) =>
@@ -4447,8 +4462,10 @@ export function DutyScheduleScreen({
   onRetry: () => void;
   onSave: (schedule: DutySchedule) => Promise<void>;
 }) {
-  const [monthOffset, setMonthOffset] = useState(0);
-  const [current, setCurrent] = useState<DutySchedule | null>(schedule);
+  const [monthOffset, setMonthOffset] = useState(() => {
+    try { return sessionStorage.getItem("viewer.schedule-month") === monthKey(1) ? 1 : 0; } catch { return 0; }
+  });
+  const [current, setCurrent] = useState<DutySchedule | null>(schedule?.month === monthKey(monthOffset) ? schedule : null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
@@ -4459,8 +4476,11 @@ export function DutyScheduleScreen({
   const [shiftTool, setShiftTool] = useState("6");
   const timelineRef = useRef<ScrollViewHandle>(null);
   const selectedMonth = monthKey(monthOffset);
-  const today = new Date();
-  const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  useEffect(() => {
+    try { sessionStorage.setItem("viewer.schedule-month", selectedMonth); } catch { /* native/private mode */ }
+  }, [selectedMonth]);
+  const today = new Date(`${medicalFormDate(clock)}T12:00:00`);
+  const currentMonthKey = medicalFormDate(clock).slice(0, 7);
   const currentDay = selectedMonth === currentMonthKey ? today.getDate() : null;
   const night = dutyDate(clock);
   const ready = (value: DutySchedule | null) => Boolean(value?.published && value.source_uploaded_at && !value.groups.some((group) => group.staff.some((staff) => Object.values(staff.review ?? {}).some(Boolean))));
@@ -4480,8 +4500,8 @@ export function DutyScheduleScreen({
   }, [night.month, night.day, schedule]);
 
   useEffect(() => {
-    if (!editing && monthOffset === 0 && schedule) setCurrent(schedule);
-  }, [monthOffset, schedule, editing]);
+    if (!editing && !recognizing && schedule?.month === selectedMonth) setCurrent(schedule);
+  }, [selectedMonth, schedule, editing, recognizing]);
 
   useEffect(() => {
     setHolidayText(current?.holidays.join(", ") ?? "");
@@ -4489,15 +4509,15 @@ export function DutyScheduleScreen({
 
   useEffect(() => {
     let cancelled = false;
-    if (editing || (monthOffset === 0 && schedule?.month === selectedMonth)) return;
+    if (editing || recognizing || schedule?.month === selectedMonth) return;
     setCurrent(null);
     void getDutySchedule(selectedMonth).then((value) => {
-      if (!cancelled) setCurrent(value);
+      if (!cancelled && value.month === selectedMonth) setCurrent(value);
     }).catch(() => {
       if (!cancelled) setCurrent(null);
     });
     return () => { cancelled = true; };
-  }, [monthOffset, schedule, selectedMonth, editing]);
+  }, [schedule, selectedMonth, editing, recognizing]);
 
   useEffect(() => {
     if (!compact || !currentDay) return;
@@ -4545,14 +4565,14 @@ export function DutyScheduleScreen({
   };
 
   const applyHolidays = () => {
-    if (!current || !admin) return;
+    if (!current || current.month !== selectedMonth || !admin) return;
     const holidays = holidayText.split(/[\s,;]+/).map(Number)
       .filter((day) => Number.isInteger(day) && day >= 1 && day <= days.length);
     setCurrent({ ...current, holidays: [...new Set(holidays)].sort((a, b) => a - b) });
   };
 
   const save = async () => {
-    if (!current || !admin) return;
+    if (!current || current.month !== selectedMonth || !admin) return;
     setSaving(true);
     setLocalError("");
     try {
@@ -4567,14 +4587,16 @@ export function DutyScheduleScreen({
 
   const upload = async () => {
     if (!admin || recognizing || Platform.OS !== "web") return;
+    const uploadMonth = selectedMonth;
+    setRecognizing(true);
     setLocalError("");
     try {
       const photo = await selectSchedulePhoto();
       if (!photo) return;
-      setRecognizing(true);
-      const result = await recognizeDutySchedule(selectedMonth, photo);
+      const result = await recognizeDutySchedule(uploadMonth, photo);
+      if (result.month !== uploadMonth) throw new Error("Сервер вернул график другого месяца. Обновите страницу и проверьте график.");
       setCurrent(result);
-      onRetry();
+      if (uploadMonth === currentMonthKey) onRetry();
     } catch (error) { setLocalError(errorMessage(error)); setNoticeOpen(true); }
     finally { setRecognizing(false); }
   };
