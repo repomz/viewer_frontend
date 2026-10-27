@@ -24,6 +24,8 @@ describe("medical plan forms", () => {
     expect(html).toContain("Студницкий А.В.");
     expect(html).toContain("миа, возможный общий");
     expect(html).not.toContain("27999");
+    expect(html).toContain("Приложение к медицинской карте стационарного больного.</p>");
+    expect(html).not.toContain("больного №");
     expect(html).not.toContain("Захаров");
   });
   test("rejects empty batches and escapes user text", () => {

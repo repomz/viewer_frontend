@@ -1,5 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import { buildMedicalForms, medicalFormDate, type MedicalFormKind } from "./src/planMedicalForms";
+import { AnesthesiologistPicker } from "./src/AnesthesiologistPicker";
 import { activeTransfer, isTransfer, transferUID, transferLabel, studyTransfer } from "./src/transferProgress";
 import { scheduleRows, dutyDate, dutyNurses, selectSchedulePhoto } from "./src/dutySchedule";
 import { recognizeDutySchedule } from "./src/api";
@@ -5096,11 +5097,13 @@ function PlanScreen({
         </View>
         <View style={styles.planToolbarActions}>
           {!compact && Platform.OS === "web" ? <>
-          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => void printMedicalForms("radiation")} style={styles.planWeekOption}>
-            <Text style={styles.planWeekOptionText}>{formsBusy ? "Подготовка…" : "Лучевая нагрузка"}</Text>
+          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => void printMedicalForms("radiation")} style={({ pressed }) => [styles.planPrintButton, { opacity: formsBusy || pressed ? 0.6 : 1 }]}>
+            <Icon name="print-outline" size={18} color={colors.primary} />
+            <Text style={styles.planPrintButtonText}>{formsBusy ? "Подготовка…" : "Лучевая нагрузка"}</Text>
           </Pressable>
-          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => { setFormsError(""); setConsentOpen(true); }} style={styles.planWeekOption}>
-            <Text style={styles.planWeekOptionText}>Согласие анестезиолога</Text>
+          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => { setFormsError(""); setAnesthesiologist(""); setConsentOpen(true); }} style={({ pressed }) => [styles.planPrintButton, { opacity: formsBusy || pressed ? 0.6 : 1 }]}>
+            <Icon name="document-text-outline" size={18} color={colors.primary} />
+            <Text style={styles.planPrintButtonText}>Согласие анестезиолога</Text>
           </Pressable>
           </> : null}
           <IconButton
@@ -5224,7 +5227,7 @@ function PlanScreen({
         <View style={{ gap: 14, padding: 16 }}>
           <Text>Документы для всех пациентов сегодняшнего плана</Text>
           <Text>ФИО анестезиолога</Text>
-          <TextInput accessibilityLabel="ФИО анестезиолога" value={anesthesiologist} onChangeText={setAnesthesiologist} placeholder="Студницкий А.В." style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16 }} />
+          {consentOpen ? <AnesthesiologistPicker value={anesthesiologist} onChange={setAnesthesiologist} /> : null}
           <Text>Вид анестезии</Text>
           <TextInput accessibilityLabel="Вид анестезии" value={anesthesiaMethod} onChangeText={setAnesthesiaMethod} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16 }} />
           {formsError ? <Text style={{ color: "#b42318" }}>{formsError}</Text> : null}
@@ -8207,6 +8210,8 @@ const styles = StyleSheet.create({
     gap: 10
   },
   planToolbarActions: { flexDirection: "row", alignItems: "center", gap: 5, flexWrap: "wrap", justifyContent: "flex-end", flexShrink: 1 },
+  planPrintButton: { minHeight: 40, paddingHorizontal: 12, paddingVertical: 8, flexDirection: "row", alignItems: "center", gap: 7, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, backgroundColor: colors.canvasRaised },
+  planPrintButtonText: { color: colors.primary, fontSize: 13, fontWeight: "600" },
   planWeekSelector: {
     alignSelf: "flex-start",
     flexDirection: "row",
