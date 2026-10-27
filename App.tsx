@@ -5119,34 +5119,38 @@ function PlanScreen({
         </View>
         <View style={styles.planToolbarActions}>
           {!compact && Platform.OS === "web" ? <>
-          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => void printMedicalForms("radiation")} style={({ pressed }) => [styles.planPrintButton, { opacity: formsBusy || pressed ? 0.6 : 1 }]}>
-            <Icon name="print-outline" size={18} color={colors.primary} />
-            <Text style={styles.planPrintButtonText}>{formsBusy ? "Подготовка…" : "Лучевая нагрузка"}</Text>
+          <Pressable disabled accessibilityRole="button" accessibilityState={{ disabled: true }} accessibilityHint="Печать хирургического согласия пока недоступна" style={[styles.planPrintButton, { opacity: 0.5 }]}>
+            <Icon name="document-text-outline" size={18} color={colors.primary} />
+            <Text style={styles.planPrintButtonText}>Согласие хирурга</Text>
           </Pressable>
           <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => { setFormsError(""); setAnesthesiologist(""); setConsentOpen(true); }} style={({ pressed }) => [styles.planPrintButton, { opacity: formsBusy || pressed ? 0.6 : 1 }]}>
             <Icon name="document-text-outline" size={18} color={colors.primary} />
             <Text style={styles.planPrintButtonText}>Согласие анестезиолога</Text>
           </Pressable>
+          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => void printMedicalForms("radiation")} style={({ pressed }) => [styles.planPrintButton, { opacity: formsBusy || pressed ? 0.6 : 1 }]}>
+            <Icon name="print-outline" size={18} color={colors.primary} />
+            <Text style={styles.planPrintButtonText}>{formsBusy ? "Подготовка…" : "Лучевая нагрузка"}</Text>
+          </Pressable>
+          <Pressable disabled={!plan} accessibilityRole="button" onPress={() => {
+            if (!plan) return;
+            try { printOperationPlan(plan); }
+            catch (reason) { Alert.alert("Не удалось распечатать", errorMessage(reason)); }
+          }} style={({ pressed }) => [styles.planPrintButton, { opacity: !plan || pressed ? 0.6 : 1 }]}>
+            <Icon name="print-outline" size={18} color={colors.primary} />
+            <Text style={styles.planPrintButtonText}>План операций</Text>
+          </Pressable>
           </> : null}
-          <IconButton
-            icon={compact ? "share-outline" : "print-outline"}
-            label={compact ? "Отправить снимок" : "Распечатать план"}
+          {compact ? <IconButton
+            icon="share-outline"
+            label="Отправить снимок"
             onPress={() => {
               if (!plan) return;
-              if (compact) {
                 void sharePlanSnapshot(plan).catch((reason) => {
                   if (reason instanceof Error && reason.name === "AbortError") return;
                   Alert.alert("Не удалось отправить", errorMessage(reason));
                 });
-                return;
-              }
-              try {
-                printOperationPlan(plan);
-              } catch (reason) {
-                Alert.alert("Не удалось распечатать", errorMessage(reason));
-              }
             }}
-          />
+          /> : null}
         </View>
       </View>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
