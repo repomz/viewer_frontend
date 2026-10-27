@@ -5231,9 +5231,14 @@ function PlanScreen({
           <Text>Вид анестезии</Text>
           <TextInput accessibilityLabel="Вид анестезии" value={anesthesiaMethod} onChangeText={setAnesthesiaMethod} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16 }} />
           {formsError ? <Text style={{ color: "#b42318" }}>{formsError}</Text> : null}
-          <Pressable accessibilityRole="button" disabled={formsBusy || !anesthesiologist.trim() || !anesthesiaMethod.trim()} onPress={() => void printMedicalForms("anesthesia")} style={[styles.planWeekOption, styles.planWeekOptionActive, { opacity: formsBusy || !anesthesiologist.trim() ? 0.5 : 1 }]}>
-            <Text style={styles.planWeekOptionText}>{formsBusy ? "Подготовка…" : "Распечатать согласия"}</Text>
-          </Pressable>
+          <Button
+            label="Распечатать согласия"
+            icon="print-outline"
+            variant="primary"
+            loading={formsBusy}
+            disabled={!anesthesiologist.trim() || !anesthesiaMethod.trim()}
+            onPress={() => void printMedicalForms("anesthesia")}
+          />
         </View>
       </Sheet>
       <Sheet
