@@ -413,7 +413,7 @@ function reportShareText(report: ReportDocument): string {
   const data = reportData(report);
   const groups: [string, ReportOperation[]][] = [
     ["Экстренные", data.emergency_operations ?? []],
-    ["Плановые", data.planned_operations ?? []],
+    ["План вчера", data.planned_operations ?? []],
     ["План сегодня", data.today_planned_operations ?? []]
   ];
   const lines = [
@@ -4333,7 +4333,7 @@ function ReportDetail({ report }: { report: ReportDocument }) {
       <View style={styles.reportStats}>
         <ReportStat label="Экстренные" value={data.emergency_total ?? 0}
           active={section === "emergency"} onPress={() => setSection("emergency")} />
-        <ReportStat label="Плановые" value={data.planned_count ?? 0}
+        <ReportStat label="План вчера" value={data.planned_count ?? 0}
           active={section === "planned"} onPress={() => setSection("planned")} />
         <ReportStat
           label="План сегодня"
