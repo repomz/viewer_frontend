@@ -7,6 +7,7 @@ import {
   getHistoricalStatistics,
   getOperationStatistics,
   getOperationPlan,
+  saveOperationPlanDay,
   getStudies,
   suggestProtocolStudies,
   getDriveFiles,
@@ -15,6 +16,23 @@ import {
 import * as authStorage from "./authStorage";
 
 describe("Viewer API client", () => {
+  it.each([true, false])("preserves VMP=%s when saving and reopening a plan", async (vmp) => {
+    const entry = { patient: "Иванов И.И.", department: "кардио 2", operation: "каг стент", additions: "", vmp };
+    let saved: typeof entry[] = [];
+    const mock = jest.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      if (init?.method === "PUT") {
+        saved = JSON.parse(String(init.body)).entries;
+        return new Response(JSON.stringify({ date: "2026-10-28", entries: saved }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ week_start: "2026-10-26", days: [{ date: "2026-10-28", entries: saved }] }), { status: 200 });
+    });
+    await saveOperationPlanDay("2026-10-28", [entry]);
+    expect(JSON.parse(String(mock.mock.calls[0]?.[1]?.body)).entries[0].vmp).toBe(vmp);
+    const reopened = await getOperationPlan("2026-10-26");
+    expect(reopened.days[0]?.entries[0]?.vmp).toBe(vmp);
+    await saveOperationPlanDay("2026-10-28", [{ ...reopened.days[0]!.entries[0]!, vmp: !vmp }]);
+    expect((await getOperationPlan("2026-10-26")).days[0]?.entries[0]?.vmp).toBe(!vmp);
+  });
   it("passes the selected month to year search, but not to archive", async () => {
     const mock = jest.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("[]", { status: 200 }));
     await suggestProtocolStudies("", "year", 9);

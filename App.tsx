@@ -5074,9 +5074,6 @@ function PlanScreen({
   const saveDay = async () => {
     if (!selectedDate) return;
     if (!paymentRules.data) { setSaveError(paymentRules.error || "Дождитесь загрузки правил ВМП"); return; }
-    if (draft.some(entry => entry.patient.trim() && planPaymentMode(entry.operation,paymentRules.data!.rules)==="review" && !entry.vmp)) {
-      setSaveError("Поставьте галочку ВМП у пациентов, для которых требуется ручная отметка. Окончательное решение принимается в протоколе.");return;
-    }
     setSaving(true);
     setSaveError("");
     try {
