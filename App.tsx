@@ -61,6 +61,9 @@ import {
   getReports,
   getStudies,
   linkStudyAngiography,
+  getImagingDeletions,
+  deleteImagingEverywhere,
+  type ImagingDeletion,
   login as loginUser,
   logout as logoutUser,
   getUserRequests,
@@ -115,6 +118,7 @@ import {
   clearDicomCache,
   pruneExpiredDicomFrames,
   deleteStudyFromDevice,
+  markImagingDeleted,
   downloadStudyForOffline,
   formatStorageSize,
   getDicomCacheSnapshot,
@@ -604,6 +608,8 @@ export default function App() {
     )
   );
   const linkingAngiographies = useRef(new Set<string>());
+  const [imagingDeletions, setImagingDeletions] = useState<ImagingDeletion[]>([]);
+  const deletedImagingUIDs = useRef(new Set<string>());
   const automaticImportSources = useRef(
     new Set(
       requests
@@ -661,11 +667,18 @@ export default function App() {
     setXaError("");
     setXaLoading(loadXAStudiesCache().length === 0);
     try {
-      const [xa, ct] = await Promise.all([
+      const [xa, ct, deletions] = await Promise.all([
         searchStudies({ studyType: "xa" }),
-        searchStudies({ studyType: "ct" })
+        searchStudies({ studyType: "ct" }),
+        getImagingDeletions()
       ]);
+      setImagingDeletions(deletions);
+      for (const job of deletions) {
+        deletedImagingUIDs.current.add(job.study_uid);
+        await markImagingDeleted(job.study_uid).catch(() => undefined);
+      }
       const next = [...xa, ...ct]
+          .filter((study) => !deletedImagingUIDs.current.has(study.study_id))
           .filter(isPacsImagingStudy)
           .sort(
             (left, right) =>
@@ -1367,6 +1380,7 @@ export default function App() {
       );
       if (
         !uid ||
+        deletedImagingUIDs.current.has(uid) ||
         automaticImportUIDs.current.has(uid) ||
         studies.some((study) => study.study_id === uid)
       ) return;
@@ -1389,6 +1403,44 @@ export default function App() {
       setToast({ message: errorMessage(error), tone: "danger" });
     }
   }, []);
+
+  const removeImagingEverywhere = useCallback(async (study: Study) => {
+    try {
+      const job = await deleteImagingEverywhere(study.study_id);
+      deletedImagingUIDs.current.add(study.study_id);
+      setImagingDeletions((current) => [...current.filter((item) => item.study_uid !== study.study_id), job]);
+      setXaStudies((current) => {
+        const next = current.filter((item) => item.study_id !== study.study_id);
+        saveXAStudiesCache(next);
+        return next;
+      });
+      await markImagingDeleted(study.study_id).catch(() => undefined);
+      setToast({ message: "Удаление из PACS и Yandex запущено", tone: "success" });
+    } catch (error) {
+      setToast({ message: errorMessage(error), tone: "danger" });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    const synchronize = async () => {
+      try {
+        const jobs = await getImagingDeletions();
+        setImagingDeletions(jobs);
+        for (const job of jobs) {
+          deletedImagingUIDs.current.add(job.study_uid);
+          await markImagingDeleted(job.study_uid).catch(() => undefined);
+        }
+        if (jobs.length) setXaStudies((current) => {
+          const next = current.filter((study) => !deletedImagingUIDs.current.has(study.study_id));
+          saveXAStudiesCache(next);
+          return next.length === current.length ? current : next;
+        });
+      } catch { /* Offline devices synchronize tombstones after reconnecting. */ }
+    };
+    const timer = setInterval(() => { void synchronize(); }, 15000);
+    return () => clearInterval(timer);
+  }, [authenticated]);
 
   const removeReport = useCallback(async (report: ReportDocument) => {
     if (!report.filename) {
@@ -1570,6 +1622,8 @@ export default function App() {
                   dicomCache={dicomCache}
                   onRetry={() => void loadXAStudies()}
                   onDeleteLocal={removeLocalAngiography}
+                  onDeleteEverywhere={auth?.user.role === "admin" ? removeImagingEverywhere : undefined}
+                  deletionJobs={auth?.user.role === "admin" ? imagingDeletions : []}
                   initialStudyUID={requestedXAStudyUID}
                   onInitialStudyHandled={() => setRequestedXAStudyUID(null)}
                   onSearch={(modality) => {
@@ -2877,7 +2931,7 @@ function DetailItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-function AngiographyScreen({
+export function AngiographyScreen({
   compact,
   requests,
   studies,
@@ -2887,6 +2941,8 @@ function AngiographyScreen({
   dicomCache,
   onRetry,
   onDeleteLocal,
+  onDeleteEverywhere,
+  deletionJobs,
   onSearch,
   initialStudyUID,
   onInitialStudyHandled
@@ -2900,6 +2956,8 @@ function AngiographyScreen({
   dicomCache: DicomCacheSnapshot;
   onRetry: () => void;
   onDeleteLocal: (study: Study) => Promise<void>;
+  onDeleteEverywhere?: (study: Study) => Promise<void>;
+  deletionJobs: ImagingDeletion[];
   onSearch: (modality: "xa" | "ct") => void;
   initialStudyUID: string | null;
   onInitialStudyHandled: () => void;
@@ -2911,7 +2969,10 @@ function AngiographyScreen({
   const [actionStudy, setActionStudy] = useState<Study | null>(null);
   const [pacsGuideOpen, setPacsGuideOpen] = useState(false);
   useEffect(() => {
-    if (!selected && studies[0]) setSelected(studies[0]);
+    if (selected && !studies.some((study) => study.study_id === selected.study_id)) {
+      setSelected(studies[0] ?? null);
+      setMobileViewer(false);
+    } else if (!selected && studies[0]) setSelected(studies[0]);
   }, [selected, studies]);
 
   const choose = (study: Study) => {
@@ -2951,6 +3012,11 @@ function AngiographyScreen({
   return (
     <View style={styles.angioScreen}>
       {error ? <InlineError message={error} onRetry={onRetry} /> : null}
+      {deletionJobs.some((job) => job.status !== "completed") ? <Text style={styles.angioNoFilterResults}>
+        {deletionJobs.some((job) => job.status === "failed")
+          ? "Очистка хранилищ не завершена. Сервер повторит попытку автоматически."
+          : "Удаление из PACS и Yandex Storage выполняется…"}
+      </Text> : null}
       <View
         style={[styles.angioFilters, compact && styles.angioFiltersCompact]}
       >
@@ -3066,7 +3132,7 @@ function AngiographyScreen({
                         color={colors.success}
                       />
                     </View>
-                    {compact ? (
+                    {onDeleteEverywhere || (compact && study.study_type.toLowerCase() === "xa") ? (
                       <Pressable
                         accessibilityRole="button"
                         accessibilityLabel={`Действия с ${study.patient}`}
@@ -3183,12 +3249,25 @@ function AngiographyScreen({
       ) : null}
 
       <Sheet
-        visible={compact && Boolean(actionStudy)}
-        title={actionStudy?.patient || "Ангиография"}
+        visible={Boolean(actionStudy)}
+        title={actionStudy?.patient || "Исследование"}
         onClose={() => setActionStudy(null)}
       >
         <View style={styles.angioActionSheet}>
-          <Pressable
+          {onDeleteEverywhere ? <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              const study = actionStudy;
+              setActionStudy(null);
+              if (!study) return;
+              confirmDeleteAll(`Удалить ${study.study_type.toUpperCase()} пациента ${study.patient} из нашего PACS, Yandex Storage и кэша приложения? Это необратимо. Протокол операции и оригинал в больнице останутся. На других устройствах очистка произойдёт после подключения к приложению.`, () => void onDeleteEverywhere(study));
+            }}
+            style={[styles.angioActionButton, styles.angioActionDanger]}
+          >
+            <Icon name="trash-outline" size={21} color={colors.danger} />
+            <Text style={[styles.angioActionText, styles.angioActionDangerText]}>Удалить везде</Text>
+          </Pressable> : null}
+          {compact && actionStudy?.study_type.toLowerCase() === "xa" ? <Pressable
             onPress={() => {
               const study = actionStudy;
               setActionStudy(null);
@@ -3204,7 +3283,7 @@ function AngiographyScreen({
             <Text style={[styles.angioActionText, styles.angioActionDangerText]}>
               Удалить
             </Text>
-          </Pressable>
+          </Pressable> : null}
         </View>
       </Sheet>
       <Sheet

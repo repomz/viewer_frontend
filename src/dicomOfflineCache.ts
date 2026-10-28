@@ -66,6 +66,19 @@ const inFlight = new Map<string, Promise<Blob>>();
 const activeDownloads = new Set<string>();
 const downloadErrors = new Map<string, string>();
 const downloadControllers = new Map<string, AbortController>();
+const DELETED_IMAGING_KEY = "viewer.deleted-imaging.v1";
+function imagingWasDeleted(uid: string): boolean {
+  return Boolean(readRecord<Record<string, boolean>>(DELETED_IMAGING_KEY)[uid]);
+}
+export async function markImagingDeleted(uid: string): Promise<void> {
+  if (!supported()) return;
+  const deleted = readRecord<Record<string, boolean>>(DELETED_IMAGING_KEY);
+  if (deleted[uid] && !getDicomCacheSnapshot().studies[uid]) return;
+  deleted[uid] = true;
+  writeRecord(DELETED_IMAGING_KEY, deleted);
+  downloadControllers.get(uid)?.abort();
+  await deleteStudyFromDevice(uid);
+}
 
 function hasCacheAPI(): boolean {
   return typeof window !== "undefined" && typeof window.caches !== "undefined";
@@ -138,6 +151,23 @@ async function writeIndexedFrame(url: string, blob: Blob): Promise<void> {
     transaction.onerror = () => reject(transaction.error);
   });
   database.close();
+}
+
+async function removeStoredMedia(url: string): Promise<void> {
+  if (hasCacheAPI()) {
+    const cache = await window.caches.open(CACHE_NAME);
+    await cache.delete(url);
+  }
+  if (hasIndexedDB()) {
+    const database = await openFrameDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction("frames", "readwrite");
+      transaction.objectStore("frames").delete(url);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    database.close();
+  }
 }
 
 async function readStoredMedia(url: string): Promise<Blob | undefined> {
@@ -265,6 +295,7 @@ function writeRecord(key: string, value: Record<string, unknown>): void {
 export function getCachedPreparedXAManifest(
   studyUID: string
 ): PreparedXAManifest | null {
+  if (imagingWasDeleted(studyUID)) return null;
   const manifest = readRecord<PreparedManifestIndex>(MANIFEST_KEY)[studyUID];
   return manifest?.study_uid === studyUID &&
     manifest.series.some((series) => Boolean(series.cine_path))
@@ -273,6 +304,7 @@ export function getCachedPreparedXAManifest(
 }
 
 export function cachePreparedXAManifest(manifest: PreparedXAManifest): void {
+  if (imagingWasDeleted(manifest.study_uid)) return;
   if (!manifest.series.some((series) => Boolean(series.cine_path))) return;
   const manifests = readRecord<PreparedManifestIndex>(MANIFEST_KEY);
   manifests[manifest.study_uid] = manifest;
@@ -323,6 +355,10 @@ async function persistPreparedCines(
         if (hasIndexedDB()) {
           await writeIndexedFrame(url, existing).catch(() => undefined);
         }
+        if (imagingWasDeleted(studyUID)) {
+          await removeStoredMedia(url);
+          throw new DOMException("Deleted", "AbortError");
+        }
         stored.push({ url, studyUID, bytes: existing.size });
         continue;
       }
@@ -347,6 +383,11 @@ async function persistPreparedCines(
           .catch(() => false);
       }
       if (!persisted) throw new Error("Не удалось сохранить cine XA на устройстве");
+      if (imagingWasDeleted(studyUID)) {
+        await removeStoredMedia(url);
+        throw new DOMException("Deleted", "AbortError");
+      }
+      recordCines([{ url, studyUID, bytes: blob.size }]);
       stored.push({ url, studyUID, bytes: blob.size });
     }
   };
@@ -564,6 +605,7 @@ export async function loadRenderedFrameBlob(
     signal?: AbortSignal;
   }
 ): Promise<Blob> {
+  if (imagingWasDeleted(options.studyUID)) throw new Error("Исследование удалено администратором");
   // Cancellable background preloads must not share a fetch with a visible
   // frame. Otherwise changing a patient can either leave the old transfer
   // running or abort the frame the user is currently waiting for.
@@ -590,6 +632,7 @@ export async function loadRenderedFrameBlob(
       throw new Error(`PACS вернул HTTP ${response.status}`);
     }
     const blob = await response.clone().blob();
+    if (imagingWasDeleted(options.studyUID)) throw new Error("Исследование удалено администратором");
     if (options.persist) {
       let stored = false;
       if (cache) {
@@ -600,6 +643,10 @@ export async function loadRenderedFrameBlob(
       }
       if (!stored) {
         await writeIndexedFrame(url, blob);
+      }
+      if (imagingWasDeleted(options.studyUID)) {
+        await removeStoredMedia(url);
+        throw new Error("Исследование удалено администратором");
       }
       recordFrame(url, options.studyUID, blob.size);
     }
@@ -618,7 +665,7 @@ export async function downloadStudyForOffline(
   studyUID: string,
   dicomWebRoot = "/dicom-web"
 ): Promise<boolean> {
-  if (!supported() || activeDownloads.has(studyUID)) return false;
+  if (!supported() || imagingWasDeleted(studyUID) || activeDownloads.has(studyUID)) return false;
   const existing = getDicomCacheSnapshot().studies[studyUID];
   const existingManifest = getCachedPreparedXAManifest(studyUID);
   if (
@@ -747,7 +794,7 @@ export async function downloadStudyForOffline(
 export async function downloadStudyFirstSeriesForOffline(
   studyUID: string
 ): Promise<boolean> {
-  if (!supported() || activeDownloads.has(studyUID)) return false;
+  if (!supported() || imagingWasDeleted(studyUID) || activeDownloads.has(studyUID)) return false;
   activeDownloads.add(studyUID);
   const controller = new AbortController();
   downloadControllers.set(studyUID, controller);
@@ -806,6 +853,7 @@ export function cancelDicomDownloads(): void {
 }
 
 export async function deleteStudyFromDevice(studyUID: string): Promise<void> {
+  downloadControllers.get(studyUID)?.abort();
   if (!supported()) return;
   const index = readRecord<CacheIndex>(INDEX_KEY);
   const manifests = readRecord<PreparedManifestIndex>(MANIFEST_KEY);

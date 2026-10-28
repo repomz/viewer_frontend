@@ -1,4 +1,4 @@
-import { getDicomCacheSnapshot } from "./dicomOfflineCache";
+import { getDicomCacheSnapshot, downloadStudyForOffline, downloadStudyFirstSeriesForOffline, loadRenderedFrameBlob } from "./dicomOfflineCache";
 
 const INDEX_KEY = "viewer.xa-cache-index.v3";
 const EXPECTED_KEY = "viewer.xa-cache-expected.v3";
@@ -64,6 +64,14 @@ describe("persistent XA cine cache", () => {
       expectedFrames: 3,
       complete: false
     });
+  });
+
+  it("does not download or render an administratively deleted study", async () => {
+    window.localStorage.setItem("viewer.deleted-imaging.v1", JSON.stringify({ [STUDY_UID]: true }));
+    expect(await downloadStudyForOffline(STUDY_UID)).toBe(false);
+    expect(await downloadStudyFirstSeriesForOffline(STUDY_UID)).toBe(false);
+    await expect(loadRenderedFrameBlob("/deleted.jpg", { studyUID: STUDY_UID, persist: true }))
+      .rejects.toThrow("Исследование удалено администратором");
   });
 
   it("requires a ready manifest before treating all MP4 series as complete", () => {

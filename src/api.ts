@@ -308,6 +308,10 @@ export async function deleteStudy(id: string): Promise<void> {
   await request(`/studies/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+export type ImagingDeletion = { study_uid: string; status: "pending" | "deleting" | "failed" | "completed"; error?: string };
+export const getImagingDeletions = () => request<ImagingDeletion[]>("/imaging-deletions");
+export const deleteImagingEverywhere = (uid: string) => request<ImagingDeletion>(`/imaging-studies/${encodeURIComponent(uid)}`, { method: "DELETE" });
+
 export async function deleteAllStudies(): Promise<void> {
   await request("/studies", { method: "DELETE" });
 }
