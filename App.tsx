@@ -2969,11 +2969,12 @@ export function AngiographyScreen({
   const [actionStudy, setActionStudy] = useState<Study | null>(null);
   const [pacsGuideOpen, setPacsGuideOpen] = useState(false);
   useEffect(() => {
-    if (selected && !studies.some((study) => study.study_id === selected.study_id)) {
-      setSelected(studies[0] ?? null);
+    const available = studies.filter((study) => study.study_type.toLowerCase() === studyFilter);
+    if (selected && !available.some((study) => study.study_id === selected.study_id)) {
+      setSelected(available[0] ?? null);
       setMobileViewer(false);
-    } else if (!selected && studies[0]) setSelected(studies[0]);
-  }, [selected, studies]);
+    } else if (!selected && available[0]) setSelected(available[0]);
+  }, [selected, studies, studyFilter]);
 
   const choose = (study: Study) => {
     setSelected(study);

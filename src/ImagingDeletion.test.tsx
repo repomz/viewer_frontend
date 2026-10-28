@@ -35,3 +35,13 @@ test.each([true,false])("non-admin has no CT deletion action, compact=%s",compac
   expect(screen.queryByLabelText("Действия с Тестовый И.И.")).toBeNull();
   screen.unmount();
 });
+
+test("deleting the last CT does not show an XA patient as available CT",()=>{
+  const xa={...study,id:"xa-1",study_id:"1.2.4",patient:"Другой А.А.",study_type:"xa"};
+  const screen=render(<AngiographyScreen {...props} compact={false} studies={[study,xa]}/>);
+  fireEvent.press(screen.getByText("CT"));
+  screen.rerender(<AngiographyScreen {...props} compact={false} studies={[xa]}/>);
+  expect(screen.queryByText("CT находится в удалённом PACS и доступно для просмотра через RadiAnt.")).toBeNull();
+  expect(screen.getByText("Выберите исследование")).toBeTruthy();
+  screen.unmount();
+});
