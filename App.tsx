@@ -1,7 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import { desktopIdleExpired, rememberDesktopActivity, watchDesktopIdle } from "./src/desktopIdle";
 import { buildMedicalForms, medicalFormDate, type MedicalFormKind } from "./src/planMedicalForms";
-import { AnesthesiologistPicker } from "./src/AnesthesiologistPicker";
+import { AnesthesiologistPicker, DoctorPicker, surgeons } from "./src/AnesthesiologistPicker";
 import { activeTransfer, isTransfer, transferUID, transferLabel, studyTransfer } from "./src/transferProgress";
 import { scheduleRows, dutyDate, dutyNurses, selectSchedulePhoto } from "./src/dutySchedule";
 import { recognizeDutySchedule } from "./src/api";
@@ -4988,6 +4988,8 @@ function PlanScreen({
 }) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
+  const [surgicalConsentOpen, setSurgicalConsentOpen] = useState(false);
+  const [consentSurgeon, setConsentSurgeon] = useState("");
   const [anesthesiologist, setAnesthesiologist] = useState("");
   const [anesthesiaMethod, setAnesthesiaMethod] = useState("миа, возможный общий");
   const [formsBusy, setFormsBusy] = useState(false);
@@ -5007,13 +5009,14 @@ function PlanScreen({
       monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
       const currentPlan = await getOperationPlan(monday.toISOString().slice(0, 10));
       const entries = sortPlanEntries((currentPlan.days.find(day => day.date === today)?.entries || []).filter(entry => entry.patient.trim()));
-      const html = buildMedicalForms(kind, today, entries, anesthesiologist, anesthesiaMethod);
+      const html = buildMedicalForms(kind, today, entries, kind === "surgery" ? consentSurgeon : anesthesiologist, anesthesiaMethod);
       if (popup.closed) return;
       popup.document.open();
       popup.addEventListener("load", () => { void popup.document.fonts.ready.then(() => { if (!popup.closed) { popup.focus(); popup.print(); } }); }, { once: true });
       popup.document.write(html);
       popup.document.close();
       setConsentOpen(false);
+      setSurgicalConsentOpen(false);
     } catch (reason) {
       popup.close();
       setFormsError(errorMessage(reason));
@@ -5119,7 +5122,7 @@ function PlanScreen({
         </View>
         <View style={styles.planToolbarActions}>
           {!compact && Platform.OS === "web" ? <>
-          <Pressable disabled accessibilityRole="button" accessibilityState={{ disabled: true }} accessibilityHint="Печать хирургического согласия пока недоступна" style={[styles.planPrintButton, { opacity: 0.5 }]}>
+          <Pressable disabled={formsBusy} accessibilityRole="button" onPress={() => { setFormsError(""); setConsentSurgeon(""); setSurgicalConsentOpen(true); }} style={({ pressed }) => [styles.planPrintButton, { opacity: formsBusy || pressed ? 0.6 : 1 }]}>
             <Icon name="document-text-outline" size={18} color={colors.primary} />
             <Text style={styles.planPrintButtonText}>Согласие хирурга</Text>
           </Pressable>
@@ -5249,6 +5252,15 @@ function PlanScreen({
 
 
       {formsError ? <Text accessibilityRole="alert" style={{ color: "#b42318" }}>{formsError}</Text> : null}
+      <Sheet visible={surgicalConsentOpen} title="Согласие хирурга" onClose={() => setSurgicalConsentOpen(false)}>
+        <View style={{ gap: 14, padding: 16 }}>
+          <Text>Согласия для всех пациентов сегодняшнего плана. Название операции заполняется из плана.</Text>
+          <Text>ФИО хирурга</Text>
+          {surgicalConsentOpen ? <DoctorPicker value={consentSurgeon} onChange={setConsentSurgeon} names={surgeons} label="ФИО хирурга" listLabel="Список хирургов" /> : null}
+          {formsError ? <Text style={{ color: colors.danger }}>{formsError}</Text> : null}
+          <Button label="Распечатать согласия" icon="print-outline" loading={formsBusy} disabled={!consentSurgeon.trim()} onPress={() => void printMedicalForms("surgery")} />
+        </View>
+      </Sheet>
       <Sheet visible={consentOpen} title="Согласие анестезиолога" onClose={() => setConsentOpen(false)}>
         <View style={{ gap: 14, padding: 16 }}>
           <Text>Документы для всех пациентов сегодняшнего плана</Text>

@@ -1,5 +1,7 @@
-export type MedicalFormKind = "radiation" | "anesthesia";
-type Patient = { patient: string; operation: string };
+import { surgicalConsent, surgicalConsentCSS } from "./surgicalConsent";
+import { displayBirthDate } from "./birthDate";
+export type MedicalFormKind = "radiation" | "anesthesia" | "surgery";
+type Patient = { patient: string; operation: string; birth_date?: string; department?: string };
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]!));
 
 export function medicalFormDate(now = new Date()): string {
@@ -27,10 +29,17 @@ export function radiationProcedureName(operation: string): string {
   return [...new Set(operation.toLowerCase().replace(/каг\s*\+\s*стент/g, "каг стент").split(/\s+\+\s+|;/).map(s => s.trim()).filter(Boolean).map(s => procedures[s] || s))].join("; ");
 }
 
+export function surgicalProcedureName(operation: string): string {
+  return [...new Set(operation.toLowerCase().replace(/каг\s*\+\s*стент/g, "каг стент").split(/\s+\+\s+|;/).map(s => s.trim()).filter(Boolean).map(s => s === "каг стент" ? "Коронарография с возможным стентированием" : procedures[s] || s))].join("; ");
+}
+const departments: Record<string, string> = { "кардио 1": "Кардиологическое №1", "кардио 2": "Кардиологическое №2", "рсц": "РСЦ", "неврология": "Неврологическое", "нейро/х": "Нейрохирургическое", "сосуды": "Сосудистой хирургии", "диализ/о": "Диализа", "платное": "Платное", "гинек": "Гинекологическое", "урология": "Урологическое", "гной хир": "Гнойной хирургии" };
+
 export function buildMedicalForms(kind: MedicalFormKind, date: string, patients: Patient[], doctor = "", anesthesia = "миа, возможный общий"): string {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Некорректная дата плана");
   if (!patients.length) throw new Error("На сегодня в плане нет пациентов");
   if (kind === "anesthesia" && !doctor.trim()) throw new Error("Укажите ФИО анестезиолога");
+  if (kind === "surgery" && !doctor.trim()) throw new Error("Укажите ФИО хирурга");
+  if (kind === "surgery" && patients.some(p => !p.operation.trim())) throw new Error("Укажите операцию для каждого пациента в плане");
   const day = date.split("-").reverse().join(".");
   const radiation = (p: Patient) => `<section class="radiation"><h2>Лист учета лучевой нагрузки</h2><div class="fio">ФИО <u>${escape(medicalFormName(p.patient))}</u></div><table><colgroup><col style="width:15%"><col style="width:58%"><col style="width:15%"><col style="width:12%"></colgroup><thead><tr><th>Дата</th><th>Наименование рентгенологического исследования, исследования с помощью радионуклидов, метода радиационной терапии, метода лечения с помощью лучевого воздействия, иного метода диагностики или лечения, сопровождающегося лучевой нагрузкой</th><th>Код по номенклатуре медицинских услуг</th><th>Величина лучевой нагрузки (доза), милизиверт (мЗв)</th></tr></thead><tbody>${Array.from({length:8}, (_, i) => `<tr><td>${i ? "" : day}</td><td>${i ? "" : escape(radiationProcedureName(p.operation))}</td><td></td><td></td></tr>`).join("")}</tbody></table></section>`;
   const consent = (p: Patient) => `<section class="page consent"><h2>ОГАУЗ "Томская областная клиническая больница"</h2><p>Приложение к медицинской карте стационарного больного.</p><h2>СОГЛАСИЕ НА АНЕСТЕЗИОЛОГИЧЕСКОЕ ПОСОБИЕ</h2>
@@ -47,8 +56,8 @@ export function buildMedicalForms(kind: MedicalFormKind, date: string, patients:
 <p>Ф.И.О. пациента(ки) <b>${escape(medicalFormName(p.patient))}</b></p>
 <p>Ф.И.О. законного представителя пациента с указанием характера отношений</p><div class="line">&nbsp;</div><small>(ФИО полностью, указать родственные или иные отношения)</small>
 <p>Подпись___________________ ______________________</p><p>${day}</p><div class="doctor">Лечащий врач <span><u>${escape(medicalFormName(doctor))}</u><small>(фамилия, имя, отчество (при наличии) медицинского работника)</small></span><span>________________<small>(подпись)</small></span></div></section>`;
-  const pages = kind === "anesthesia" ? patients.map(consent).join("") : patients.reduce<string[]>((all, p, i) => { if (i % 2 === 0) all.push(""); all[all.length - 1] += radiation(p); return all; }, []).map(p => `<div class="page">${p}</div>`).join("");
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${kind === "radiation" ? "Лучевая нагрузка" : "Согласие анестезиолога"} ${day}</title><style>
+  const pages = kind === "surgery" ? patients.map(p => surgicalConsent({ patient: escape(medicalFormName(p.patient)), birthDate: escape(displayBirthDate(p.birth_date)), department: escape(departments[p.department || ""] || p.department || ""), operation: escape(surgicalProcedureName(p.operation)), doctor: escape(medicalFormName(doctor)), date: day })).join("") : kind === "anesthesia" ? patients.map(consent).join("") : patients.reduce<string[]>((all, p, i) => { if (i % 2 === 0) all.push(""); all[all.length - 1] += radiation(p); return all; }, []).map(p => `<div class="page">${p}</div>`).join("");
+  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${kind === "surgery" ? "Согласие хирурга" : kind === "radiation" ? "Лучевая нагрузка" : "Согласие анестезиолога"} ${day}</title><style>
 @page{size:A4 portrait;margin:10mm}*{box-sizing:border-box}body{margin:0;color:#000;background:#fff}.page{break-after:page}.page:last-child{break-after:auto}h2{margin:0 0 3mm;text-align:center;font-size:13pt}.radiation{height:138mm;font-family:"Times New Roman",serif;padding-bottom:6mm}.fio{font-size:12pt;margin-bottom:3mm}.fio u{display:inline-block;min-width:145mm}table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border:0.3mm solid #000;padding:1mm}th{font-size:8.5pt;line-height:1.05}td{height:11mm;font-size:10pt;vertical-align:middle}.consent{font-family:Arial,sans-serif;padding:10mm 5mm 0 20mm;font-size:8pt;line-height:1.23}.consent h2{font-size:10pt;margin-bottom:3mm}.consent p{margin:2.5mm 0;text-align:justify}.line{border-bottom:1px solid #000;text-align:center;min-height:4mm}small{display:block;text-align:center;font-size:6.5pt}.doctor{display:flex;gap:5mm;align-items:center;margin-top:4mm}.doctor span:first-of-type{flex:1;text-align:center}
-</style></head><body>${pages}</body></html>`;
+${surgicalConsentCSS}</style></head><body>${pages}</body></html>`;
 }
