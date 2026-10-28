@@ -17,7 +17,7 @@ export function dutyDate(now = new Date()) {
 export function dutyNurses(schedule: DutySchedule | null, day: number) {
   const staff = schedule?.groups.find((group) => group.id === "nurses")?.staff ?? [];
   return {
-    names: staff.filter((person) => ["16", "24"].includes(person.shifts[`${day}:duty`] ?? person.shifts[String(day)] ?? "") && !person.review?.[`${day}:duty`]).map((person) => person.name),
+    names: staff.filter((person) => ["16", "18", "24"].includes(person.shifts[`${day}:duty`] ?? person.shifts[String(day)] ?? "") && !person.review?.[`${day}:duty`]).map((person) => person.name),
     uncertain: staff.some((person) => person.review?.[`${day}:duty`])
   };
 }

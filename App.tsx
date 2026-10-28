@@ -4661,10 +4661,10 @@ export function DutyScheduleScreen({
               <View style={styles.scheduleShiftTools}>
                 <Text style={styles.scheduleToolsTitle}>Значение для ячейки</Text>
                 <View style={styles.scheduleToolChips}>
-                  {["6", "8", "16", "18", "24", "О", "Б", ""].map((value) => <Chip key={value} label={value || "Очистить"} selected={shiftTool === value} onPress={() => setShiftTool(value)} />)}
+                  {["5", "6", "8", "16", "18", "24", "О", "Б", ""].map((value) => <Chip key={value} label={value || "Очистить"} selected={shiftTool === value} onPress={() => setShiftTool(value)} />)}
                 </View>
                 <View style={styles.scheduleLegend}>
-                  <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>6</Text> — дневные часы</Text>
+                  <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>5 / 6 / 8</Text> — дневные часы</Text>
                   <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>18</Text> — ночное дежурство</Text>
                   <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>16</Text> — ночное дежурство медсестры</Text>
                   <Text style={styles.scheduleLegendItem}><Text style={styles.scheduleLegendValue}>24</Text> — суточное дежурство</Text>
