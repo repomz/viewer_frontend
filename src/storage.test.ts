@@ -29,16 +29,10 @@ describe("clinical data cache", () => {
 
   beforeEach(() => values.clear());
 
-  it("keeps reports isolated by agent", () => {
-    saveReportsCache(2, [{ filename: "report-2.json", agent_id: 2 }]);
-    saveReportsCache(3, [{ filename: "report-3.json", agent_id: 3 }]);
-
-    expect(loadReportsCache(2)).toEqual([
-      { filename: "report-2.json", agent_id: 2 }
-    ]);
-    expect(loadReportsCache(3)).toEqual([
-      { filename: "report-3.json", agent_id: 3 }
-    ]);
+  it("keeps one report list regardless of legacy agent metadata", () => {
+    const reports = [{ filename: "report-2.json", agent_id: 2 }, { filename: "report-3.json", agent_id: 3 }];
+    saveReportsCache(reports);
+    expect(loadReportsCache()).toEqual(reports);
   });
 
   it("returns the cached operation plan for its calendar week", () => {
@@ -65,14 +59,14 @@ describe("clinical data cache", () => {
     const xa = { id: "xa-study" } as never;
     window.localStorage.setItem("viewer.studies.v1", JSON.stringify([protocol]));
     window.localStorage.setItem("viewer.xa-studies.v1", JSON.stringify([xa]));
-    saveReportsCache(2, [{ filename: "old-report.json", agent_id: 2 }]);
+    saveReportsCache([{ filename: "old-report.json", agent_id: 2 }]);
     const plan = { week_start: "2026-10-05", days: [] };
     saveOperationPlanCache(plan);
 
     clearStaleClinicalCaches();
 
     expect(loadStudiesCache()).toEqual([]);
-    expect(loadReportsCache(2)).toEqual([]);
+    expect(loadReportsCache()).toEqual([]);
     expect(loadXAStudiesCache()).toEqual([xa]);
     expect(loadOperationPlanCache("2026-10-05")).toBeNull();
   });

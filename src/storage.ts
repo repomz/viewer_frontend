@@ -103,11 +103,11 @@ export function saveRequests(requests: UserRequest[]): void {
   );
 }
 
-export function loadReportsCache(agentId: number): ReportDocument[] {
+export function loadReportsCache(): ReportDocument[] {
   if (!hasStorage()) return [];
   try {
     const stored = JSON.parse(
-      window.localStorage.getItem(`${REPORTS_KEY_PREFIX}.${agentId}`) ?? "[]"
+      window.localStorage.getItem(`${REPORTS_KEY_PREFIX}.all`) ?? "[]"
     );
     return Array.isArray(stored) ? stored.slice(0, 30) : [];
   } catch {
@@ -116,12 +116,11 @@ export function loadReportsCache(agentId: number): ReportDocument[] {
 }
 
 export function saveReportsCache(
-  agentId: number,
   reports: ReportDocument[]
 ): void {
   if (!hasStorage()) return;
   window.localStorage.setItem(
-    `${REPORTS_KEY_PREFIX}.${agentId}`,
+    `${REPORTS_KEY_PREFIX}.all`,
     JSON.stringify(reports.slice(0, 30))
   );
 }

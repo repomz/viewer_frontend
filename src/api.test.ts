@@ -1,6 +1,7 @@
 import {
   checkHealth,
   generateReport,
+  getReports,
   getAgentHeartbeatTimes,
   getAgentLogs,
   getBackendVersion,
@@ -16,6 +17,12 @@ import {
 import * as authStorage from "./authStorage";
 
 describe("Viewer API client", () => {
+  it("loads the shared report list without an agent filter", async () => {
+    const reports = [{ filename: "one.json", agent_id: 1 }, { filename: "two.json", agent_id: 2 }];
+    const mock = jest.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(reports), { status: 200 }));
+    expect(await getReports()).toEqual(reports);
+    expect(mock).toHaveBeenCalledWith("/api/reports?limit=30", expect.anything());
+  });
   it.each([true, false])("preserves VMP=%s when saving and reopening a plan", async (vmp) => {
     const entry = { patient: "Иванов И.И.", department: "кардио 2", operation: "каг стент", additions: "", vmp };
     let saved: typeof entry[] = [];
@@ -202,7 +209,6 @@ describe("Viewer API client", () => {
     );
 
     await generateReport({
-      agentId: 2,
       dateFrom: "2026-07-27",
       dateTo: "2026-08-02"
     });
@@ -212,7 +218,6 @@ describe("Viewer API client", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          agent_id: 2,
           date_from: "2026-07-27",
           date_to: "2026-08-02"
         })

@@ -316,19 +316,13 @@ export async function deleteAllStudies(): Promise<void> {
   await request("/studies", { method: "DELETE" });
 }
 
-export async function getReports(agentId?: number): Promise<ReportDocument[]> {
+export async function getReports(): Promise<ReportDocument[]> {
   const params = new URLSearchParams({ limit: "30" });
-  if (agentId) params.set("agent_id", String(agentId));
   const response = await request<ReportDocument[]>(`/reports?${params.toString()}`);
-  return Array.isArray(response)
-    ? response.filter(
-        (report) => !agentId || Number(report.agent_id) === agentId
-      )
-    : [];
+  return Array.isArray(response) ? response : [];
 }
 
 export async function generateReport(input: {
-  agentId: number;
   days?: number;
   dateFrom?: string;
   dateTo?: string;
@@ -336,7 +330,6 @@ export async function generateReport(input: {
   return request<ReportDocument>("/reports/generate", {
     method: "POST",
     body: JSON.stringify({
-      agent_id: input.agentId,
       ...(input.days ? { days: input.days } : {}),
       ...(input.dateFrom ? { date_from: input.dateFrom } : {}),
       ...(input.dateTo ? { date_to: input.dateTo } : {})

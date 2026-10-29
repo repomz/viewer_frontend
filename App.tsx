@@ -1,4 +1,5 @@
 import { StatusBar } from "expo-status-bar";
+import { sharePlanSnapshot } from "./src/planSnapshot";
 import { desktopIdleExpired, rememberDesktopActivity, watchDesktopIdle } from "./src/desktopIdle";
 import { buildMedicalForms, medicalFormDate, type MedicalFormKind } from "./src/planMedicalForms";
 import { AnesthesiologistPicker, DoctorPicker, surgeons } from "./src/AnesthesiologistPicker";
@@ -570,7 +571,7 @@ export default function App() {
   const [xaError, setXaError] = useState("");
   const [requests, setRequests] = useState<UserRequest[]>(loadRequests);
   const [reports, setReports] = useState<ReportDocument[]>(() =>
-    loadReportsCache(loadSettings().agentId)
+    loadReportsCache()
   );
   const [reportsLoading, setReportsLoading] = useState(false);
   const [reportsError, setReportsError] = useState("");
@@ -723,20 +724,20 @@ export default function App() {
   }, [settings.agentIds, settings.userId]);
 
   const loadReports = useCallback(async () => {
-    const cached = loadReportsCache(settings.agentId);
+    const cached = loadReportsCache();
     if (cached.length) setReports(cached);
     setReportsError("");
     setReportsLoading(cached.length === 0);
     try {
-      const response = await getReports(settings.agentId);
+      const response = await getReports();
       setReports(response);
-      saveReportsCache(settings.agentId, response);
+      saveReportsCache(response);
     } catch (error) {
       if (!cached.length) setReportsError(errorMessage(error));
     } finally {
       setReportsLoading(false);
     }
-  }, [settings.agentId]);
+  }, []);
 
   const loadPlan = useCallback(async (weekOffset: 0 | 1) => {
     const weekStart = operationPlanWeekStart(weekOffset);
@@ -1472,7 +1473,7 @@ export default function App() {
   }): Promise<boolean> => {
     setReportGenerating(true);
     try {
-      await generateReport({ agentId: settings.agentId, ...period });
+      await generateReport(period);
       await loadReports();
       setToast({ message: "Отчёт сформирован", tone: "success" });
       return true;
@@ -1482,7 +1483,7 @@ export default function App() {
     } finally {
       setReportGenerating(false);
     }
-  }, [loadReports, settings.agentId]);
+  }, [loadReports]);
 
   const applyAuth = useCallback((next: StoredAuth) => {
     saveAuth(next);
@@ -4916,85 +4917,6 @@ const formatShortNumericDate = (value: string) => {
   }).format(date);
 };
 
-async function sharePlanSnapshot(
-  plan: OperationPlan
-): Promise<void> {
-  const text = plan.days
-    .flatMap((day) =>
-      sortPlanEntries(day.entries).map(
-        (entry, index) =>
-          `${weekdayTitle(day.date)} · ${index + 1}. ${entry.patient}: ` +
-          `${entry.department}, ${entry.operation}` +
-          (entry.additions ? ` · ${entry.additions}` : "")
-      )
-    )
-    .join("\n");
-  if (Platform.OS !== "web") {
-    await Share.share({ title: "План операций", message: text || "План пуст" });
-    return;
-  }
-  const canvas = document.createElement("canvas");
-  canvas.width = 1200;
-  canvas.height = 1500;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Не удалось создать снимок плана");
-  context.fillStyle = "#F3F6F8";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#10212E";
-  context.font = "700 48px -apple-system, sans-serif";
-  context.fillText("План операций", 70, 90);
-  context.font = "400 28px -apple-system, sans-serif";
-  context.fillStyle = "#607482";
-  context.fillText(`Неделя с ${formatDate(plan.week_start)}`, 70, 135);
-  let y = 205;
-  plan.days.forEach((day) => {
-    context.fillStyle = "#DCEAF0";
-    context.fillRect(55, y - 38, 1090, 58);
-    context.fillStyle = "#0B84B3";
-    context.font = "700 27px -apple-system, sans-serif";
-    context.fillText(weekdayTitle(day.date).toLocaleUpperCase("ru"), 75, y);
-    y += 58;
-    const entries = day.entries.length ? sortPlanEntries(day.entries) : [null];
-    entries.forEach((entry, index) => {
-      context.fillStyle = "#10212E";
-      context.font = "700 30px -apple-system, sans-serif";
-      context.fillText(entry ? `${index + 1}. ${entry.patient}` : "—", 75, y);
-      context.font = "400 25px -apple-system, sans-serif";
-      context.fillStyle = "#607482";
-      context.fillText(
-        entry
-          ? `${entry.department} · ${entry.operation}` +
-            (entry.additions ? ` · ${entry.additions}` : "")
-          : "Операций нет",
-        75,
-        y + 35
-      );
-      y += 88;
-    });
-    y += 12;
-  });
-  const blob = await new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob(
-      (value) => (value ? resolve(value) : reject(new Error("Снимок не создан"))),
-      "image/png"
-    )
-  );
-  const file = new File([blob], "plan.png", { type: "image/png" });
-  if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-    await navigator.share({
-      title: "План операций",
-      text: text || "План операций",
-      files: [file]
-    });
-    return;
-  }
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = "plan.png";
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-}
 
 function escapePrintHTML(value: string) {
   return value
@@ -5030,16 +4952,17 @@ function printOperationPlan(plan: OperationPlan, selectedDate?: string) {
   printWindow.document.write(`<!doctype html><html lang="ru"><head><meta charset="utf-8">
     <title>План операций</title><style>
 		@page { size: A4 portrait; margin: 10mm; }
-      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #17232d; }
+      body { font-family: Arial, "Segoe UI", sans-serif; color: #111; }
       h1 { margin: 0 0 4px; font-size: 24px; }
       p { margin: 0 0 18px; color: #536776; }
       table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-      th { background: #eaf1f5; color: #536776; font-size: 10px; text-transform: uppercase; }
-		th, td { border: 1px solid #d4dfe6; padding: 5px; vertical-align: top; font-size: 9px; }
-      th:first-child { width: 8%; } th:nth-child(2) { width: 18%; }
-      th:nth-child(3) { width: 12%; } th:nth-child(4) { width: 19%; }
-      th:nth-child(5) { width: 18%; } th:nth-child(6) { width: 25%; }
-      .day { color: #086f98; font-weight: 800; background: #f3f6f8; text-transform: capitalize; }
+      th, td { border: 1px solid #aab5bd; padding: 6px 5px; vertical-align: top; font-size: 10pt; line-height: 1.25; overflow-wrap: anywhere; }
+      th { background: #eaf1f5; color: #17232d; font-size: 9pt; text-transform: uppercase; }
+      th:first-child { width: 7%; } th:nth-child(2) { width: 23%; }
+      th:nth-child(3) { width: 11%; } th:nth-child(4) { width: 22%; }
+      th:nth-child(5) { width: 20%; } th:nth-child(6) { width: 17%; }
+      thead { display: table-header-group; } tr { break-inside: avoid; }
+      .day { color: #17232d; font-weight: 700; background: #f3f6f8; text-transform: capitalize; }
     </style></head><body><h1>План операций</h1>
 	<p>${selectedDate ? escapePrintHTML(formatDate(selectedDate)) : `Неделя с ${escapePrintHTML(formatDate(plan.week_start))}`}</p>
     <table><thead><tr><th>День</th><th>Пациент</th><th>Отделение</th><th>Операция</th><th>Дополнения</th><th>Предыдущая операция</th></tr></thead>
@@ -5047,7 +4970,7 @@ function printOperationPlan(plan: OperationPlan, selectedDate?: string) {
   printWindow.document.close();
 }
 
-function PlanScreen({
+export function PlanScreen({
   compact,
   plan,
   loading,
@@ -5069,6 +4992,18 @@ function PlanScreen({
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [surgicalConsentOpen, setSurgicalConsentOpen] = useState(false);
+  const [sharePlanOpen, setSharePlanOpen] = useState(false);
+  const [sharePlanBusy, setSharePlanBusy] = useState(false);
+  const sendPlan = async (date?: string) => {
+    if (!plan || sharePlanBusy) return;
+    setSharePlanBusy(true);
+    try {
+      await sharePlanSnapshot({ ...plan, days: plan.days.map(day => ({ ...day, entries: sortPlanEntries(day.entries) })) }, date);
+      setSharePlanOpen(false);
+    } catch (reason) {
+      if (!(reason instanceof Error && reason.name === "AbortError")) Alert.alert("Не удалось отправить", errorMessage(reason));
+    } finally { setSharePlanBusy(false); }
+  };
   const [consentSurgeon, setConsentSurgeon] = useState("");
   const [anesthesiologist, setAnesthesiologist] = useState("");
   const [anesthesiaMethod, setAnesthesiaMethod] = useState("миа, возможный общий");
@@ -5225,10 +5160,7 @@ function PlanScreen({
             label="Отправить снимок"
             onPress={() => {
               if (!plan) return;
-                void sharePlanSnapshot(plan).catch((reason) => {
-                  if (reason instanceof Error && reason.name === "AbortError") return;
-                  Alert.alert("Не удалось отправить", errorMessage(reason));
-                });
+              setSharePlanOpen(true);
             }}
           /> : null}
         </View>
@@ -5328,6 +5260,15 @@ function PlanScreen({
       ) : null}
 
 
+      <Sheet visible={sharePlanOpen} title="Отправить план" onClose={() => { if (!sharePlanBusy) setSharePlanOpen(false); }}>
+        <View style={{ gap: 10, padding: 16 }}>
+          <Button label="Вся неделя" disabled={sharePlanBusy} onPress={() => void sendPlan()} />
+          {plan?.days.filter(day => { const n = new Date(`${day.date}T12:00:00`).getDay(); return n >= 1 && n <= 5; }).map(day => (
+            <Button key={day.date} label={new Date(`${day.date}T12:00:00`).toLocaleDateString("ru-RU", { weekday: "long", day: "2-digit", month: "2-digit" })} disabled={sharePlanBusy} onPress={() => void sendPlan(day.date)} />
+          ))}
+          {sharePlanBusy ? <ActivityIndicator color={colors.primary} /> : null}
+        </View>
+      </Sheet>
       {formsError ? <Text accessibilityRole="alert" style={{ color: "#b42318" }}>{formsError}</Text> : null}
       <Sheet visible={surgicalConsentOpen} title="Согласие хирурга" onClose={() => setSurgicalConsentOpen(false)}>
         <View style={{ gap: 14, padding: 16 }}>

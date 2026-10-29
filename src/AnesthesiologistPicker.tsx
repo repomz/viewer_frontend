@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { colors, radii } from "./theme";
 
-export const anesthesiologists = ["Студницкий А.В.", "Кирилин В.В.", "Дядянов А.Э.", "Зимин И.А.", "Соловцов А.М.", "Плотников С.А."];
+export const anesthesiologists = ["Студницкий А.В.", "Кирилин В.В.", "Дядянов А.Э.", "Зимин И.А.", "Соловцов А.М.", "Плотников С.А.", "Чернышев А."];
 export const surgeons = ["Киргизов А.А.", "Идрисов М.З.", "Старков А.С.", "Шпилевой М.П.", "Суслов И.В."];
 
 export function AnesthesiologistPicker({ value, onChange }: { value: string; onChange: (name: string) => void }) {
